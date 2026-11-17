@@ -14,7 +14,7 @@ O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver u
 
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `netlify/functions/*.mjs` (checkout, webhook e licença), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
 
 ## Como usar
 
@@ -122,3 +122,78 @@ Após qualquer baixa, o app gera automaticamente um **recibo com ID único** (ex
 O comprovante pode ser **copiado como texto**, **baixado em PNG** ou **salvo em PDF** pelo botão 🖨️ (abrir a caixa de impressão e escolher "Salvar como PDF").
 
 **Importante:** a confirmação automática funciona no mesmo navegador/dispositivo onde os dados estão salvos (ou entre abas do mesmo navegador, que sincronizam ao vivo). Para **reconhecimento bancário real** (webhook do Mercado Pago/PIX, vários dispositivos, comprovantes emitidos pelo banco), é necessário um servidor e um provedor de pagamento — esta versão é 100% local e offline. O recibo gerado aqui é um **registro interno do app**.
+
+---
+
+## Assinatura recorrente (30 dias grátis + plano mensal/anual)
+
+O app agora tem uma estrutura completa de cobrança recorrente, pronta para ser ligada ao Mercado Pago.
+
+### Como funciona para quem usa
+
+1. Ao abrir o app pela primeira vez, começa o **período gratuito de 30 dias**, sem cartão.
+2. Em **Assinatura**, o usuário escolhe o plano **mensal** ou **anual**, informa o e-mail e é levado ao Mercado Pago.
+3. O Mercado Pago faz a primeira cobrança e, a partir daí, renova automaticamente. O cancelamento pode ser feito quando quiser, sem multa.
+4. Ao voltar para o app, a licença é confirmada por um aviso automático (webhook). Se estiver offline, o app aceita até **3 dias** sem conexão.
+5. Se o período gratuito acabar sem assinatura, o app entra em **modo somente leitura**: dados, backup e comprovantes continuam acessíveis, mas novos cadastros e edições ficam bloqueados.
+6. Cada assinatura gera uma **chave de licença** (ex.: `RL-1A2B3C4D5E6F`). Ela pode ser copiada na tela Assinatura e usada para recuperar o acesso em outro aparelho.
+
+### Páginas legais
+
+- [Termos de Uso](termos.html)
+- [Política de Privacidade](privacidade.html)
+
+Elas já explicam renovação, cancelamento, o direito de arrependimento de 7 dias (CDC, art. 49) e o tratamento dos dados.
+
+### O que já está pronto no código
+
+| Arquivo | Função |
+|---|---|
+| `subscription.js` | Controla trial, chave de licença, tolerância offline e a interface de status |
+| `netlify/functions/create-checkout.mjs` | Cria a assinatura no Mercado Pago e devolve o link de pagamento |
+| `netlify/functions/mp-webhook.mjs` | Recebe a confirmação do Mercado Pago e grava o status da licença |
+| `netlify/functions/license.mjs` | Consulta se a chave está ativa e devolve os dados do plano |
+| `netlify/functions/_shared.mjs` | Configuração compartilhada (Blobs, preços, CORS, chamadas à API) |
+| `netlify.toml` | Habilita as funções e define Node 20 |
+| `package.json` | Instala a biblioteca `@netlify/blobs` usada pelas funções |
+
+### Configuração única (o que falta fazer no painel)
+
+#### 1. Mercado Pago
+
+1. Entre em **Suas integrações** no portal de desenvolvedores do Mercado Pago e crie uma aplicação.
+2. Copie o **Access Token de produção** (ou o de teste, para os primeiros testes).
+3. Em **Webhooks > Configurar notificações**, cadastre a URL:
+   `https://teal-griffin-a37fbe.netlify.app/.netlify/functions/mp-webhook`
+   e marque os eventos **Assinaturas** (`subscription_preapproval`) e, se disponível, **Cobranças de assinatura** (`subscription_authorized_payment`).
+4. Copie a **chave secreta do webhook** gerada pelo Mercado Pago. Ela serve para confirmar que a notificação realmente veio dele.
+
+#### 2. Netlify
+
+No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment variables** e adicione:
+
+| Variável | Valor |
+|---|---|
+| `MP_ACCESS_TOKEN` | O Access Token copiado do Mercado Pago |
+| `MP_WEBHOOK_SECRET` | A chave secreta do webhook |
+| `MP_PRICE_MONTHLY` | Preço mensal em reais (padrão: `19.9`) |
+| `MP_PRICE_YEARLY` | Preço anual em reais (padrão: `199`) |
+| `SITE_URL` | `https://teal-griffin-a37fbe.netlify.app` |
+
+Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para as variáveis valerem.
+
+> Enquanto `MP_ACCESS_TOKEN` não estiver configurado, os botões de assinatura aparecem desativados e o app funciona normalmente no modo gratuito — nada quebra.
+
+#### 3. Teste antes de cobrar de verdade
+
+1. Use um **Access Token de teste** e uma conta de comprador de teste do Mercado Pago.
+2. Clique em **Assinar mensal**, informe o e-mail de teste e conclua o pagamento com um cartão de teste.
+3. Confira se a chave aparece em **Assinatura** e se o banner muda para **Assinatura ativa**.
+4. Só depois disto troque para o token de produção.
+
+### Observações importantes
+
+- **O GitHub Pages é apenas um espelho.** Ele serve os arquivos estáticos, mas não roda funções. Para assinar, use sempre o endereço do Netlify. O app detecta isso e avisa.
+- **Os dados do racha continuam 100% locais.** A assinatura não sincroniza jogadores nem valores entre dispositivos; use o backup JSON para isso.
+- **O bloqueio real fica no servidor.** Como o repositório é público, alguém pode copiar o código, mas sem uma chave de licença válida (confirmada pelo webhook) não consegue liberar a edição no site publicado.
+- **Nunca coloque o Access Token dentro do `app.js`.** Ele fica apenas nas variáveis de ambiente do Netlify.

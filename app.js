@@ -22,14 +22,35 @@ const PAGES = {
   scores:     { title: 'Pontuação',        sub: 'Lançamento mensal de gols, assistências e presença', ico: '⚽' },
   ranking:    { title: 'Ranking',          sub: 'Campeonato interno trimestral e anual', ico: '🏆' },
   awards:     { title: 'Premiações',       sub: 'Vencedores do mês e brindes entregues', ico: '🎁' },
+  subscription: { title: 'Assinatura',     sub: 'Período gratuito, plano e chave de licença', ico: '⭐' },
   settings:   { title: 'Configurações',    sub: 'Premissas, backup e limpeza de dados', ico: '⚙️' }
 };
 
 const NAV = [
   { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'expenses', 'benefits', 'cash'] },
   { group: 'Desempenho', items: ['scores', 'ranking', 'awards'] },
-  { group: 'Planejamento', items: ['simulator', 'settings'] }
+  { group: 'Planejamento', items: ['simulator', 'settings'] },
+  { group: 'Conta', items: ['subscription'] }
 ];
+
+/* Ações que alteram dados: ficam bloqueadas se a assinatura vencer.
+   Navegar, consultar, copiar e baixar backup continuam liberados. */
+const WRITE_ACTS = new Set([
+  'quick-target', 'edit-player', 'delete-player', 'save-photo', 'remove-photo',
+  'confirm-payment-modal', 'confirm-payment-link', 'edit-payment', 'delete-payment',
+  'pay-all', 'clear-month', 'generate-games', 'delete-day', 'quick-expense',
+  'delete-expense', 'edit-benefit', 'delete-benefit', 'apply-sim',
+  'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv'
+]);
+
+function licenseLocked() {
+  return !!(window.RachaLicense && window.RachaLicense.isLocked());
+}
+
+function warnLocked() {
+  toast('Período/assinatura encerrado. A edição está bloqueada; seus dados estão intactos.', 'err');
+  navigate('subscription');
+}
 
 /* ------------------------------------------------------------
    Utilitários
@@ -1084,6 +1105,123 @@ function pageSettings() {
     </form>`;
 }
 
+function pageSubscription() {
+  const L = window.RachaLicense;
+  const st = L.status();
+  const plans = L.plans();
+  const key = L.key;
+  const known = L.lastKnown;
+  const badgeKind = st.kind === 'active' || st.kind === 'grace' ? 'green' : st.kind === 'trial' ? 'blue' : st.kind === 'pending' ? 'amber' : 'red';
+  const canPay = L.canUseServer();
+  const ready = canPay && L.configured;
+  const note = !canPay
+    ? 'Este espelho é somente leitura para pagamentos. Para assinar, use o site principal: teal-griffin-a37fbe.netlify.app.'
+    : !ready
+      ? 'O checkout ainda está sendo configurado pelo administrador. Você pode continuar usando o período gratuito normalmente.'
+      : '';
+
+  return `
+    <div class="stack">
+      <div class="sub-hero">
+        <div class="row" style="align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <h2>${esc(st.label)}</h2>
+            <p>${esc(st.detail)}. Seus dados continuam salvos neste navegador, mesmo sem assinatura.</p>
+          </div>
+          <div>${badge(st.label, badgeKind)}</div>
+        </div>
+        ${note ? `<div class="banner" style="margin:14px 0 0">${esc(note)}</div>` : ''}
+      </div>
+
+      <div class="card">
+        ${section('Escolha seu plano', 'Renovação automática. Cancele quando quiser.')}
+        <div class="card-body">
+          <div class="sub-plans">
+            <div class="plan-card">
+              <span class="plan-tag">Mensal</span>
+              <div class="plan-name">Plano mensal</div>
+              <div class="plan-price">${money(plans.monthly.amount)} <small>/ mês</small></div>
+              <ul class="plan-list">
+                <li>Todos os 12 módulos do app</li>
+                <li>Instalação como aplicativo no celular</li>
+                <li>Backup e comprovantes ilimitados</li>
+              </ul>
+              <button class="btn btn-primary btn-block" type="button" data-act="subscribe" data-plan="monthly" ${ready ? '' : 'disabled'}>Assinar mensal</button>
+            </div>
+            <div class="plan-card featured">
+              <span class="plan-tag">Mais econômico</span>
+              <div class="plan-name">Plano anual</div>
+              <div class="plan-price">${money(plans.yearly.amount)} <small>/ ano</small></div>
+              <ul class="plan-list">
+                <li>Tudo do plano mensal</li>
+                <li>Cerca de 2 meses grátis por ano</li>
+                <li>Uma cobrança por ano</li>
+              </ul>
+              <button class="btn btn-primary btn-block" type="button" data-act="subscribe" data-plan="yearly" ${ready ? '' : 'disabled'}>Assinar anual</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          ${section('Minha chave de licença', 'Guarde esta chave para recuperar o acesso em outro aparelho')}
+          <div class="card-body stack">
+            ${key ? `
+              <div class="sub-key">${esc(key)}</div>
+              <div class="row">
+                <button class="btn btn-sm btn-ghost" type="button" data-act="copy-license">📋 Copiar chave</button>
+                <button class="btn btn-sm btn-ghost" type="button" data-act="refresh-license">🔄 Verificar agora</button>
+              </div>
+              ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
+              ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
+              ${L.lastError ? `<p class="tiny" style="color:var(--amber)">Sem conexão com o servidor neste momento. A licença continua válida por até 3 dias offline.</p>` : ''}
+            ` : `
+              <p class="small muted">Você ainda não tem uma chave. Ela aparece automaticamente quando você inicia uma assinatura.</p>
+              <form data-form="license-key" class="row">
+                <input name="key" placeholder="RL-XXXXXXXXXXXX" aria-label="Chave de licença" style="flex:1" />
+                <button class="btn btn-primary" type="submit">Ativar</button>
+              </form>
+              <p class="tiny muted">Já assinou em outro dispositivo? Digite a chave recebida no checkout.</p>
+            `}
+          </div>
+        </div>
+        <div class="card">
+          ${section('Como funciona', 'Simples e sem surpresas')}
+          <div class="card-body">
+            <div class="sub-steps">
+              <div class="sub-step"><span>Use grátis por 30 dias e teste tudo, sem cartão.</span></div>
+              <div class="sub-step"><span>Escolha o plano e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
+              <div class="sub-step"><span>Ao concluir o pagamento, a licença é confirmada automaticamente e o app volta a liberar a edição.</span></div>
+              <div class="sub-step"><span>Guarde a chave de licença: ela serve para recuperar o acesso em outro aparelho.</span></div>
+            </div>
+            <div class="legal-links" style="margin-top:18px">
+              <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a>
+              <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function modalSubscribe(plan) {
+  const L = window.RachaLicense;
+  const p = L.plans()[plan] || L.plans().monthly;
+  openModal('Assinar ' + p.label, 'Você será direcionado ao Mercado Pago para concluir o pagamento.', `
+    <form data-form="checkout" data-plan="${esc(plan)}" class="stack">
+      <div class="sim-result">
+        <div style="font-size:22px;font-weight:850">${money(p.amount)} <span class="tiny muted">/ ${plan === 'yearly' ? 'ano' : 'mês'}</span></div>
+        <p class="small muted mt">Cobrança recorrente automática. Cancele quando quiser, sem multa.</p>
+      </div>
+      <label class="field">E-mail para a assinatura
+        <input name="email" type="email" required autocomplete="email" placeholder="voce@exemplo.com" />
+      </label>
+      <p class="tiny muted">Ao continuar, você concorda com os <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>. Você tem 7 dias de arrependimento conforme o CDC.</p>
+      <button class="btn btn-primary btn-block" type="submit">Ir para o pagamento →</button>
+    </form>`);
+}
+
 function hasDemo() {
   return ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].some(k => state[k].some(x => x.demo));
 }
@@ -1151,7 +1289,7 @@ function handleHash() {
 const PAGE_FNS = {
   dashboard: pageDashboard, players: pagePlayers, payments: pagePayments, games: pageGames,
   expenses: pageExpenses, benefits: pageBenefits, cash: pageCash, simulator: pageSimulator, scores: pageScores,
-  ranking: pageRanking, awards: pageAwards, settings: pageSettings
+  ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
 };
 
 function renderNav() {
@@ -1168,6 +1306,7 @@ function render() {
   $('#page-title').textContent = p.title;
   $('#page-subtitle').textContent = p.sub;
   $('#content').innerHTML = PAGE_FNS[ui.page]();
+  if (window.RachaLicense) window.RachaLicense.renderBanner();
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
 
@@ -1553,6 +1692,8 @@ document.addEventListener('click', (e) => {
   if (!el) return;
   const act = el.dataset.act, id = el.dataset.id;
 
+  if (WRITE_ACTS.has(act) && licenseLocked()) { warnLocked(); return; }
+
   switch (act) {
     case 'toggle-sidebar': document.body.classList.toggle('menu-open'); break;
     case 'nav': navigate(el.dataset.page); break;
@@ -1581,8 +1722,22 @@ document.addEventListener('click', (e) => {
     case 'close-modal': closeModal(); break;
     case 'confirm-yes': { const fn = pendingConfirm; closeModal(); if (fn) fn(); break; }
 
+    case 'open-subscription': navigate('subscription'); break;
+    case 'subscribe': modalSubscribe(el.dataset.plan); break;
+    case 'copy-license':
+      copyText(window.RachaLicense.key || '').then(ok => toast(ok ? 'Chave copiada!' : 'Não foi possível copiar.', ok ? 'ok' : 'err'));
+      break;
+    case 'refresh-license':
+      toast('Verificando licença...');
+      window.RachaLicense.refresh().then((data) => {
+        toast(data ? (data.valid ? 'Assinatura confirmada!' : 'Assinatura ainda não confirmada.') : 'Sem conexão. Tente novamente em instantes.', data && data.valid ? 'ok' : 'err');
+        render();
+      });
+      break;
+
     case 'open-modal': {
       const m = el.dataset.modal;
+      if (licenseLocked() && !['settings', 'subscription'].includes(m)) { warnLocked(); break; }
       if (m === 'player') modalPlayer();
       else if (m === 'game') modalGame();
       else if (m === 'day') modalDay();
@@ -1773,13 +1928,42 @@ document.addEventListener('click', (e) => {
   }
 });
 
-document.addEventListener('submit', (e) => {
+document.addEventListener('submit', async (e) => {
   const form = e.target.closest('form[data-form]');
   if (!form) return;
   e.preventDefault();
   const fd = new FormData(form);
   const v = (k) => String(fd.get(k) ?? '').trim();
   const type = form.dataset.form;
+
+  if (licenseLocked() && !['checkout', 'license-key'].includes(type)) { warnLocked(); return; }
+
+  if (type === 'checkout') {
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Abrindo pagamento...'; }
+    try {
+      const data = await window.RachaLicense.beginCheckout(v('email'), form.dataset.plan);
+      if (!data.initPoint) throw new Error('O Mercado Pago não retornou um link. Tente novamente.');
+      closeModal();
+      window.open(data.initPoint, '_blank', 'noopener');
+      toast('Pagamento aberto. Volte ao app após concluir.');
+      render();
+    } catch (err) {
+      toast(err.message || 'Não foi possível iniciar.', 'err');
+      if (btn) { btn.disabled = false; btn.textContent = 'Ir para o pagamento →'; }
+    }
+    return;
+  }
+
+  if (type === 'license-key') {
+    const key = v('key');
+    if (!key) { toast('Digite a chave de licença.', 'err'); return; }
+    toast('Verificando chave...');
+    const data = await window.RachaLicense.activate(key);
+    toast(data && data.valid ? 'Assinatura ativada!' : 'Chave salva. Aguarde a confirmação do pagamento.', data && data.valid ? 'ok' : 'err');
+    render();
+    return;
+  }
 
   if (type === 'player') {
     const data = {
@@ -1856,6 +2040,7 @@ document.addEventListener('submit', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
+  if (licenseLocked() && ['year-select', 'import-file', 'pay-month', 'score-month', 'award-month'].includes(el.id)) { warnLocked(); return; }
   if (el.id === 'year-select') { state.settings.year = num(el.value); ui.sim = null; save(); render(); return; }
   if (el.id === 'pay-month') { ui.payMonth = num(el.value); render(); return; }
   if (el.id === 'score-month') { ui.scoreMonth = num(el.value); render(); return; }
@@ -1887,7 +2072,11 @@ document.addEventListener('change', (e) => {
     });
     return;
   }
-  if (el.dataset.score) { upsertScore(el.dataset.player, el.dataset.score, el.type === 'checkbox' ? el.checked : el.value); return; }
+  if (el.dataset.score) {
+    if (licenseLocked()) { warnLocked(); return; }
+    upsertScore(el.dataset.player, el.dataset.score, el.type === 'checkbox' ? el.checked : el.value);
+    return;
+  }
 });
 
 document.addEventListener('input', (e) => {
@@ -1928,6 +2117,11 @@ try {
 } catch (e) { /* ignore */ }
 
 applyColors();
+if (window.RachaLicense) {
+  window.RachaLicense.init(() => {
+    if (ui.paymentPage) renderPaymentPage(); else render();
+  });
+}
 render();
 handleHash();
 

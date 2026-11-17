@@ -305,11 +305,56 @@ textarea { resize: vertical; min-height: 70px; }
 .receipt-foot { padding: 11px 20px; background: var(--panel-3); color: var(--muted-2); font-size: 10px; text-align: center; }
 
 /* ---------- página de pagamento ---------- */
-body.payment-mode .sidebar, body.payment-mode .topbar { display: none; }
+body.payment-mode .sidebar, body.payment-mode .topbar, body.payment-mode #license-banner { display: none; }
 body.payment-mode .content { padding: 26px 16px 50px; }
 .payment-center { display: flex; justify-content: center; align-items: flex-start; min-height: calc(100vh - 60px); }
 .payment-center .card { width: min(460px, 100%); }
 .payment-center textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; word-break: break-all; }
+
+/* ---------- assinatura / licença ---------- */
+.license-banner { display: flex; align-items: center; gap: 12px; padding: 10px 18px; border-bottom: 1px solid; font-size: 12px; }
+.license-banner[hidden] { display: none; }
+.license-banner.trial { background: var(--blue-soft); border-color: var(--blue); color: var(--blue); }
+.license-banner.pending { background: var(--amber-soft); border-color: var(--amber); color: var(--amber); }
+.license-banner.expired { background: var(--red-soft); border-color: var(--red); color: var(--red); }
+.license-banner.grace { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.license-banner-ico { font-size: 18px; line-height: 1; }
+.license-banner-text { display: flex; flex-direction: column; line-height: 1.35; }
+.license-banner-detail { opacity: .88; font-weight: 500; font-size: 11px; }
+.license-banner .btn { margin-left: auto; white-space: nowrap; }
+
+.sub-hero { border-radius: var(--radius); padding: 22px 24px; background: linear-gradient(135deg, var(--panel-2), var(--panel)); border: 1px solid var(--border); }
+.sub-hero h2 { font-size: 18px; }
+.sub-hero p { color: var(--muted); font-size: 13px; margin-top: 6px; max-width: 720px; }
+.sub-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.plan-card { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+.plan-card.featured { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.plan-tag { align-self: flex-start; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; padding: 4px 9px; border-radius: 20px; background: var(--accent-soft); color: var(--accent); }
+.plan-name { font-size: 15px; font-weight: 800; margin-top: 12px; }
+.plan-price { font-size: 34px; font-weight: 850; letter-spacing: -.04em; margin: 6px 0 0; }
+.plan-price small { font-size: 12px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.plan-list { list-style: none; margin: 16px 0 20px; padding: 0; display: grid; gap: 8px; }
+.plan-list li { color: var(--muted); font-size: 12px; padding-left: 20px; position: relative; }
+.plan-list li::before { content: '✓'; position: absolute; left: 0; color: var(--accent); font-weight: 900; }
+.plan-card .btn { margin-top: auto; }
+.sub-key { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; letter-spacing: .06em; background: var(--panel-2); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 10px 12px; word-break: break-all; }
+.sub-steps { display: grid; gap: 10px; counter-reset: passo; }
+.sub-step { display: flex; gap: 12px; align-items: flex-start; color: var(--muted); font-size: 12px; }
+.sub-step::before { counter-increment: passo; content: counter(passo); flex: 0 0 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 900; font-size: 11px; }
+.legal-links { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; }
+
+/* ---------- páginas legais ---------- */
+.legal-page { max-width: 860px; margin: 0 auto; padding: 32px 18px 70px; }
+.legal-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px 28px; box-shadow: var(--shadow); }
+.legal-page h1 { font-size: 27px; }
+.legal-page h2 { font-size: 17px; margin: 28px 0 8px; color: var(--accent); }
+.legal-page h3 { font-size: 14px; margin: 18px 0 6px; }
+.legal-page p, .legal-page li { color: var(--muted); font-size: 13.5px; line-height: 1.7; }
+.legal-page ul { padding-left: 20px; margin: 8px 0; }
+.legal-page strong { color: var(--text); }
+.legal-updated { color: var(--muted-2); font-size: 11px; margin-top: 6px; }
+.legal-back { display: inline-block; font-size: 12px; font-weight: 700; margin-bottom: 18px; }
+.legal-note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin: 16px 0; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
@@ -324,6 +369,9 @@ body.payment-mode .content { padding: 26px 16px 50px; }
   .content { padding: 18px 16px 50px; }
   .grid-3, .grid-2, .form-grid, .form-grid.three { grid-template-columns: 1fr; }
   .topbar-actions .btn-ghost { display: none; }
+  .sub-plans { grid-template-columns: 1fr; }
+  .license-banner { flex-wrap: wrap; }
+  .license-banner .btn { margin-left: 0; }
 }
 @media (max-width: 560px) {
   .grid-4 { grid-template-columns: 1fr; }

@@ -1,0 +1,9 @@
+{
+  "name": "racha-do-lolo",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Aplicativo offline-first de gestão do Racha do Loló, com assinatura recorrente via Mercado Pago.",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.7"
+  }
+}
