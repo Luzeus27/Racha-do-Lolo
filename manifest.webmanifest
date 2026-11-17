@@ -1,0 +1,17 @@
+{
+  "name": "Racha do Loló — Gestão do Racha",
+  "short_name": "Racha do Loló",
+  "description": "Controle de caixa, jogadores, mensalidades, jogos e ranking do Racha do Loló.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a1120",
+  "theme_color": "#35d07f",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
