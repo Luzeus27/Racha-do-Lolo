@@ -40,8 +40,8 @@ function envNumber(name, fallback) {
 
 export function plans() {
   return {
-    monthly: { amount: envNumber('MP_PRICE_MONTHLY', 19.9), frequency: 1, label: 'Mensal' },
-    yearly: { amount: envNumber('MP_PRICE_YEARLY', 199), frequency: 12, label: 'Anual' }
+    monthly: { amount: envNumber('MP_PRICE_MONTHLY', 9), frequency: 1, label: 'Mensal' },
+    yearly: { amount: envNumber('MP_PRICE_YEARLY', 90), frequency: 12, label: 'Anual' }
   };
 }
 
