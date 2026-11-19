@@ -12,9 +12,13 @@ Aplicativo web **offline** criado a partir da planilha `Racha_do_Lolo_Controle.x
 
 O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver um commit na branch `main`, o Netlify publica automaticamente a nova versão e o GitHub Pages atualiza o espelho.
 
+## Aviso legal
+
+Este projeto é de uso exclusivo do titular. O código, o nome, a identidade visual e os materiais são protegidos e **todos os direitos estão reservados**. O fato de o repositório ser público permite apenas a visualização; não autoriza copiar, modificar, redistribuir, revender ou publicar em outro domínio sem permissão por escrito. Veja o arquivo [LICENSE](LICENSE) e os [Termos de Uso](termos.html).
+
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `subscription.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `netlify/functions/*.mjs` (checkout, webhook e licença), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook e licença), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
 
 ## Como usar
 
