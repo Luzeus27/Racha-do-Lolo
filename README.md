@@ -35,7 +35,8 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 | Aba da planilha | Módulo no app |
 |---|---|
 | Premissas | Configurações |
-| Jogadores | Jogadores (com perfil individual) |
+| Jogadores | Jogadores (com perfil individual e características) |
+| Sorteio de equipes | Sorteador |
 | Mensalidades | Mensalidades (grade 12 meses + cobrança via WhatsApp) |
 | Diárias | Jogos & Diárias |
 | Despesas | Despesas |
@@ -64,12 +65,14 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 - **Link de cobrança por jogador** (botão 🔗 na aba Jogadores): gera link de pagamento, código PIX copia-e-cola e envio via WhatsApp; ao confirmar, a mensalidade recebe **baixa automática**.
 - **Comprovante de pagamento** com ID único após a baixa: copiar texto, baixar PNG ou salvar em PDF.
 - **PWA instalável** no celular, com service worker para funcionar offline.
+- **Ficha completa do jogador**: além de contato e observação, guarde idade, altura, peso e as características **força** e **velocidade** (em %). O perfil mostra tudo e calcula a **nota geral** (média de força e velocidade).
+- **Sorteador de equipes**: aba dedicada para montar os times do racha. Marque os jogadores que confirmaram presença (por data de jogo ou avulso), escolha o tamanho da equipe (padrão 6) e sorteie em modo **equilibrado** (usa força/velocidade e distribui os goleiros) ou **aleatório**. Há **refazer sorteio** e o histórico garante que as equipes **não se repetem**.
 
 ## Formatos aceitos na importação CSV
 
 Use `;` ou `,` como separador. A primeira linha deve conter os cabeçalhos.
 
-- **Jogadores**: `Nome;Tipo;Posição;Telefone;Observação`
+- **Jogadores**: `Nome;Tipo;Posição;Telefone;Observação;Idade;Altura;Peso;Força;Velocidade` (as cinco últimas colunas são opcionais)
 - **Mensalidades**: `Jogador;Jan;Fev;Mar;Abr;Mai;Jun;Jul;Ago;Set;Out;Nov;Dez` (informe apenas os valores pagos)
 - **Despesas**: `Data;Categoria;Descrição;Valor` (data em `dd/mm/aaaa` ou `aaaa-mm-dd`)
 - **Diárias**: `Data;Jogador;Valor`
@@ -129,13 +132,13 @@ O comprovante pode ser **copiado como texto**, **baixado em PNG** ou **salvo em 
 
 ---
 
-## Assinatura recorrente (30 dias grátis + plano mensal/anual)
+## Assinatura recorrente (14 dias grátis + plano mensal/anual)
 
 O app agora tem uma estrutura completa de cobrança recorrente, pronta para ser ligada ao Mercado Pago.
 
 ### Como funciona para quem usa
 
-1. Ao abrir o app pela primeira vez, começa o **período gratuito de 30 dias**, sem cartão.
+1. Ao abrir o app pela primeira vez, começa o **período gratuito de 14 dias**, sem cartão.
 2. Em **Assinatura**, o usuário escolhe o plano **mensal** ou **anual**, informa o e-mail e é levado ao Mercado Pago.
 3. O Mercado Pago faz a primeira cobrança e, a partir daí, renova automaticamente. O cancelamento pode ser feito quando quiser, sem multa.
 4. Ao voltar para o app, a licença é confirmada por um aviso automático (webhook). Se estiver offline, o app aceita até **3 dias** sem conexão.
@@ -180,8 +183,8 @@ No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment v
 |---|---|
 | `MP_ACCESS_TOKEN` | O Access Token copiado do Mercado Pago |
 | `MP_WEBHOOK_SECRET` | A chave secreta do webhook |
-| `MP_PRICE_MONTHLY` | Preço mensal em reais (padrão: `19.9`) |
-| `MP_PRICE_YEARLY` | Preço anual em reais (padrão: `199`) |
+| `MP_PRICE_MONTHLY` | Preço mensal em reais (padrão: `9`) |
+| `MP_PRICE_YEARLY` | Preço anual em reais (padrão: `90`) |
 | `SITE_URL` | `https://teal-griffin-a37fbe.netlify.app` |
 
 Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para as variáveis valerem.

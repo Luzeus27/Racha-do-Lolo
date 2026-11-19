@@ -20,6 +20,7 @@ const PAGES = {
   cash:       { title: 'Fluxo de caixa',   sub: 'Receitas, despesas, reserva e metas do ano', ico: '💰' },
   simulator:  { title: 'Simulador',        sub: 'Teste cenários de mensalidade e diaristas', ico: '📊' },
   scores:     { title: 'Pontuação',        sub: 'Lançamento mensal de gols, assistências e presença', ico: '⚽' },
+  sorteador:  { title: 'Sorteador',        sub: 'Monte as equipes do racha de forma equilibrada ou aleatória', ico: '🎲' },
   ranking:    { title: 'Ranking',          sub: 'Campeonato interno trimestral e anual', ico: '🏆' },
   awards:     { title: 'Premiações',       sub: 'Vencedores do mês e brindes entregues', ico: '🎁' },
   subscription: { title: 'Assinatura',     sub: 'Período gratuito, plano e chave de licença', ico: '⭐' },
@@ -27,7 +28,7 @@ const PAGES = {
 };
 
 const NAV = [
-  { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'expenses', 'benefits', 'cash'] },
+  { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'sorteador', 'expenses', 'benefits', 'cash'] },
   { group: 'Desempenho', items: ['scores', 'ranking', 'awards'] },
   { group: 'Planejamento', items: ['simulator', 'settings'] },
   { group: 'Conta', items: ['subscription'] }
@@ -40,7 +41,8 @@ const WRITE_ACTS = new Set([
   'confirm-payment-modal', 'confirm-payment-link', 'edit-payment', 'delete-payment',
   'pay-all', 'clear-month', 'generate-games', 'delete-day', 'quick-expense',
   'delete-expense', 'edit-benefit', 'delete-benefit', 'apply-sim',
-  'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv'
+  'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv',
+  'toggle-confirm', 'confirm-all', 'confirm-none', 'do-draw', 'clear-draw-history'
 ]);
 
 function licenseLocked() {
@@ -365,28 +367,28 @@ function emptyState() {
     version: 1,
     settings: defaultSettings(),
     players: [], payments: [], dayEntries: [], expenses: [], games: [],
-    benefits: [], scores: [], awards: []
+    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: []
   };
 }
 
 function makeDemoState() {
   const s = emptyState();
-  const p = (id, name, type, position, phone, note) => ({ id, name, type, position, phone, note, active: true, demo: true });
+  const p = (id, name, type, position, phone, note, attrs = {}) => ({ id, name, type, position, phone, note, active: true, demo: true, ...attrs });
   s.players = [
-    p('p1', 'Rafael Souza', 'Mensalista', 'Linha', '11999990001', 'Capitão'),
-    p('p2', 'Diego Alves', 'Mensalista', 'Meia', '11999990002', ''),
-    p('p3', 'Bruno Lima', 'Mensalista', 'Zaga', '11999990003', ''),
-    p('p4', 'Lucas Prado', 'Mensalista', 'Ataque', '11999990004', ''),
-    p('p5', 'Thiago Nunes', 'Mensalista', 'Linha', '11999990005', ''),
-    p('p6', 'Marcos Gomes', 'Mensalista', 'Goleiro', '11999990006', 'Titular'),
-    p('p7', 'Felipe Rocha', 'Mensalista', 'Linha', '11999990007', ''),
-    p('p8', 'Gustavo Melo', 'Mensalista', 'Meia', '11999990008', ''),
-    p('p9', 'Pedro Santos', 'Diarista', 'Ataque', '11988880001', ''),
-    p('p10', 'João Pereira', 'Diarista', 'Linha', '11988880002', ''),
-    p('p11', 'Neto Costa', 'Diarista', 'Zaga', '11988880003', ''),
-    p('p12', 'Caio Ribeiro', 'Diarista', 'Meia', '11988880004', ''),
-    p('p13', 'Beto Martins', 'Diarista', 'Linha', '11988880005', ''),
-    p('p14', 'Igor Freitas', 'Diarista', 'Goleiro', '11988880006', '')
+    p('p1', 'Rafael Souza', 'Mensalista', 'Linha', '11999990001', 'Capitão', { age: 34, height: 178, weight: 78, strength: 80, speed: 82 }),
+    p('p2', 'Diego Alves', 'Mensalista', 'Meia', '11999990002', '', { age: 27, height: 172, weight: 70, strength: 72, speed: 88 }),
+    p('p3', 'Bruno Lima', 'Mensalista', 'Zaga', '11999990003', '', { age: 31, height: 185, weight: 88, strength: 86, speed: 65 }),
+    p('p4', 'Lucas Prado', 'Mensalista', 'Ataque', '11999990004', '', { age: 24, height: 176, weight: 72, strength: 74, speed: 92 }),
+    p('p5', 'Thiago Nunes', 'Mensalista', 'Linha', '11999990005', '', { age: 29, height: 174, weight: 74, strength: 70, speed: 76 }),
+    p('p6', 'Marcos Gomes', 'Mensalista', 'Goleiro', '11999990006', 'Titular', { age: 38, height: 188, weight: 90, strength: 78, speed: 60 }),
+    p('p7', 'Felipe Rocha', 'Mensalista', 'Linha', '11999990007', '', { age: 33, height: 180, weight: 82, strength: 76, speed: 70 }),
+    p('p8', 'Gustavo Melo', 'Mensalista', 'Meia', '11999990008', '', { age: 26, height: 170, weight: 68, strength: 68, speed: 84 }),
+    p('p9', 'Pedro Santos', 'Diarista', 'Ataque', '11988880001', '', { age: 22, height: 177, weight: 71, strength: 76, speed: 90 }),
+    p('p10', 'João Pereira', 'Diarista', 'Linha', '11988880002', '', { age: 30, height: 175, weight: 76, strength: 72, speed: 74 }),
+    p('p11', 'Neto Costa', 'Diarista', 'Zaga', '11988880003', '', { age: 35, height: 183, weight: 86, strength: 84, speed: 62 }),
+    p('p12', 'Caio Ribeiro', 'Diarista', 'Meia', '11988880004', '', { age: 25, height: 171, weight: 69, strength: 70, speed: 86 }),
+    p('p13', 'Beto Martins', 'Diarista', 'Linha', '11988880005', '', { age: 41, height: 179, weight: 84, strength: 74, speed: 58 }),
+    p('p14', 'Igor Freitas', 'Diarista', 'Goleiro', '11988880006', '', { age: 28, height: 190, weight: 92, strength: 80, speed: 64 })
   ];
   const members = s.players.filter(x => x.type === 'Mensalista');
   const dailies = s.players.filter(x => x.type === 'Diarista');
@@ -431,6 +433,16 @@ try {
   if (!state || !state.settings) state = makeDemoState();
 } catch (e) { state = makeDemoState(); }
 
+/* Garante que estados antigos (sem os campos novos) continuem funcionando. */
+function normalizeState() {
+  if (!state || typeof state !== 'object') state = emptyState();
+  if (!state.settings) state.settings = defaultSettings();
+  ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
+  if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
+  if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
+}
+normalizeState();
+
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch (e) { toast('Não foi possível salvar no navegador.', 'err'); }
@@ -448,7 +460,10 @@ const ui = {
   rankFilter: 'year',
   sim: null,
   search: '',
-  playerFilter: 'all'
+  playerFilter: 'all',
+  drawGame: null,
+  drawMode: 'balanced',
+  drawSize: 6
 };
 
 /* ------------------------------------------------------------
@@ -728,6 +743,212 @@ function pagePlayers() {
         </tbody></table>` : empty('Nenhum jogador encontrado', 'Cadastre jogadores ou ajuste o filtro.', `<button class="btn btn-primary" data-act="open-modal" data-modal="player">＋ Cadastrar jogador</button>`)}
       </div>
     </div>`;
+}
+
+/* ------------------------------------------------------------
+   Sorteador de equipes
+   ------------------------------------------------------------ */
+function playerRating(p) {
+  if (!p) return 50;
+  const s = p.strength == null ? null : num(p.strength);
+  const v = p.speed == null ? null : num(p.speed);
+  if (s == null && v == null) return 50;
+  if (s == null) return v;
+  if (v == null) return s;
+  return Math.round((s + v) / 2);
+}
+
+function meterRow(label, value) {
+  const v = value == null ? null : Math.max(0, Math.min(100, num(value)));
+  return `<div class="meter"><div class="spread tiny"><span class="muted">${esc(label)}</span><strong>${v == null ? '—' : v + '%'}</strong></div><div class="progress"><span style="width:${v == null ? 0 : v}%"></span></div></div>`;
+}
+
+function drawGameOptions() {
+  const y = year();
+  return state.games.filter(g => g.year === y).sort((a, b) => b.date.localeCompare(a.date));
+}
+function defaultDrawGameKey() {
+  const y = year();
+  const inYear = state.games.filter(g => g.year === y).sort((a, b) => a.date.localeCompare(b.date));
+  const pool = inYear.length ? inYear : state.games.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const today = todayISO();
+  const next = pool.find(g => g.date >= today);
+  if (next) return next.id;
+  const last = pool[pool.length - 1];
+  return last ? last.id : '__manual__';
+}
+function drawGameKey() {
+  const key = ui.drawGame || defaultDrawGameKey();
+  ui.drawGame = key;
+  return key;
+}
+function confirmedIds(gameKey) {
+  const list = state.confirmations[gameKey];
+  return Array.isArray(list) ? list : [];
+}
+function drawGameLabel(key) {
+  if (key === '__manual__') return 'Avulso';
+  const g = state.games.find(x => x.id === key);
+  return g ? fmtDate(g.date) : 'Avulso';
+}
+
+function drawTeamsRandom(players, teamsCount) {
+  const shuffled = players.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const teams = Array.from({ length: teamsCount }, () => []);
+  shuffled.forEach((p, i) => teams[i % teamsCount].push(p));
+  return teams;
+}
+
+function drawTeamsBalanced(players, teamsCount) {
+  const sorted = players.slice().sort((a, b) => playerRating(b) - playerRating(a) || Math.random() - 0.5);
+  const teams = Array.from({ length: teamsCount }, () => []);
+  let idx = 0, dir = 1;
+  sorted.forEach(pl => {
+    teams[idx].push(pl);
+    if (dir === 1) { if (idx === teamsCount - 1) dir = -1; else idx++; }
+    else { if (idx === 0) dir = 1; else idx--; }
+  });
+  balanceGoalkeepers(teams);
+  return teams;
+}
+
+function balanceGoalkeepers(teams) {
+  const gkCount = (t) => t.filter(p => p.position === 'Goleiro').length;
+  for (let pass = 0; pass < 6; pass++) {
+    const over = teams.filter(t => gkCount(t) > 1).sort((a, b) => gkCount(b) - gkCount(a))[0];
+    const under = teams.filter(t => gkCount(t) === 0)[0];
+    if (!over || !under) break;
+    const gk = over.find(p => p.position === 'Goleiro');
+    const partner = under.slice().sort((a, b) => Math.abs(playerRating(a) - playerRating(gk)) - Math.abs(playerRating(b) - playerRating(gk)))[0];
+    if (!gk || !partner) break;
+    over.splice(over.indexOf(gk), 1); under.splice(under.indexOf(partner), 1);
+    over.push(partner); under.push(gk);
+  }
+}
+
+function avgRating(team) {
+  return team.length ? Math.round(sum(team, p => playerRating(p)) / team.length) : 0;
+}
+
+function doDraw() {
+  const key = drawGameKey();
+  const players = confirmedIds(key).map(playerById).filter(Boolean).filter(p => p.active !== false);
+  const size = Math.max(2, Math.min(20, Math.round(num(ui.drawSize) || 6)));
+  ui.drawSize = size;
+  if (players.length < 4) { toast('Confirme pelo menos 4 jogadores para sortear.', 'err'); return; }
+  const teamsCount = Math.max(2, Math.round(players.length / size));
+
+  const usedTeamSigs = new Set();
+  state.drawHistory.forEach(h => (h.teamSigs || []).forEach(s => usedTeamSigs.add(s)));
+
+  let best = null, bestRepeats = Infinity;
+  for (let attempt = 0; attempt < 150; attempt++) {
+    const teams = ui.drawMode === 'random' ? drawTeamsRandom(players, teamsCount) : drawTeamsBalanced(players, teamsCount);
+    const teamSigs = teams.map(t => t.map(p => p.id).sort().join('+'));
+    const repeats = teamSigs.filter(s => usedTeamSigs.has(s)).length;
+    if (repeats < bestRepeats) { bestRepeats = repeats; best = { teams, teamSigs }; }
+    if (repeats === 0) break;
+  }
+
+  const entry = {
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    gameKey: key,
+    gameLabel: drawGameLabel(key),
+    mode: ui.drawMode === 'random' ? 'random' : 'balanced',
+    teamSize: size,
+    teams: best.teams.map(t => t.map(p => p.id)),
+    teamSigs: best.teamSigs
+  };
+  state.drawHistory.unshift(entry);
+  if (state.drawHistory.length > 60) state.drawHistory.length = 60;
+  save();
+  if (bestRepeats > 0) toast('Já não havia combinações inéditas suficientes — algumas equipes se repetem.', 'err');
+  else toast('Equipes sorteadas!');
+  render();
+}
+
+function renderDrawResult(entry) {
+  const teams = (entry.teams || []).map(t => t.map(playerById).filter(Boolean));
+  return `<div class="card mt">
+    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), (entry.mode === 'random' ? 'Sorteio aleatório' : 'Equilibrado por características') + ' · ' + teams.length + ' equipes', `<span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
+    <div class="card-body">
+      <div class="grid grid-3">
+        ${teams.map((t, i) => `
+          <div class="card card-pad team-card">
+            <div class="spread"><strong>Equipe ${i + 1}</strong><span class="badge ${['green', 'blue', 'amber', 'purple'][i % 4]}">${t.length} jogadores</span></div>
+            <div class="tiny muted" style="margin:4px 0 10px">Nota média ${avgRating(t)}</div>
+            <ul class="team-list">
+              ${t.map(p => `<li>${avatarHTML(p, true)}<span class="team-name">${esc(p.name)}</span><span class="tiny muted">${esc(p.position || '—')} · ${playerRating(p)}</span></li>`).join('')}
+            </ul>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDrawHistory() {
+  return `<div class="card mt">
+    ${section('Histórico de sorteios', 'O sorteio evita repetir equipes já montadas', `<button class="btn btn-sm btn-danger" data-act="clear-draw-history">Limpar histórico</button>`)}
+    <div class="table-wrap"><table><thead><tr><th>Quando</th><th>Jogo</th><th>Modo</th><th>Equipes</th></tr></thead><tbody>
+      ${state.drawHistory.slice(0, 15).map(h => `<tr>
+        <td class="tiny muted">${new Date(h.createdAt).toLocaleString('pt-BR')}</td>
+        <td>${esc(h.gameLabel || 'Avulso')}</td>
+        <td>${h.mode === 'random' ? 'Aleatório' : 'Equilibrado'}</td>
+        <td class="tiny">${(h.teams || []).map((t, i) => `<div><strong>E${i + 1}:</strong> ${t.map(id => esc(playerName(id))).join(', ')}</div>`).join('')}</td>
+      </tr>`).join('')}
+    </tbody></table></div>
+  </div>`;
+}
+
+function pageSorteador() {
+  const games = drawGameOptions();
+  if (ui.drawGame && ui.drawGame !== '__manual__' && !games.some(g => g.id === ui.drawGame)) ui.drawGame = null;
+  const key = drawGameKey();
+  const ids = new Set(confirmedIds(key));
+  const players = activePlayers();
+  const confirmed = players.filter(p => ids.has(p.id));
+  const last = state.drawHistory[0] || null;
+
+  const gameOptions = [`<option value="__manual__" ${key === '__manual__' ? 'selected' : ''}>Avulso (sem data)</option>`,
+    ...games.map(g => `<option value="${g.id}" ${key === g.id ? 'selected' : ''}>${fmtDate(g.date)} · ${g.done ? 'realizado' : 'agendado'}</option>`)].join('');
+
+  return `
+    <div class="card">
+      ${section('Jogadores confirmados', 'Marque quem confirmou presença no racha', `
+        <select id="draw-game" style="width:200px">${gameOptions}</select>
+        <button class="btn btn-sm btn-ghost" data-act="confirm-all">Marcar todos</button>
+        <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>`)}
+      <div class="card-body">
+        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. A nota é a média de força e velocidade.</p>
+        ${players.length ? `<div class="chip-grid">
+          ${players.map(p => `<button class="chip ${ids.has(p.id) ? 'on' : ''}" data-act="toggle-confirm" data-id="${p.id}" type="button">
+            ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-rating">${playerRating(p)}</span></button>`).join('')}
+        </div>` : empty('Sem jogadores', 'Cadastre jogadores para poder sortear as equipes.')}
+      </div>
+    </div>
+
+    <div class="card mt">
+      ${section('Montagem das equipes', 'Escolha o formato e sorteie')}
+      <div class="card-body">
+        <div class="row" style="align-items:flex-end">
+          <label class="field" style="max-width:170px">Jogadores por equipe<input id="draw-size" type="number" min="2" max="20" value="${num(ui.drawSize) || 6}" /></label>
+          <label class="field" style="max-width:260px">Modo do sorteio<select id="draw-mode">
+            <option value="balanced" ${ui.drawMode === 'balanced' ? 'selected' : ''}>Equilibrado (por características)</option>
+            <option value="random" ${ui.drawMode === 'random' ? 'selected' : ''}>Aleatório (sem características)</option>
+          </select></label>
+          <button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button>
+        </div>
+        <p class="tiny muted mt">O sorteio equilibrado usa força e velocidade e distribui os goleiros entre as equipes. O aleatório ignora as características. Cada novo sorteio evita repetir equipes anteriores.</p>
+      </div>
+    </div>
+
+    ${last ? renderDrawResult(last) : `<div class="card mt">${empty('Nenhum sorteio ainda', 'Confirme os jogadores e toque em “Sortear equipes”.')}</div>`}
+    ${state.drawHistory.length > 1 ? renderDrawHistory() : ''}`;
 }
 
 function pagePayments() {
@@ -1190,7 +1411,7 @@ function pageSubscription() {
           ${section('Como funciona', 'Simples e sem surpresas')}
           <div class="card-body">
             <div class="sub-steps">
-              <div class="sub-step"><span>Use grátis por 30 dias e teste tudo, sem cartão.</span></div>
+              <div class="sub-step"><span>Use grátis por 14 dias e teste tudo, sem cartão.</span></div>
               <div class="sub-step"><span>Escolha o plano e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
               <div class="sub-step"><span>Ao concluir o pagamento, a licença é confirmada automaticamente e o app volta a liberar a edição.</span></div>
               <div class="sub-step"><span>Guarde a chave de licença: ela serve para recuperar o acesso em outro aparelho.</span></div>
@@ -1289,7 +1510,7 @@ function handleHash() {
 const PAGE_FNS = {
   dashboard: pageDashboard, players: pagePlayers, payments: pagePayments, games: pageGames,
   expenses: pageExpenses, benefits: pageBenefits, cash: pageCash, simulator: pageSimulator, scores: pageScores,
-  ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
+  sorteador: pageSorteador, ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
 };
 
 function renderNav() {
@@ -1344,8 +1565,9 @@ function confirmAction(message, fn) {
 }
 
 function modalPlayer(id) {
-  const p = id ? playerById(id) : { name: '', type: 'Mensalista', position: '', phone: '', note: '', active: true };
+  const p = id ? playerById(id) : { name: '', type: 'Mensalista', position: '', phone: '', note: '', age: null, height: null, weight: null, strength: null, speed: null, active: true };
   if (!p) return;
+  const nv = (v) => (v === null || v === undefined || v === '') ? '' : num(v);
   openModal(id ? 'Editar jogador' : 'Novo jogador', 'Campos marcados são opcionais', `
     <form data-form="player" data-id="${id || ''}" class="form-grid">
       <label class="field" style="grid-column:1/-1">Nome *<input name="name" required value="${esc(p.name)}" placeholder="Nome completo ou apelido" /></label>
@@ -1353,6 +1575,12 @@ function modalPlayer(id) {
       <label class="field">Posição<select name="position">${['Linha', 'Meia', 'Zaga', 'Ataque', 'Goleiro'].map(x => `<option ${p.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label class="field">Telefone / WhatsApp<input name="phone" value="${esc(p.phone || '')}" placeholder="11999999999" /></label>
       <label class="field">Observação<input name="note" value="${esc(p.note || '')}" placeholder="Ex.: capitão,VICE..." /></label>
+      <div class="fieldset-title">Características (usadas no sorteio equilibrado)</div>
+      <label class="field">Idade<input name="age" type="number" min="0" max="120" value="${nv(p.age)}" placeholder="Ex.: 30" /></label>
+      <label class="field">Altura (cm)<input name="height" type="number" min="0" max="260" value="${nv(p.height)}" placeholder="Ex.: 175" /></label>
+      <label class="field">Peso (kg)<input name="weight" type="number" min="0" max="300" value="${nv(p.weight)}" placeholder="Ex.: 75" /></label>
+      <label class="field">Força (%)<input name="strength" type="number" min="0" max="100" value="${nv(p.strength)}" placeholder="0 a 100" /></label>
+      <label class="field">Velocidade (%)<input name="speed" type="number" min="0" max="100" value="${nv(p.speed)}" placeholder="0 a 100" /></label>
       <label class="field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px"><input name="active" type="checkbox" ${p.active !== false ? 'checked' : ''} style="width:16px" /> Jogador ativo</label>
       <div class="form-actions" style="grid-column:1/-1"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Salvar</button></div>
     </form>`);
@@ -1517,7 +1745,7 @@ function modalImportCSV() {
     <form data-form="csv" class="form-grid one">
       <label class="field">Tipo de dados
         <select name="entity">
-          <option value="players">Jogadores (Nome; Tipo; Posição; Telefone; Observação)</option>
+          <option value="players">Jogadores (Nome; Tipo; Posição; Telefone; Observação; Idade; Altura; Peso; Força; Velocidade)</option>
           <option value="payments">Mensalidades (Jogador; Jan; Fev; ...; Dez)</option>
           <option value="expenses">Despesas (Data; Categoria; Descrição; Valor)</option>
           <option value="days">Diárias (Data; Jogador; Valor)</option>
@@ -1536,7 +1764,8 @@ function modalProfile(id) {
   const paid = state.payments.filter(x => x.playerId === id && x.paid !== false);
   const days = state.dayEntries.filter(d => d.playerId === id);
   const rank = rankingFor('year').find(r => r.playerId === id);
-  openModal(p.name, `${p.type} · ${p.position || 'sem posição'}`, `
+  const info = (label, value) => `<div class="card kpi"><div class="label">${label}</div><div class="value" style="font-size:19px">${value}</div></div>`;
+  return openModal(p.name, `${p.type} · ${p.position || 'sem posição'}`, `
     <div class="center">${avatarHTML(p, false).replace('class="avatar', 'class="avatar big')}</div>
     <div class="grid grid-4 mt">
       <div class="card kpi"><div class="label">Pontos</div><div class="value">${pts}</div></div>
@@ -1544,8 +1773,22 @@ function modalProfile(id) {
       <div class="card kpi amber"><div class="label">Assist.</div><div class="value">${sum(scores, s => s.assists)}</div></div>
       <div class="card kpi"><div class="label">Posição</div><div class="value">${rank ? '#' + rank.pos : '—'}</div></div>
     </div>
+    <div class="grid grid-4 mt">
+      ${info('Idade', p.age == null ? '—' : num(p.age) + ' anos')}
+      ${info('Altura', p.height == null ? '—' : num(p.height) + ' cm')}
+      ${info('Peso', p.weight == null ? '—' : num(p.weight) + ' kg')}
+      ${info('Nota geral', playerRating(p))}
+    </div>
     <div class="grid grid-2 mt">
+      <div class="card card-pad"><div class="label tiny muted">CARACTERÍSTICAS</div>
+        <div class="mt" style="display:flex;flex-direction:column;gap:10px">
+          ${meterRow('Força', p.strength)}
+          ${meterRow('Velocidade', p.speed)}
+        </div>
+      </div>
       <div class="card card-pad"><div class="label tiny muted">CONTATO</div><strong>${esc(p.phone || '—')}</strong><div class="tiny muted mt">${esc(p.note || 'Sem observações')}</div></div>
+    </div>
+    <div class="grid grid-2 mt">
       <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
     </div>
     <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-primary" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
@@ -1590,9 +1833,9 @@ function exportCashCSV() {
   toast('Caixa exportado em CSV.');
 }
 function exportPlayersCSV() {
-  const head = ['Nome', 'Tipo', 'Posição', 'Telefone', 'Observação'];
+  const head = ['Nome', 'Tipo', 'Posição', 'Telefone', 'Observação', 'Idade', 'Altura', 'Peso', 'Força', 'Velocidade'];
   const line = (cells) => cells.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';');
-  const out = [head, ...activePlayers().map(p => [p.name, p.type, p.position, p.phone, p.note])].map(line).join('\r\n');
+  const out = [head, ...activePlayers().map(p => [p.name, p.type, p.position, p.phone, p.note, p.age ?? '', p.height ?? '', p.weight ?? '', p.strength ?? '', p.speed ?? ''])].map(line).join('\r\n');
   download('jogadores.csv', '\ufeff' + out, 'text/csv;charset=utf-8');
   toast('Jogadores exportados em CSV.');
 }
@@ -1639,7 +1882,7 @@ function importCSV(entity, text) {
     rows.forEach(r => {
       const name = r['nome'] || r['jogador'];
       if (!name) return;
-      state.players.push({ id: uid(), name, type: String(r['tipo'] || '').toLowerCase().includes('diar') ? 'Diarista' : 'Mensalista', position: r['posicao'] || 'Linha', phone: r['telefone'] || r['contato'] || '', note: r['observacao'] || '', active: true });
+      state.players.push({ id: uid(), name, type: String(r['tipo'] || '').toLowerCase().includes('diar') ? 'Diarista' : 'Mensalista', position: r['posicao'] || 'Linha', phone: r['telefone'] || r['contato'] || '', note: r['observacao'] || '', active: true, age: num(r['idade']) || null, height: num(r['altura']) || null, weight: num(r['peso']) || null, strength: num(r['forca']) || null, speed: num(r['velocidade']) || null });
       n++;
     });
   } else if (entity === 'payments') {
@@ -1884,6 +2127,32 @@ document.addEventListener('click', (e) => {
       save(); render(); toast('Diária excluída.');
     }); break;
 
+    case 'toggle-confirm': {
+      const key = drawGameKey();
+      const set = new Set(confirmedIds(key));
+      if (set.has(id)) set.delete(id); else set.add(id);
+      state.confirmations[key] = [...set];
+      save(); render();
+      break;
+    }
+    case 'confirm-all': {
+      const key = drawGameKey();
+      state.confirmations[key] = activePlayers().map(p => p.id);
+      save(); render(); toast('Todos os jogadores confirmados.');
+      break;
+    }
+    case 'confirm-none': {
+      const key = drawGameKey();
+      state.confirmations[key] = [];
+      save(); render(); toast('Lista de confirmados limpa.');
+      break;
+    }
+    case 'do-draw': doDraw(); break;
+    case 'clear-draw-history': confirmAction('Apagar todo o histórico de sorteios?', () => {
+      state.drawHistory = [];
+      save(); render(); toast('Histórico de sorteios apagado.');
+    }); break;
+
     case 'quick-expense': {
       const cat = el.dataset.cat, m = currentMonth(), y = year();
       const amount = cat === 'Quadra' ? num(settings().fieldRent) : num(settings().goalkeepers) * num(settings().goalkeeperFee) * num(settings().gamesPerMonth);
@@ -1966,9 +2235,13 @@ document.addEventListener('submit', async (e) => {
   }
 
   if (type === 'player') {
+    const attr = (k) => v(k) === '' ? null : num(v(k));
     const data = {
       id: form.dataset.id || uid(), name: v('name'), type: v('type'), position: v('position'),
-      phone: v('phone'), note: v('note'), active: fd.get('active') !== null
+      phone: v('phone'), note: v('note'),
+      age: attr('age'), height: attr('height'), weight: attr('weight'),
+      strength: attr('strength'), speed: attr('speed'),
+      active: fd.get('active') !== null
     };
     const idx = state.players.findIndex(p => p.id === data.id);
     if (idx >= 0) state.players[idx] = { ...state.players[idx], ...data, demo: false };
@@ -2053,7 +2326,7 @@ document.addEventListener('change', (e) => {
       try {
         const data = JSON.parse(reader.result);
         if (!data.settings || !Array.isArray(data.players)) throw new Error('Arquivo inválido');
-        state = data; ui.sim = null; save(); render(); toast('Backup importado.');
+        state = data; normalizeState(); ui.sim = null; save(); render(); toast('Backup importado.');
       } catch (err) { toast('Não foi possível importar: ' + err.message, 'err'); }
       el.value = '';
     };
@@ -2061,6 +2334,9 @@ document.addEventListener('change', (e) => {
     return;
   }
   if (el.id === 'cobranca-month') { ui.cobrancaMonth = num(el.value); if (ui.cobrancaPlayer) modalCobranca(ui.cobrancaPlayer); return; }
+  if (el.id === 'draw-game') { ui.drawGame = el.value; render(); return; }
+  if (el.id === 'draw-mode') { ui.drawMode = el.value; return; }
+  if (el.id === 'draw-size') { ui.drawSize = Math.max(2, Math.min(20, Math.round(num(el.value)) || 6)); return; }
   if (el.id === 'color-accent') { colors.accent = el.value; saveColors(); return; }
   if (el.id === 'color-secondary') { colors.secondary = el.value; saveColors(); return; }
   if (el.id === 'photo-file' && el.files?.[0]) {
@@ -2133,6 +2409,7 @@ window.addEventListener('storage', (e) => {
   if (e.key === STORAGE_KEY && e.newValue) {
     try {
       state = JSON.parse(e.newValue);
+      normalizeState();
       if (ui.paymentPage) renderPaymentPage(); else render();
     } catch (err) { /* ignore */ }
   }

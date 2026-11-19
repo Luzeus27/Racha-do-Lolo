@@ -6,7 +6,7 @@
 
 window.RachaLicense = (function () {
   const KEY = 'racha-license';
-  const TRIAL_DAYS = 30;
+  const TRIAL_DAYS = 14;
   const GRACE_MS = 3 * 24 * 60 * 60 * 1000;
   const CHECK_MS = 60 * 60 * 1000;
 
@@ -83,8 +83,8 @@ window.RachaLicense = (function () {
 
   function plans() {
     return state.plans || {
-      monthly: { amount: 19.9, label: 'Mensal' },
-      yearly: { amount: 199, label: 'Anual' }
+      monthly: { amount: 9, label: 'Mensal' },
+      yearly: { amount: 90, label: 'Anual' }
     };
   }
 

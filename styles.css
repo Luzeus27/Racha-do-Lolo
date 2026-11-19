@@ -273,6 +273,22 @@ textarea { resize: vertical; min-height: 70px; }
 .heat .bad { background: var(--red-soft); color: var(--red); }
 .heat .near { background: var(--amber-soft); color: var(--amber); }
 
+/* ---------- sorteador ---------- */
+.chip-grid { display: flex; flex-wrap: wrap; gap: 9px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 7px; border-radius: 99px; border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); font-size: 12px; font-weight: 700; transition: .15s ease; }
+.chip:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+.chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.chip.on .avatar { background: var(--accent); color: #04180d; }
+.chip-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-rating { font-variant-numeric: tabular-nums; font-size: 10.5px; padding: 2px 7px; border-radius: 99px; background: var(--panel-3); color: var(--muted); }
+.chip.on .chip-rating { background: var(--accent); color: #04180d; }
+.team-card { background: var(--panel-2); }
+.team-list { list-style: none; display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; }
+.team-list li { display: flex; align-items: center; gap: 9px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
+.team-list li:last-child { border-bottom: 0; padding-bottom: 0; }
+.team-list .team-name { font-weight: 700; font-size: 12.5px; flex: 1; }
+.meter .progress { margin-top: 5px; }
+
 /* ---------- podium ---------- */
 .podium { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; align-items: end; margin: 8px 0 22px; }
 .podium-item { text-align: center; padding: 16px 10px; border-radius: 14px; background: var(--panel-2); border: 1px solid var(--border-soft); }
