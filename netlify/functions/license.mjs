@@ -1,18 +1,49 @@
 /* Consulta pública da licença. Nunca devolve token nem dados de pagamento. */
-import { json, licenses, plans, maskEmail, validUntil } from './_shared.mjs';
+import { json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus } from './_shared.mjs';
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+/* Confere direto no Mercado Pago quando o usuário volta do checkout.
+   Serve como rede de segurança se o webhook atrasar ou não chegar. */
+async function syncFromMercadoPago(store, key, record) {
+  const token = process.env.MP_ACCESS_TOKEN;
+  const subscriptionId = record && record.subscriptionId;
+  if (!token || !subscriptionId || record.status === 'active') return record;
+
+  const res = await mpFetch('/preapproval/' + encodeURIComponent(subscriptionId), { token });
+  if (!res.ok || !res.data) return record;
+
+  const sub = res.data;
+  const status = normalizeStatus(sub.status);
+  if (status !== 'active') return record;
+
+  const next = {
+    ...record,
+    status,
+    mpStatus: sub.status,
+    amount: sub.auto_recurring?.transaction_amount || record.amount,
+    nextPaymentAt: sub.next_payment_date || record.nextPaymentAt || null,
+    email: sub.payer_email || record.email,
+    lastSyncAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    history: [...(record.history || []), { at: new Date().toISOString(), event: 'verify:' + sub.status }].slice(-20)
+  };
+  await store.setJSON(key, next);
+  return next;
 }
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return json({}, 204);
 
   let key = '';
+  let action = '';
   if (req.method === 'POST') {
     try {
       const body = await req.json();
       key = cleanKey(body.key);
+      action = String(body.action || '');
     } catch (e) { key = ''; }
   } else if (req.method === 'GET') {
     key = cleanKey(new URL(req.url).searchParams.get('key'));
@@ -34,9 +65,15 @@ export default async (req) => {
     return json({ ...publicInfo, valid: false, state: 'invalid' }, 200);
   }
 
-  const record = await licenses().get(key, { type: 'json', consistency: 'strong' });
+  const store = licenses();
+  let record = await store.get(key, { type: 'json', consistency: 'strong' });
   if (!record) {
     return json({ ...publicInfo, valid: false, state: 'not_found' }, 200);
+  }
+
+  if (action === 'verify') {
+    try { record = await syncFromMercadoPago(store, key, record); }
+    catch (e) { /* mantém o status atual se o MP estiver indisponível */ }
   }
 
   const status = record.status === 'active' && validUntil(record.nextPaymentAt) ? 'active' : record.status || 'pending';
