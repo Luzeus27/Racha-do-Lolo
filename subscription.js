@@ -116,6 +116,30 @@ window.RachaLicense = (function () {
     }
   }
 
+  /* Ao voltar do checkout, força uma conferência direta no Mercado Pago
+     (o webhook pode atrasar). O backend só aceita a chave desta instalação. */
+  async function verify(key) {
+    if (!canUseServer() || !key) return null;
+    try {
+      const res = await fetch(endpoint('license'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', key })
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      state.lastKnown = data;
+      state.lastCheck = Date.now();
+      if (data.plans) state.plans = data.plans;
+      state.configured = data.configured === true;
+      save();
+      emit();
+      return data;
+    } catch (err) {
+      return null;
+    }
+  }
+
   async function loadPlans() {
     if (!canUseServer()) return null;
     try {
@@ -173,7 +197,7 @@ window.RachaLicense = (function () {
     params.delete('license');
     const query = params.toString();
     history.replaceState(null, '', location.pathname + (query ? '?' + query : '') + location.hash);
-    refresh();
+    verify(state.key).then(() => refresh());
     return true;
   }
 
