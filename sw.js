@@ -1,5 +1,5 @@
 /* Service worker — cache offline do Racha do Loló */
-const CACHE = 'racha-do-lolo-v6';
+const CACHE = 'racha-do-lolo-v7';
 const ASSETS = [
   './',
   './index.html',

@@ -140,10 +140,12 @@ O app agora tem uma estrutura completa de cobrança recorrente, pronta para ser 
 
 1. Ao abrir o app pela primeira vez, começa o **período gratuito de 14 dias**, sem cartão.
 2. Em **Assinatura**, o usuário escolhe o plano **mensal** ou **anual**, informa o e-mail e é levado ao Mercado Pago.
-3. O Mercado Pago faz a primeira cobrança e, a partir daí, renova automaticamente. O cancelamento pode ser feito quando quiser, sem multa.
+3. O Mercado Pago faz a primeira cobrança e, a partir daí, renova automaticamente.
 4. Ao voltar para o app, a licença é confirmada por um aviso automático (webhook). Se estiver offline, o app aceita até **3 dias** sem conexão.
 5. Se o período gratuito acabar sem assinatura, o app entra em **modo somente leitura**: dados, backup e comprovantes continuam acessíveis, mas novos cadastros e edições ficam bloqueados.
-6. Cada assinatura gera uma **chave de licença** (ex.: `RL-1A2B3C4D5E6F`). Ela pode ser copiada na tela Assinatura e usada para recuperar o acesso em outro aparelho.
+6. Cada assinatura gera uma **chave de licença** (ex.: `RL-1A2B3C4D5E6F`), copiável na tela Assinatura. A chave fica vinculada ao aparelho onde a assinatura foi feita — se alguém tentar usá-la em outro dispositivo, o acesso é bloqueado.
+7. Para trocar de celular, abra **Assinatura** no novo aparelho, digite a chave e informe o **e-mail usado no checkout**: o vínculo é transferido (uma licença ativa por aparelho por vez).
+8. O próprio titular pode cancelar a recorrência em **Assinatura → Cancelar assinatura**. O acesso continua até o fim do período já pago, sem multa, conforme o CDC (art. 49 garante 7 dias de arrependimento).
 
 ### Páginas legais
 
@@ -159,7 +161,8 @@ Elas já explicam renovação, cancelamento, o direito de arrependimento de 7 di
 | `subscription.js` | Controla trial, chave de licença, tolerância offline e a interface de status |
 | `netlify/functions/create-checkout.mjs` | Cria a assinatura no Mercado Pago e devolve o link de pagamento |
 | `netlify/functions/mp-webhook.mjs` | Recebe a confirmação do Mercado Pago e grava o status da licença |
-| `netlify/functions/license.mjs` | Consulta se a chave está ativa e devolve os dados do plano |
+| `netlify/functions/license.mjs` | Consulta se a chave está ativa, valida o aparelho e transfere o vínculo mediante o e-mail do titular |
+| `netlify/functions/cancel-subscription.mjs` | Cancela a recorrência no Mercado Pago a pedido do titular |
 | `netlify/functions/_shared.mjs` | Configuração compartilhada (Blobs, preços, CORS, chamadas à API) |
 | `netlify.toml` | Habilita as funções e define Node 20 |
 | `package.json` | Instala a biblioteca `@netlify/blobs` usada pelas funções |

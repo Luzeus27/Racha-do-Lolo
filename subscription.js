@@ -6,6 +6,7 @@
 
 window.RachaLicense = (function () {
   const KEY = 'racha-license';
+  const DEVICE_KEY = 'racha-device-id';
   const TRIAL_DAYS = 14;
   const GRACE_MS = 3 * 24 * 60 * 60 * 1000;
   const CHECK_MS = 60 * 60 * 1000;
@@ -13,6 +14,25 @@ window.RachaLicense = (function () {
   let listeners = [];
   let checking = false;
   let lastError = '';
+
+  /* ID anônimo deste aparelho. Não contém dados pessoais e impede o
+     compartilhamento da chave entre dispositivos. */
+  function randomHex(length) {
+    const bytes = new Uint8Array(Math.ceil(length / 2));
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(bytes);
+    else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+    return Array.prototype.map.call(bytes, (b) => b.toString(16).padStart(2, '0')).join('').slice(0, length).toUpperCase();
+  }
+
+  function deviceId() {
+    let id = '';
+    try { id = String(localStorage.getItem(DEVICE_KEY) || '').trim().toUpperCase(); } catch (e) { id = ''; }
+    if (!/^DEV-[A-F0-9]{24}$/.test(id)) {
+      id = 'DEV-' + randomHex(24);
+      try { localStorage.setItem(DEVICE_KEY, id); } catch (e) { /* ignored */ }
+    }
+    return id;
+  }
 
   function load() {
     let saved = {};
@@ -61,6 +81,13 @@ window.RachaLicense = (function () {
     const known = state.lastKnown;
     const checkedRecently = state.lastCheck && (now - state.lastCheck) < GRACE_MS;
 
+    if (known && known.state === 'device_mismatch') {
+      return {
+        kind: 'device_mismatch',
+        label: 'Dispositivo não autorizado',
+        detail: known.message || 'Esta chave pertence a outro aparelho.'
+      };
+    }
     if (known && known.valid && checkedRecently) {
       return { kind: 'active', label: 'Assinatura ativa', detail: known.plan === 'yearly' ? 'Plano anual' : 'Plano mensal' };
     }
@@ -79,7 +106,10 @@ window.RachaLicense = (function () {
     return { kind: 'expired', label: 'Período gratuito encerrado', detail: 'Assine para continuar editando' };
   }
 
-  function isLocked() { return status().kind === 'expired'; }
+  function isLocked() {
+    const kind = status().kind;
+    return kind === 'expired' || kind === 'device_mismatch';
+  }
 
   function plans() {
     return state.plans || {
@@ -96,7 +126,12 @@ window.RachaLicense = (function () {
     if (!canUseServer() || !state.key || checking) return null;
     checking = true;
     try {
-      const res = await fetch(endpoint('license') + '?key=' + encodeURIComponent(state.key), { cache: 'no-store' });
+      const res = await fetch(endpoint('license'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: state.key, deviceId: deviceId() }),
+        cache: 'no-store'
+      });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       state.lastKnown = data;
@@ -124,7 +159,7 @@ window.RachaLicense = (function () {
       const res = await fetch(endpoint('license'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', key })
+        body: JSON.stringify({ action: 'verify', key, deviceId: deviceId() })
       });
       if (!res.ok) return null;
       const data = await res.json();
@@ -163,7 +198,7 @@ window.RachaLicense = (function () {
     const res = await fetch(endpoint('create-checkout'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: String(email || '').trim(), plan: plan || 'monthly' })
+      body: JSON.stringify({ email: String(email || '').trim(), plan: plan || 'monthly', deviceId: deviceId() })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.error) throw new Error(data.error || 'Não foi possível iniciar a assinatura.');
@@ -177,13 +212,65 @@ window.RachaLicense = (function () {
     return data;
   }
 
-  async function activate(key) {
-    state.key = String(key || '').trim().toUpperCase();
+  /* Transfere o vínculo da chave para este aparelho após conferir o e-mail
+     usado no checkout. Serve para troca de celular sem exigir suporte. */
+  async function transfer(key, email) {
+    if (!canUseServer()) {
+      return { ok: false, error: 'Disponível apenas no site principal.' };
+    }
+    try {
+      const res = await fetch(endpoint('license'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'transfer',
+          key: String(key || '').trim().toUpperCase(),
+          email: String(email || '').trim().toLowerCase(),
+          deviceId: deviceId()
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) return { ok: false, error: data.error || 'Não foi possível transferir.' };
+      return { ok: true, message: data.message || 'Chave vinculada a este aparelho.' };
+    } catch (err) {
+      return { ok: false, error: 'Sem conexão com o servidor. Tente novamente.' };
+    }
+  }
+
+  async function activate(key, email) {
+    const clean = String(key || '').trim().toUpperCase();
+    if (email) {
+      const moved = await transfer(clean, email);
+      if (!moved.ok) return moved;
+    }
+    state.key = clean;
     state.lastKnown = null;
     state.lastCheck = 0;
     save();
     emit();
     return await refresh();
+  }
+
+  /* Cancela a recorrência no Mercado Pago. O acesso segue até o fim do período pago. */
+  async function cancel() {
+    if (!canUseServer() || !state.key) {
+      return { ok: false, error: 'Cancelamento disponível apenas no site principal.' };
+    }
+    try {
+      const res = await fetch(endpoint('cancel-subscription'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: state.key, deviceId: deviceId() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        return { ok: false, error: data.error || 'Não foi possível cancelar.' };
+      }
+      await refresh();
+      return data;
+    } catch (err) {
+      return { ok: false, error: 'Sem conexão com o servidor. Tente novamente.' };
+    }
   }
 
   function consumeQuery() {
@@ -208,16 +295,16 @@ window.RachaLicense = (function () {
     if (s.kind === 'active' || s.kind === 'grace') { el.hidden = true; el.innerHTML = ''; return; }
 
     el.hidden = false;
-    el.className = 'license-banner ' + s.kind;
-    const locked = s.kind === 'expired';
+    el.className = 'license-banner ' + (s.kind === 'device_mismatch' ? 'expired' : s.kind);
+    const locked = s.kind === 'expired' || s.kind === 'device_mismatch';
     const icon = s.kind === 'trial' ? '⏳' : s.kind === 'pending' ? '⌛' : '🔒';
     el.innerHTML =
       '<span class="license-banner-ico">' + icon + '</span>' +
       '<span class="license-banner-text"><strong>' + s.label + '</strong>' +
       '<span class="license-banner-detail">' + s.detail +
-      (locked ? ' · Somente leitura; seus dados continuam salvos.' : '') + '</span></span>' +
+      (s.kind === 'expired' ? ' · Somente leitura; seus dados continuam salvos.' : '') + '</span></span>' +
       '<button class="btn btn-sm ' + (locked ? 'btn-primary' : 'btn-ghost') + '" type="button" data-act="open-subscription">' +
-      (locked ? 'Assinar agora' : 'Ver assinatura') + '</button>';
+      (s.kind === 'device_mismatch' ? 'Ver detalhes' : locked ? 'Assinar agora' : 'Ver assinatura') + '</button>';
   }
 
   function init(fn) {
@@ -231,8 +318,8 @@ window.RachaLicense = (function () {
   }
 
   return {
-    init, onChange, status, isLocked, refresh, loadPlans, beginCheckout, activate,
-    renderBanner, plans, price, daysLeft,
+    init, onChange, status, isLocked, refresh, loadPlans, beginCheckout, activate, cancel,
+    transfer, renderBanner, plans, price, daysLeft, deviceId,
     get key() { return state.key; },
     get configured() { return state.configured; },
     get lastKnown() { return state.lastKnown; },

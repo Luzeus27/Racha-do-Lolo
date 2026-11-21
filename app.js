@@ -1386,16 +1386,19 @@ function pageSubscription() {
 
       <div class="grid grid-2">
         <div class="card">
-          ${section('Minha chave de licença', 'Guarde esta chave para recuperar o acesso em outro aparelho')}
+          ${section('Minha chave de licença', 'Chave vinculada a este aparelho para evitar compartilhamento')}
           <div class="card-body stack">
             ${key ? `
               <div class="sub-key">${esc(key)}</div>
               <div class="row">
                 <button class="btn btn-sm btn-ghost" type="button" data-act="copy-license">📋 Copiar chave</button>
                 <button class="btn btn-sm btn-ghost" type="button" data-act="refresh-license">🔄 Verificar agora</button>
+                ${L.lastKnown?.state === 'active' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
               </div>
+              <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Para usar em outro dispositivo, fale com o administrador.</p>
               ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
               ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
+              ${known?.cancelRequestedAt ? `<p class="tiny" style="color:var(--amber)">Cancelamento solicitado. O acesso segue até ${esc(String(known.nextPaymentAt || '').slice(0, 10))}.</p>` : ''}
               ${L.lastError ? `<p class="tiny" style="color:var(--amber)">Sem conexão com o servidor neste momento. A licença continua válida por até 3 dias offline.</p>` : ''}
             ` : `
               <p class="small muted">Você ainda não tem uma chave. Ela aparece automaticamente quando você inicia uma assinatura.</p>
@@ -1403,8 +1406,15 @@ function pageSubscription() {
                 <input name="key" placeholder="RL-XXXXXXXXXXXX" aria-label="Chave de licença" style="flex:1" />
                 <button class="btn btn-primary" type="submit">Ativar</button>
               </form>
-              <p class="tiny muted">Já assinou em outro dispositivo? Digite a chave recebida no checkout.</p>
+              <p class="tiny muted">Já assinou neste dispositivo? Digite a chave recebida no checkout.</p>
             `}
+            ${L.lastKnown?.state === 'device_mismatch' ? `
+              <form data-form="license-transfer" class="stack">
+                <input name="email" type="email" placeholder="E-mail usado no checkout" aria-label="E-mail da assinatura" />
+                <button class="btn btn-primary" type="submit">Vincular este aparelho</button>
+              </form>
+              <p class="tiny muted">Informe o e-mail usado na assinatura para mover o vínculo para este aparelho.</p>
+            ` : ''}
           </div>
         </div>
         <div class="card">
@@ -1414,7 +1424,8 @@ function pageSubscription() {
               <div class="sub-step"><span>Use grátis por 14 dias e teste tudo, sem cartão.</span></div>
               <div class="sub-step"><span>Escolha o plano e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
               <div class="sub-step"><span>Ao concluir o pagamento, a licença é confirmada automaticamente e o app volta a liberar a edição.</span></div>
-              <div class="sub-step"><span>Guarde a chave de licença: ela serve para recuperar o acesso em outro aparelho.</span></div>
+              <div class="sub-step"><span>Guarde a chave de licença: ela fica vinculada a este aparelho. Para usar em outro dispositivo, fale com o administrador.</span></div>
+              <div class="sub-step"><span>Para cancelar, use o botão na sua chave de licença. O acesso permanece até o fim do período já pago.</span></div>
             </div>
             <div class="legal-links" style="margin-top:18px">
               <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a>
@@ -1977,6 +1988,14 @@ document.addEventListener('click', (e) => {
         render();
       });
       break;
+    case 'cancel-license':
+      confirmAction('Cancelar a renovação da assinatura? Você continua com acesso até o fim do período já pago.', async () => {
+        toast('Cancelando...');
+        const result = await window.RachaLicense.cancel();
+        toast(result.ok ? (result.message || 'Assinatura cancelada.') : (result.error || 'Não foi possível cancelar.'), result.ok ? 'ok' : 'err');
+        render();
+      });
+      break;
 
     case 'open-modal': {
       const m = el.dataset.modal;
@@ -2205,7 +2224,7 @@ document.addEventListener('submit', async (e) => {
   const v = (k) => String(fd.get(k) ?? '').trim();
   const type = form.dataset.form;
 
-  if (licenseLocked() && !['checkout', 'license-key'].includes(type)) { warnLocked(); return; }
+  if (licenseLocked() && !['checkout', 'license-key', 'license-transfer'].includes(type)) { warnLocked(); return; }
 
   if (type === 'checkout') {
     const btn = form.querySelector('button[type="submit"]');
@@ -2229,7 +2248,28 @@ document.addEventListener('submit', async (e) => {
     if (!key) { toast('Digite a chave de licença.', 'err'); return; }
     toast('Verificando chave...');
     const data = await window.RachaLicense.activate(key);
+    if (data && data.ok === false && data.error) {
+      toast(data.error, 'err');
+      return;
+    }
+    if (data && data.state === 'device_mismatch') {
+      toast('Esta chave está em outro aparelho. Use o formulário abaixo para transferir.', 'err');
+      render();
+      return;
+    }
     toast(data && data.valid ? 'Assinatura ativada!' : 'Chave salva. Aguarde a confirmação do pagamento.', data && data.valid ? 'ok' : 'err');
+    render();
+    return;
+  }
+
+  if (type === 'license-transfer') {
+    const email = v('email');
+    if (!email) { toast('Informe o e-mail usado no checkout.', 'err'); return; }
+    toast('Transferindo vínculo...');
+    const data = await window.RachaLicense.transfer(window.RachaLicense.key, email);
+    if (!data.ok) { toast(data.error || 'Não foi possível transferir.', 'err'); return; }
+    await window.RachaLicense.refresh();
+    toast(data.message || 'Aparelho vinculado.', 'ok');
     render();
     return;
   }
