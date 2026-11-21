@@ -1,7 +1,7 @@
 /* Leitura pública do retrato compartilhado. O token VW é a única credencial
    necessária aqui; nunca expor mensalidades, tokens VP ou dados de contato. */
 import { getStore } from '@netlify/blobs';
-import { json, setCorsOrigin } from './_shared.mjs';
+import { json, setCorsOrigin, viewUnavailable } from './_shared.mjs';
 
 const PLAYER_FIELDS = [
   'id', 'name', 'type', 'position', 'active', 'age', 'height', 'weight',
@@ -161,6 +161,8 @@ export default async (req) => {
   const store = getStore({ name: 'racha-visualizacoes', consistency: 'strong' });
   const record = await store.get(token, { type: 'json', consistency: 'strong' });
   if (!record) return json({ error: 'Link inválido ou removido.' }, 404);
+  const unavailable = viewUnavailable(record);
+  if (unavailable) return json({ error: unavailable, expired: true }, 410);
 
   return json({
     token,

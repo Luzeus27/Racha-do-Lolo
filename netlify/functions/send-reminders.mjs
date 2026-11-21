@@ -1,7 +1,7 @@
 /* Gera links de lembrete (WhatsApp) para jogos próximos dos links publicados.
    Função agendável: exige REMINDER_SECRET no header x-reminder-secret. */
 import { getStore } from '@netlify/blobs';
-import { json, siteUrl, setCorsOrigin } from './_shared.mjs';
+import { json, siteUrl, setCorsOrigin, viewUnavailable } from './_shared.mjs';
 
 const MAX_REMINDERS = 200;
 const MAX_PAGES = 50;
@@ -124,7 +124,7 @@ export default async (req) => {
     try { record = await store.get(vw, { type: 'json', consistency: 'strong' }); }
     catch (e) { continue; }
 
-    if (!isObject(record)) continue;
+    if (!isObject(record) || viewUnavailable(record)) continue;
     const snapshot = isObject(record.snapshot) ? record.snapshot : {};
     const games = Array.isArray(snapshot.games) ? snapshot.games.slice(0, 500) : [];
     const tokens = isObject(record.playerTokens) ? record.playerTokens : {};

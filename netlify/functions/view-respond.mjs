@@ -1,7 +1,7 @@
 /* Resposta do jogador a um jogo do link compartilhado. O token VP é enviado
    apenas no link individual; aqui ele é trocado pelo id do jogador. */
 import { getStore } from '@netlify/blobs';
-import { json, setCorsOrigin, rateLimit } from './_shared.mjs';
+import { json, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -121,6 +121,8 @@ export default async (req) => {
   const store = getStore({ name: 'racha-visualizacoes', consistency: 'strong' });
   const record = await store.get(v, { type: 'json', consistency: 'strong' });
   if (!record) return json({ error: 'Link inválido ou removido.' }, 404);
+  const unavailable = viewUnavailable(record);
+  if (unavailable) return json({ error: unavailable, expired: true }, 410);
 
   const playerId = findPlayerId(record.playerTokens, p);
   if (!playerId) return json({ error: 'Link de jogador inválido.' }, 403);

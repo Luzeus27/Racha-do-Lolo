@@ -2,7 +2,7 @@
    no aparelho vinculado e dona do link) pode iniciar, lançar eventos e encerrar. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin } from './_shared.mjs';
+import { json, licenses, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin, viewUnavailable } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const MAX_EVENTS = 1000;
@@ -96,6 +96,8 @@ export default async (req) => {
   const store = getStore({ name: 'racha-visualizacoes', consistency: 'strong' });
   const record = await store.get(v, { type: 'json', consistency: 'strong' });
   if (!record || record.ownerKey !== key) return json({ error: 'Link não pertence a esta licença.' }, 403);
+  const unavailable = viewUnavailable(record);
+  if (unavailable) return json({ error: unavailable, expired: true }, 410);
 
   const now = new Date().toISOString();
   let live;

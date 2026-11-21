@@ -51,6 +51,11 @@ function validPlayerToken(value) {
   return /^VP-[A-F0-9]{16}$/.test(String(value || ''));
 }
 
+function cleanExpiry(value) {
+  const time = Date.parse(String(value || ''));
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
 async function readJson(req, maxBytes) {
   const header = req.headers && typeof req.headers.get === 'function' ? req.headers.get('content-length') : null;
   const declared = Number(header);
@@ -259,7 +264,8 @@ export default async (req) => {
 
   let token = wantsReuse ? requested : newViewToken();
   let previous = await store.get(token, { type: 'json', consistency: 'strong' });
-  if (wantsReuse && previous && previous.ownerKey !== key) {
+  const expired = previous?.expiresAt && Date.parse(previous.expiresAt) <= Date.now();
+  if (wantsReuse && ((previous && previous.ownerKey !== key) || previous?.revokedAt || expired)) {
     token = newViewToken();
     previous = null;
   }
@@ -277,6 +283,8 @@ export default async (req) => {
     ownerKey: key,
     createdAt: previous?.createdAt || now,
     updatedAt: now,
+    expiresAt: cleanExpiry(body.expiresAt),
+    revokedAt: null,
     snapshot: { ...snapshot, publishedAt: now },
     /* Respostas, fila, notas e ao vivo pertencem ao link e sobrevivem a
        republicações do retrato. */
@@ -292,6 +300,7 @@ export default async (req) => {
     token,
     url: base + '/visualizar.html?v=' + encodeURIComponent(token),
     publishedAt: now,
+    expiresAt: cleanExpiry(body.expiresAt),
     playerLinks
   });
 };

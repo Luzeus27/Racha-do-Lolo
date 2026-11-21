@@ -153,6 +153,16 @@ export async function rateLimit(req, action, { max = 30, windowMs = 60000, key =
   }
 }
 
+/* Link privado do grupo pode ser revogado ou expirar. */
+export function viewUnavailable(record) {
+  if (!record) return '';
+  if (record.revokedAt) return 'Link revogado. Peça um novo ao administrador.';
+  if (record.expiresAt && Date.parse(String(record.expiresAt)) <= Date.now()) {
+    return 'Link expirado. Peça um novo ao administrador.';
+  }
+  return '';
+}
+
 export async function mpFetch(path, { token, method = 'GET', body } = {}) {
   try {
     const res = await fetch('https://api.mercadopago.com' + path, {
