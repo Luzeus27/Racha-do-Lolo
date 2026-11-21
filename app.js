@@ -461,7 +461,9 @@ function defaultSettings() {
     bbqEnabled: true, bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
     dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
-    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: ''
+    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: '',
+    reminderGroup: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
+    reminderPlayer: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
   };
 }
 
@@ -540,6 +542,8 @@ try {
 function normalizeState() {
   if (!state || typeof state !== 'object') state = emptyState();
   if (!state.settings) state.settings = defaultSettings();
+  const defaults = defaultSettings();
+  Object.keys(defaults).forEach(k => { if (state.settings[k] === undefined || state.settings[k] === null || state.settings[k] === '') state.settings[k] = defaults[k]; });
   ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
@@ -781,7 +785,7 @@ function publicSnapshot() {
       age: num(p.age), height: num(p.height), weight: num(p.weight),
       strength: num(p.strength), speed: num(p.speed), photo: typeof p.photo === 'string' ? p.photo : ''
     })),
-    games: (state.games || []).map((g) => ({ id: g.id, date: g.date, month: num(g.month), year: num(g.year), done: !!g.done })),
+    games: (state.games || []).map((g) => ({ id: g.id, date: g.date, month: num(g.month), year: num(g.year), done: !!g.done, name: String(g.name || '').slice(0, 90), time: String(g.time || '').slice(0, 10) })),
     confirmations: state.confirmations || {},
     drawHistory: (state.drawHistory || []).map((h) => ({
       id: h.id, createdAt: h.createdAt, gameKey: h.gameKey, gameLabel: h.gameLabel,
@@ -817,6 +821,7 @@ async function publishView(silent) {
         deviceId: window.RachaLicense.deviceId(),
         token: viewToken || undefined,
         expiresAt: settings().viewExpiresAt || null,
+        reminderTexts: { group: settings().reminderGroup, player: settings().reminderPlayer },
         snapshot: publicSnapshot()
       })
     });
@@ -926,6 +931,26 @@ async function shareWhatsApp(kind) {
 
 /* Lembretes manuais: usam os links individuais já publicados.
    Em produção, a função agendada send-reminders faz o mesmo automaticamente. */
+/* Frases editáveis dos lembretes. Placeholders: {jogo}, {data}, {horario},
+   {link} e {jogador}. Sem {link}, o destino é acrescentado no fim. */
+function gameNameForReminder(g) {
+  return String(g?.name || '').trim().slice(0, 90) || 'Racha do Loló';
+}
+function gameTimeForReminder(g) {
+  return String(g?.time || '').trim().slice(0, 10) || 'horário a definir';
+}
+function renderReminderText(template, ctx) {
+  const raw = String(template || '').replace(/\r\n?/g, '\n').slice(0, 700);
+  const hasLink = /\{link\}/i.test(raw);
+  const out = raw
+    .replace(/\{jogo\}/gi, String(ctx.gameName || 'Racha do Loló').slice(0, 90))
+    .replace(/\{data\}/gi, String(ctx.date || '').slice(0, 30))
+    .replace(/\{horario\}/gi, String(ctx.time || 'horário a definir').slice(0, 20))
+    .replace(/\{jogador\}/gi, String(ctx.playerName || '').split(' ')[0].slice(0, 40))
+    .replace(/\{link\}/gi, String(ctx.link || ''));
+  return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
+}
+
 function reminderLinks() {
   const now = Date.now();
   const games = (viewData?.snapshot?.games || []).filter(g => g.date && !g.done).slice(0, 20);
@@ -936,13 +961,19 @@ function reminderLinks() {
     const when = hours >= 23 && hours <= 25 ? '24h' : hours >= 1 && hours <= 3 ? '2h' : '';
     if (!when) return;
     if (viewToken) {
-      const groupText = `⚽ Racha do Loló: jogo em ${fmtDate(g.date)}!\nProgramação, escala e ranking: ${viewUrl(viewToken)}\nConfirme sua presença pelo seu link individual (enviado no privado).`;
+      const groupText = renderReminderText(settings().reminderGroup, {
+        gameName: gameNameForReminder(g), date: fmtDate(g.date),
+        time: gameTimeForReminder(g), link: viewUrl(viewToken)
+      });
       out.push({ when, name: 'Grupo do racha', group: true, url: waLink(groupText), direct: false });
     }
     entries.forEach(([pid, url]) => {
       const p = playerById(pid);
       if (!p || !url) return;
-      const text = `🏽 Racha do Loló: jogo em ${fmtDate(g.date)}! Confirme sua presença: ${url}`;
+      const text = renderReminderText(settings().reminderPlayer, {
+        gameName: gameNameForReminder(g), date: fmtDate(g.date),
+        time: gameTimeForReminder(g), link: url, playerName: p.name
+      });
       out.push({ when, name: p.name, url: waDirect(p.phone, text), direct: !!waNumber(p.phone) });
     });
   });
@@ -952,7 +983,7 @@ function reminderLinks() {
 function modalReminders() {
   const list = reminderLinks();
   openModal('Lembretes para o grupo', 'Jogos nas janelas de 24h e 2h', list.length ? `
-    <p class="small muted"><strong>📢 Grupo</strong> avisa todo mundo com o link da visão do grupo (sem links individuais, telefones ou valores). <strong>🔔</strong> abre o chat privado de cada jogador. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. A função agendada do servidor gera os mesmos lembretes.</p>
+    <p class="small muted"><strong>📢 Grupo</strong> avisa todo mundo com o link da visão do grupo (sem links individuais, telefones ou valores). <strong>🔔</strong> abre o chat privado de cada jogador. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. As frases podem ser editadas em Configurações → Lembretes automáticos; a função agendada usa as mesmas frases.</p>
     <div class="stack mt">${list.map(r => `<a class="btn ${r.group ? 'btn-primary' : 'btn-ghost'}" href="${esc(r.url)}" target="_blank" rel="noopener">${r.group ? '📢 Grupo' : '🔔 ' + esc(r.name)} · ${esc(r.when)}</a>`).join('')}</div>` : `
     <p class="small muted">Nenhum jogo cai nas janelas de 24h ou 2h agora. Volte mais perto da partida.</p>`);
 }
@@ -1762,7 +1793,7 @@ function pageGames() {
         <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="game">＋ Jogo</button>`)}
       <div class="table-wrap">${games.length ? `<table><thead><tr><th>Data</th><th>Mês</th><th>Status</th><th class="right">Diaristas</th><th class="right">Receita</th><th class="right">Ações</th></tr></thead><tbody>
         ${games.map(g => { const ds = state.dayEntries.filter(d => d.gameId === g.id); return `<tr>
-          <td><strong>${fmtDate(g.date)}</strong></td><td>${shortMonth(g.month)}</td>
+          <td><strong>${fmtDate(g.date)}</strong>${g.time ? `<div class="tiny muted">${esc(g.time)}</div>` : ''}${g.name ? `<div class="tiny muted">${esc(g.name)}</div>` : ''}</td><td>${shortMonth(g.month)}</td>
           <td>${badge(g.done ? 'Realizado' : 'Agendado', g.done ? 'green' : 'amber')}</td>
           <td class="right mono">${ds.length}</td><td class="right mono">${money(sum(ds, d => d.amount))}</td>
           <td class="right"><button class="btn btn-sm ${g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${g.id}">${g.done ? 'Editar presença' : 'Fazer check-in'}</button>
@@ -2161,9 +2192,12 @@ function pageSettings() {
           </div>
         </div>
         <div class="card">
-          ${section('Lembretes automáticos', '24h e 2h antes de cada jogo')}
+          ${section('Lembretes automáticos', '24h e 2h antes de cada jogo · frases editáveis', `<button class="btn btn-sm btn-ghost" type="button" data-act="reset-reminders">Restaurar padrão</button>`)}
           <div class="card-body stack">
-            <p class="small muted">O servidor gera lembretes com o link individual de cada jogador nas janelas de 24h e 2h antes do jogo, prontos para o WhatsApp. A função <code>send-reminders</code> pode ser agendada no Netlify.</p>
+            <p class="small muted">As frases abaixo valem para os lembretes do painel e para a função agendada <code>send-reminders</code>. Use <code>{jogo}</code>, <code>{data}</code>, <code>{horario}</code> e <code>{link}</code>; no lembrete individual também <code>{jogador}</code>. Se você não escrever <code>{link}</code>, ele é acrescentado no fim.</p>
+            <label class="field" style="align-items:flex-start">Frase do aviso para o grupo<textarea name="reminderGroup" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderGroup)}</textarea></label>
+            <label class="field" style="align-items:flex-start">Frase do lembrete individual<textarea name="reminderPlayer" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderPlayer)}</textarea></label>
+            <p class="tiny muted">Para usar nome e horário, preencha os campos opcionais ao criar o jogo. Sem eles, a frase mostra “Racha do Loló” e “horário a definir”. Salve com <strong>Salvar premissas</strong> ao final da página.</p>
             <button class="btn btn-ghost" type="button" data-act="show-reminders">🔔 Ver lembretes de agora</button>
           </div>
         </div>
@@ -2499,9 +2533,11 @@ function modalPayment(playerId, month) {
 }
 
 function modalGame() {
-  openModal('Novo jogo', 'Informe a data da partida', `
+  openModal('Novo jogo', 'Informe a data; nome e horário são opcionais', `
     <form data-form="game" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${todayISO()}" required /></label>
+      <label class="field">Nome do jogo (opcional)<input name="name" maxlength="90" placeholder="Ex.: Racha de sábado" /></label>
+      <label class="field">Horário (opcional)<input name="time" type="time" /></label>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Criar jogo</button></div>
     </form>`);
 }
@@ -3313,6 +3349,13 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'show-reminders': modalReminders(); break;
+    case 'reset-reminders': {
+      const d = defaultSettings();
+      state.settings.reminderGroup = d.reminderGroup;
+      state.settings.reminderPlayer = d.reminderPlayer;
+      save('restaurou frases dos lembretes'); render(); toast('Frases padrão restauradas e publicadas.', 'ok');
+      break;
+    }
     case 'live-start': runLiveAction('start'); break;
     case 'live-goal': runLiveAction('goal'); break;
     case 'live-assist': runLiveAction('assist'); break;
@@ -3526,8 +3569,8 @@ document.addEventListener('submit', async (e) => {
   }
   else if (type === 'game') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
-    state.games.push({ id: uid(), date, month: m, year: y, done: false });
-    save('criou jogo', fmtDate(date)); closeModal(); render(); toast('Jogo criado.');
+    state.games.push({ id: uid(), date, month: m, year: y, done: false, name: v('name'), time: v('time') });
+    save('criou jogo', `${fmtDate(date)}${v('name') ? ' · ' + v('name') : ''}`); closeModal(); render(); toast('Jogo criado.');
   }
   else if (type === 'checkin') {
     const gid = form.dataset.id;
