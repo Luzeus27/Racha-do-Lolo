@@ -1,12 +1,12 @@
 # Racha do Loló — aplicativo de gestão
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/be0525ae-4857-4a48-84af-9053356e7a22/deploy-status)](https://app.netlify.com/projects/teal-griffin-a37fbe/deploys)
+[![Netlify Status](https://api.netlify.com/api/v1/badges/be0525ae-4857-4a48-84af-9053356e7a22/deploy-status)](https://app.netlify.com/projects/rachadololo/deploys)
 
 Aplicativo web **offline** criado a partir da planilha `Racha_do_Lolo_Controle.xlsx`. Ele substitui as abas da planilha por uma interface única, responsiva e com cálculos automáticos.
 
 ## Links públicos
 
-- **Netlify (principal):** https://teal-griffin-a37fbe.netlify.app
+- **Netlify (principal):** https://rachadololo.netlify.app
 - **GitHub Pages (espelho):** https://luzeus27.github.io/Racha-do-Lolo/
 - **Repositório:** https://github.com/Luzeus27/Racha-do-Lolo
 
@@ -14,7 +14,7 @@ O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver u
 
 ## Links do grupo, do jogador e ao vivo
 
-Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar em **Configurações → Link para o grupo** um endereço como `https://teal-griffin-a37fbe.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
+Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar em **Configurações → Link para o grupo** um endereço como `https://rachadololo.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
 
 - **Visão do grupo (`visualizar.html`)** — somente leitura: próximos jogos, presença, fila, times sorteados, ranking, MVP, placar ao vivo e resumo financeiro. O grupo não paga e não precisa de conta.
 - **Área do jogador (`jogador.html`)** — cada membro recebe um link pessoal `?v=VW...&p=VP...` e, sem senha, confirma presença, entra na fila de espera, avalia os jogos de 1 a 5 e copia o PIX das próprias mensalidades.
@@ -113,7 +113,7 @@ Para conciliação, o extrato pode ser **CSV** (`Data;Histórico;Valor`, com `;`
 
 O app é um **PWA**: pode ser instalado na tela inicial e abre em tela cheia, como um app nativo.
 
-**Versão pública (HTTPS):** https://teal-griffin-a37fbe.netlify.app — já publicada e sem senha. Também disponível em https://luzeus27.github.io/Racha-do-Lolo/. Abra no celular e use **Adicionar à tela inicial**.
+**Versão pública (HTTPS):** https://rachadololo.netlify.app — já publicada e sem senha. Também disponível em https://luzeus27.github.io/Racha-do-Lolo/. Abra no celular e use **Adicionar à tela inicial**.
 
 ### Testar agora no celular (mesmo Wi-Fi)
 1. Dê um duplo clique em **`servir-celular.bat`** e aceite a permissão de Administrador (UAC). Ele libera a porta 8080 no firewall e encerra o servidor antigo.
@@ -201,13 +201,13 @@ Elas já explicam renovação, cancelamento, o direito de arrependimento de 7 di
 1. Entre em **Suas integrações** no portal de desenvolvedores do Mercado Pago e crie uma aplicação.
 2. Copie o **Access Token de produção** (ou o de teste, para os primeiros testes).
 3. Em **Webhooks > Configurar notificações**, cadastre a URL:
-   `https://teal-griffin-a37fbe.netlify.app/.netlify/functions/mp-webhook`
+   `https://rachadololo.netlify.app/.netlify/functions/mp-webhook`
    e marque os eventos **Assinaturas** (`subscription_preapproval`) e, se disponível, **Cobranças de assinatura** (`subscription_authorized_payment`).
 4. Copie a **chave secreta do webhook** gerada pelo Mercado Pago. Ela serve para confirmar que a notificação realmente veio dele.
 
 #### 2. Netlify
 
-No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment variables** e adicione:
+No projeto **rachadololo**, abra **Project configuration > Environment variables** e adicione:
 
 | Variável | Valor |
 |---|---|
@@ -215,7 +215,7 @@ No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment v
 | `MP_WEBHOOK_SECRET` | A chave secreta do webhook |
 | `MP_PRICE_MONTHLY` | Preço mensal em reais (padrão: `9`) |
 | `MP_PRICE_YEARLY` | Preço anual em reais (padrão: `90`) |
-| `SITE_URL` | `https://teal-griffin-a37fbe.netlify.app` |
+| `SITE_URL` | `https://rachadololo.netlify.app` |
 | `ALLOWED_ORIGINS` | Opcional. Outras origens autorizadas a chamar as funções, separadas por vírgula |
 | `LICENSE_GRACE_DAYS` | Opcional. Dias de tolerância após o vencimento (padrão: `3`) |
 | `RECONCILE_SECRET` | Opcional. Segredo para disparar `reconcile-licenses` manualmente pelo header `x-reconcile-secret` |

@@ -2195,7 +2195,7 @@ function pageSubscription() {
   const canPay = L.canUseServer();
   const ready = canPay && L.configured;
   const note = !canPay
-    ? 'Este espelho é somente leitura para pagamentos. Para assinar, use o site principal: teal-griffin-a37fbe.netlify.app.'
+    ? 'Este espelho é somente leitura para pagamentos. Para assinar, use o site principal: rachadololo.netlify.app.'
     : !ready
       ? 'O checkout ainda está sendo configurado pelo administrador. Você pode continuar usando o período gratuito normalmente.'
       : '';
