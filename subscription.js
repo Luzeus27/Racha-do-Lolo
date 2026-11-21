@@ -88,6 +88,9 @@ window.RachaLicense = (function () {
         detail: known.message || 'Esta chave pertence a outro aparelho.'
       };
     }
+    if (known && known.valid && known.plan === 'lifetime') {
+      return { kind: 'active', label: 'Acesso vitalício', detail: 'Conta master — sem cobranças' };
+    }
     if (known && known.valid && checkedRecently) {
       return { kind: 'active', label: 'Assinatura ativa', detail: known.plan === 'yearly' ? 'Plano anual' : 'Plano mensal' };
     }

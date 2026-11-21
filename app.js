@@ -1393,8 +1393,9 @@ function pageSubscription() {
               <div class="row">
                 <button class="btn btn-sm btn-ghost" type="button" data-act="copy-license">📋 Copiar chave</button>
                 <button class="btn btn-sm btn-ghost" type="button" data-act="refresh-license">🔄 Verificar agora</button>
-                ${L.lastKnown?.state === 'active' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
+                ${L.lastKnown?.state === 'active' && known?.plan !== 'lifetime' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
               </div>
+              ${known?.plan === 'lifetime' ? `<p class="tiny" style="color:var(--accent)">Acesso vitalício — sem cobranças e sem renovação.</p>` : ''}
               <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Para usar em outro dispositivo, fale com o administrador.</p>
               ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
               ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}

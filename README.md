@@ -163,6 +163,7 @@ Elas já explicam renovação, cancelamento, o direito de arrependimento de 7 di
 | `netlify/functions/mp-webhook.mjs` | Recebe a confirmação do Mercado Pago e grava o status da licença |
 | `netlify/functions/license.mjs` | Consulta se a chave está ativa, valida o aparelho e transfere o vínculo mediante o e-mail do titular |
 | `netlify/functions/cancel-subscription.mjs` | Cancela a recorrência no Mercado Pago a pedido do titular |
+| `netlify/functions/create-master.mjs` | Cria a licença vitalícia do administrador (protegida por segredo) |
 | `netlify/functions/_shared.mjs` | Configuração compartilhada (Blobs, preços, CORS, chamadas à API) |
 | `netlify.toml` | Habilita as funções e define Node 20 |
 | `package.json` | Instala a biblioteca `@netlify/blobs` usada pelas funções |
@@ -207,3 +208,4 @@ Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para a
 - **Os dados do racha continuam 100% locais.** A assinatura não sincroniza jogadores nem valores entre dispositivos; use o backup JSON para isso.
 - **O bloqueio real fica no servidor.** Como o repositório é público, alguém pode copiar o código, mas sem uma chave de licença válida (confirmada pelo webhook) não consegue liberar a edição no site publicado.
 - **Nunca coloque o Access Token dentro do `app.js`.** Ele fica apenas nas variáveis de ambiente do Netlify.
+- **Conta master (vitalícia):** `netlify/functions/create-master.mjs` cria uma licença sem cobrança para o administrador. O endpoint exige o segredo `MASTER_SETUP_SECRET` (ou, enquanto não definido, a chave secreta do webhook). Ela nunca aparece no checkout dos clientes.
