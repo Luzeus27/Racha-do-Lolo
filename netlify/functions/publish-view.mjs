@@ -108,6 +108,21 @@ function sanitizeSettings(raw) {
   return settings;
 }
 
+const DEFAULT_REMINDER_TEXT = {
+  group: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
+  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
+};
+
+/* Frases editáveis ficam FORA do snapshot público: somente send-reminders as lê. */
+function privateTexts(raw) {
+  const src = isObject(raw) ? raw : {};
+  const clean = (value, fallback) => {
+    const s = String(value == null ? '' : value).replace(/\r\n?/g, '\n').trim().slice(0, 700);
+    return s || fallback;
+  };
+  return { group: clean(src.group, DEFAULT_REMINDER_TEXT.group), player: clean(src.player, DEFAULT_REMINDER_TEXT.player) };
+}
+
 /* Contatos privados ficam FORA do snapshot público. Somente send-reminders
    usa este mapa para abrir o chat direto de cada jogador nos lembretes. */
 function privateContacts(rawPlayers, tokens) {
@@ -154,7 +169,9 @@ function sanitize(raw) {
       date: text(g.date, 20),
       month: number(g.month),
       year: number(g.year),
-      done: g.done === true
+      done: g.done === true,
+      name: text(g.name, 90),
+      time: text(g.time, 10)
     };
   });
 
@@ -304,6 +321,7 @@ export default async (req) => {
     snapshot: { ...snapshot, publishedAt: now },
     /* Nunca vai para get-view/get-player-view: apenas os lembretes leem. */
     contacts: privateContacts(isObject(body.snapshot) ? body.snapshot.players : [], playerTokens),
+    reminderTexts: privateTexts(body.reminderTexts),
     /* Respostas, fila, notas e ao vivo pertencem ao link e sobrevivem a
        republicações do retrato. */
     playerTokens,

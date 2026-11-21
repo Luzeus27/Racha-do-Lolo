@@ -129,7 +129,7 @@ function publicSnapshot(raw) {
   snap.players = (Array.isArray(src.players) ? src.players : []).slice(0, 200)
     .map((p) => pick(p, PLAYER_FIELDS));
   snap.games = (Array.isArray(src.games) ? src.games : []).slice(0, 500).map((g) => pick(g, [
-    'id', 'date', 'month', 'year', 'done'
+    'id', 'date', 'month', 'year', 'done', 'name', 'time'
   ]));
   return snap;
 }

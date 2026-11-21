@@ -98,6 +98,24 @@ function labelBR(date) {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : date;
 }
 
+const DEFAULT_REMINDER_TEXT = {
+  group: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
+  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
+};
+
+/* Mesmos placeholders do painel: {jogo}, {data}, {horario}, {link}, {jogador}. */
+function renderReminderText(template, ctx) {
+  const raw = String(template || '').replace(/\r\n?/g, '\n').slice(0, 700);
+  const hasLink = /\{link\}/i.test(raw);
+  const out = raw
+    .replace(/\{jogo\}/gi, text(ctx.gameName || 'Racha do Loló', 90))
+    .replace(/\{data\}/gi, text(ctx.date, 30))
+    .replace(/\{horario\}/gi, text(ctx.time || 'horário a definir', 20))
+    .replace(/\{jogador\}/gi, String(ctx.playerName || '').split(' ')[0].slice(0, 40))
+    .replace(/\{link\}/gi, text(ctx.link, 400));
+  return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
+}
+
 export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
@@ -129,6 +147,14 @@ export default async (req) => {
     const games = Array.isArray(snapshot.games) ? snapshot.games.slice(0, 500) : [];
     const tokens = isObject(record.playerTokens) ? record.playerTokens : {};
     const contacts = isObject(record.contacts) ? record.contacts : {};
+    const custom = isObject(record.reminderTexts) ? record.reminderTexts : {};
+    const groupTemplate = String(custom.group || DEFAULT_REMINDER_TEXT.group);
+    const playerTemplate = String(custom.player || DEFAULT_REMINDER_TEXT.player);
+    const names = Object.create(null);
+    (Array.isArray(snapshot.players) ? snapshot.players : []).forEach((p) => {
+      const id = text(p && p.id, 60);
+      if (id) names[id] = text(p && p.name, 90);
+    });
     const players = Object.entries(tokens).slice(0, 200)
       .filter(([id, token]) => !!text(id, 60) && PLAYER_TOKEN.test(String(token)))
       .map(([id, token]) => [text(id, 60), String(token)]);
@@ -147,9 +173,13 @@ export default async (req) => {
       /* Aviso único para o grupo: apenas o retrato público (VW). Nunca inclui
          tokens VP, telefones, mensalidades ou qualquer dado individual. */
       const groupLink = base + '/visualizar.html?v=' + vw;
-      const groupMessage = '⚽ Racha do Loló: jogo em ' + labelBR(date) +
-        '!\nProgramação, escala e ranking: ' + groupLink +
-        '\nConfirme sua presença pelo seu link individual (enviado no privado).';
+      const gameContext = {
+        gameName: text(game.name, 90).trim() || 'Racha do Loló',
+        date: labelBR(date),
+        time: text(game.time, 10).trim() || 'horário a definir',
+        link: groupLink
+      };
+      const groupMessage = renderReminderText(groupTemplate, gameContext);
       if (reminders.length < MAX_REMINDERS) {
         reminders.push({
           vw, gameId, date, when,
@@ -161,7 +191,9 @@ export default async (req) => {
       for (const [playerId, playerToken] of players) {
         if (reminders.length >= MAX_REMINDERS) break;
         const link = base + '/jogador.html?v=' + vw + '&p=' + playerToken;
-        const message = '🏽 Racha do Loló: jogo em ' + labelBR(date) + '! Confirme sua presença: ' + link;
+        const message = renderReminderText(playerTemplate, {
+          ...gameContext, link, playerName: names[playerId] || ''
+        });
         const rawNumber = String(contacts[playerId] || '');
         const number = /^55\d{10,11}$/.test(rawNumber) ? rawNumber : '';
         reminders.push({

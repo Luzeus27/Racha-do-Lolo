@@ -53,7 +53,9 @@ function copyGames(raw) {
     date: text(g && g.date, 20),
     month: number(g && g.month),
     year: number(g && g.year),
-    done: !!(g && g.done === true)
+    done: !!(g && g.done === true),
+    name: text(g && g.name, 90),
+    time: text(g && g.time, 10)
   })).filter((g) => !!g.id);
 }
 
