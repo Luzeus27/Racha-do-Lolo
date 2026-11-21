@@ -384,7 +384,7 @@ function emptyState() {
     version: 1,
     settings: defaultSettings(),
     players: [], payments: [], dayEntries: [], expenses: [], games: [],
-    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: []
+    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: [], audit: []
   };
 }
 
@@ -459,8 +459,172 @@ function normalizeState() {
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
   if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
   if (typeof state.settings.bbqEnabled !== 'boolean') state.settings.bbqEnabled = true;
+  if (!Array.isArray(state.audit)) state.audit = [];
 }
 normalizeState();
+
+/* ------------------------------------------------------------------
+   Fotos em IndexedDB + cópias automáticas + trilha de auditoria.
+   O localStorage tem cota de ~5 MB; fotos em data URL estouravam com
+   poucas imagens. Se o navegador não tiver IDB, mantemos o modo antigo.
+   ------------------------------------------------------------------ */
+const PHOTO_DB = 'racha-fotos';
+const PHOTO_STORE = 'fotos';
+const BACKUP_KEY = 'racha-backups';
+const BACKUP_MAX = 5;
+const BACKUP_INTERVAL = 10 * 60 * 1000;
+let photoDb = null;
+let photoSupported = true;
+let lastBackupAt = 0;
+
+function openPhotoDb() {
+  if (photoDb !== null) return Promise.resolve(photoDb);
+  return new Promise((resolve) => {
+    try {
+      if (!window.indexedDB) { photoSupported = false; photoDb = false; return resolve(false); }
+      const req = indexedDB.open(PHOTO_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(PHOTO_STORE)) db.createObjectStore(PHOTO_STORE);
+      };
+      req.onsuccess = () => { photoDb = req.result; resolve(photoDb); };
+      req.onerror = () => { photoSupported = false; photoDb = false; resolve(false); };
+      req.onblocked = () => { photoSupported = false; photoDb = false; resolve(false); };
+    } catch (e) { photoSupported = false; photoDb = false; resolve(false); }
+  });
+}
+
+function photoTx(mode, fn) {
+  return openPhotoDb().then((db) => {
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(PHOTO_STORE, mode);
+        const req = fn(tx.objectStore(PHOTO_STORE));
+        let result = null;
+        if (req) req.onsuccess = () => { result = req.result; };
+        tx.oncomplete = () => resolve(result);
+        tx.onerror = () => resolve(null);
+        tx.onabort = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+
+function photoPut(id, data) { return photoTx('readwrite', s => s.put(data, String(id))); }
+function photoDel(id) { return photoTx('readwrite', s => s.delete(String(id))); }
+function photoClear() { return photoTx('readwrite', s => s.clear()); }
+
+function photoGetAll() {
+  return openPhotoDb().then((db) => {
+    if (!db) return {};
+    return new Promise((resolve) => {
+      const out = {};
+      try {
+        const tx = db.transaction(PHOTO_STORE, 'readonly');
+        const req = tx.objectStore(PHOTO_STORE).openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (cur) { out[String(cur.key)] = cur.value; cur.continue(); }
+        };
+        tx.oncomplete = () => resolve(out);
+        tx.onerror = () => resolve(out);
+      } catch (e) { resolve(out); }
+    });
+  });
+}
+
+/* Estado gravado no localStorage: sem fotos quando o IDB está disponível. */
+function persistedState() {
+  if (!photoSupported) return state;
+  return {
+    ...state,
+    players: (state.players || []).map((p) => {
+      const copy = { ...p };
+      delete copy.photo;
+      return copy;
+    })
+  };
+}
+
+async function storePhoto(id, data) {
+  const ok = await photoPut(id, data);
+  if (ok === null) photoSupported = false;
+  return ok !== null;
+}
+
+async function persistPhotosFromState() {
+  if (!photoSupported) return;
+  const ids = new Set((state.players || []).map(p => p.id));
+  const stored = await photoGetAll();
+  Object.keys(stored).forEach(id => { if (!ids.has(id)) photoDel(id); });
+  for (const p of (state.players || [])) {
+    if (typeof p.photo === 'string' && p.photo.length > 32) {
+      await storePhoto(p.id, p.photo);
+    } else if (!stored[p.id]) {
+      delete p.photo;
+    }
+  }
+}
+
+async function hydratePhotos() {
+  const stored = await photoGetAll();
+  if (!photoSupported) return;
+  let migrated = false;
+  for (const p of (state.players || [])) {
+    if (stored[p.id]) {
+      p.photo = stored[p.id];
+      delete p.legacyPhoto;
+    } else if (typeof p.photo === 'string' && p.photo.length > 32) {
+      if (await storePhoto(p.id, p.photo)) migrated = true;
+    }
+  }
+  const ids = new Set((state.players || []).map(p => p.id));
+  Object.keys(stored).forEach(id => { if (!ids.has(id)) photoDel(id); });
+  if (migrated) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState())); } catch (e) { /* ignore */ }
+  }
+}
+
+function logAudit(action, detail) {
+  try {
+    state.audit = Array.isArray(state.audit) ? state.audit : [];
+    state.audit.unshift({
+      at: new Date().toISOString(),
+      action: String(action || '').slice(0, 60),
+      detail: String(detail || '').slice(0, 160)
+    });
+    state.audit = state.audit.slice(0, 100);
+  } catch (e) { /* ignore */ }
+}
+
+function backupList() {
+  try {
+    const list = JSON.parse(localStorage.getItem(BACKUP_KEY) || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch (e) { return []; }
+}
+
+function rememberBackup(reason) {
+  try {
+    const entry = { at: new Date().toISOString(), reason: String(reason || 'Alteração').slice(0, 60), data: persistedState() };
+    const list = [entry, ...backupList()].slice(0, BACKUP_MAX);
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(list));
+  } catch (e) {
+    /* Sem espaço: tenta guardar só as três cópias mais recentes. */
+    try {
+      const entry = { at: new Date().toISOString(), reason: String(reason || 'Alteração').slice(0, 60), data: persistedState() };
+      localStorage.setItem(BACKUP_KEY, JSON.stringify([entry, ...backupList().slice(0, 2)]));
+    } catch (e2) { /* descarta */ }
+  }
+}
+
+function maybeBackup(reason) {
+  const now = Date.now();
+  if (now - lastBackupAt < BACKUP_INTERVAL) return;
+  lastBackupAt = now;
+  rememberBackup(reason);
+}
 
 let viewToken = '';
 try { viewToken = String(localStorage.getItem(VIEW_KEY) || '').trim().toUpperCase(); } catch (e) { viewToken = ''; }
@@ -479,8 +643,10 @@ function scheduleViewPublish() {
   viewTimer = setTimeout(() => { publishView(true); }, 2500);
 }
 
-function save() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function save(reason, detail) {
+  if (reason) logAudit(reason, detail);
+  if (reason) maybeBackup(reason);
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState())); }
   catch (e) { toast('Não foi possível salvar no navegador.', 'err'); }
   scheduleViewPublish();
 }
@@ -1196,7 +1362,7 @@ function doDraw() {
   };
   state.drawHistory.unshift(entry);
   if (state.drawHistory.length > 60) state.drawHistory.length = 60;
-  save();
+  save('sortequipou times', `${drawGameLabel(key)} · ${ui.drawMode}`);
   if (bestRepeats > 0) toast('Já não havia combinações inéditas suficientes — algumas equipes se repetem.', 'err');
   else toast('Equipes sorteadas!');
   render();
@@ -1815,6 +1981,16 @@ function pageSettings() {
               <button class="btn btn-ghost" type="button" data-act="load-demo">🔄 Recarregar exemplo</button>
               <button class="btn btn-danger" type="button" data-act="clear-all">🗑️ Apagar tudo</button>
             </div>
+            <hr style="border:0;border-top:1px solid var(--border-soft);margin:12px 0">
+            <p class="small"><strong>Cópias automáticas</strong> <span class="muted">(últimas ${BACKUP_MAX}, a cada 10 min)</span></p>
+            ${backupList().length ? backupList().map((b, i) => `
+              <div class="row" style="justify-content:space-between;align-items:center;gap:8px">
+                <span class="tiny muted">${fmtDateTime(b.at)} · ${esc(b.reason || 'Alteração')}</span>
+                <button class="btn btn-ghost btn-sm" type="button" data-act="restore-backup" data-i="${i}">Restaurar</button>
+              </div>`).join('') : '<p class="tiny muted">Ainda não há cópias automáticas. Elas aparecem após a primeira alteração.</p>'}
+            <p class="small mt"><strong>Trilha de auditoria</strong> <span class="muted">(últimos ${Math.min(8, (state.audit || []).length)} de ${(state.audit || []).length} registros)</span></p>
+            ${(state.audit || []).slice(0, 8).map(a => `<div class="tiny muted">${fmtDateTime(a.at)} · ${esc(a.action)}${a.detail ? ' · ' + esc(a.detail) : ''}</div>`).join('') || '<p class="tiny muted">Nenhuma alteração registrada ainda.</p>'}
+            <p class="tiny muted mt">As fotos ficam no armazenamento ampliado do navegador (IndexedDB) e entram no backup JSON.</p>
           </div>
         </div>
       </div>
@@ -2548,9 +2724,11 @@ document.addEventListener('click', (e) => {
     case 'delete-player': {
       const p = playerById(id);
       confirmAction(`Excluir ${p?.name || 'este jogador'} e todos os lançamentos relacionados?`, () => {
+        const name = p?.name || 'este jogador';
         ['payments', 'dayEntries', 'benefits', 'scores'].forEach(k => state[k] = state[k].filter(x => x.playerId !== id));
         state.players = state.players.filter(x => x.id !== id);
-        save(); render(); toast('Jogador excluído.');
+        photoDel(id);
+        save('excluiu jogador', name); render(); toast('Jogador excluído.');
       });
       break;
     }
@@ -2561,13 +2739,21 @@ document.addEventListener('click', (e) => {
     case 'save-photo': {
       const p = playerById(id);
       if (!p) break;
-      if (pendingPhoto) p.photo = pendingPhoto;
-      save(); closeModal(); render(); toast('Foto salva.');
+      if (pendingPhoto) {
+        p.photo = pendingPhoto;
+        storePhoto(p.id, pendingPhoto).then((ok) => {
+          if (!ok) {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+            toast('Foto mantida no navegador (armazenamento ampliado indisponível).', 'err');
+          }
+        });
+      }
+      save('atualizou foto', p.name); closeModal(); render(); toast('Foto salva.');
       break;
     }
     case 'remove-photo': {
       const p = playerById(id);
-      if (p) { delete p.photo; save(); }
+      if (p) { delete p.photo; photoDel(p.id); save('removeu foto', p.name); }
       pendingPhoto = null; closeModal(); render(); toast('Foto removida.');
       break;
     }
@@ -2666,19 +2852,20 @@ document.addEventListener('click', (e) => {
       const set = new Set(confirmedIds(key));
       if (set.has(id)) set.delete(id); else set.add(id);
       state.confirmations[key] = [...set];
-      save(); render();
+      save(set.has(id) ? 'confirmou presença' : 'desconfirmou presença', `${playerName(id)} · ${key}`);
+      render();
       break;
     }
     case 'confirm-all': {
       const key = drawGameKey();
       state.confirmations[key] = activePlayers().map(p => p.id);
-      save(); render(); toast('Todos os jogadores confirmados.');
+      save('confirmou todos', key); render(); toast('Todos os jogadores confirmados.');
       break;
     }
     case 'confirm-none': {
       const key = drawGameKey();
       state.confirmations[key] = [];
-      save(); render(); toast('Lista de confirmados limpa.');
+      save('limpou confirmados', key); render(); toast('Lista de confirmados limpa.');
       break;
     }
     case 'do-draw': doDraw(); break;
@@ -2693,7 +2880,7 @@ document.addEventListener('click', (e) => {
       Object.keys(resp).forEach(id => { if (resp[id] === 'yes') set.add(id); else set.delete(id); });
       wait.forEach(id => set.delete(id));
       state.confirmations[key] = [...set];
-      save(); render(true); toast('Confirmações do grupo aplicadas!');
+      save('aplicou confirmações do grupo', key); render(true); toast('Confirmações do grupo aplicadas!');
       break;
     }
     case 'save-manual-draw': {
@@ -2709,7 +2896,7 @@ document.addEventListener('click', (e) => {
       const teamSigs = teams.map(t => t.slice().sort().join('+'));
       state.drawHistory.unshift({ id: uid(), createdAt: new Date().toISOString(), gameKey: key, gameLabel: drawGameLabel(key), mode: 'manual', teamSize: teams[0].length, teams, teamSigs });
       if (state.drawHistory.length > 60) state.drawHistory.length = 60;
-      save(); render(true); toast('Equipes manuais salvas!');
+      save('salvou equipes manuais', drawGameLabel(key)); render(true); toast('Equipes manuais salvas!');
       break;
     }
     case 'share-whatsapp': shareWhatsApp(el.dataset.kind); break;
@@ -2737,37 +2924,51 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'delete-expense': confirmAction('Excluir esta despesa?', () => {
+      const exp = state.expenses.find(x => x.id === id);
       state.expenses = state.expenses.filter(x => x.id !== id);
-      save(); render(); toast('Despesa excluída.');
+      save('excluiu despesa', exp ? `${fmtDate(exp.date)} · ${exp.description || exp.category}` : id); render(); toast('Despesa excluída.');
     }); break;
 
     case 'edit-benefit': modalBenefit(id); break;
     case 'delete-benefit': confirmAction('Excluir este benefício?', () => {
       state.benefits = state.benefits.filter(x => x.id !== id);
-      save(); render(); toast('Benefício excluído.');
+      save('excluiu benefício', id); render(); toast('Benefício excluído.');
     }); break;
 
     case 'rank-filter': ui.rankFilter = isNaN(num(el.dataset.filter)) ? el.dataset.filter : num(el.dataset.filter); render(); break;
     case 'apply-sim': {
       const v = simValues();
       Object.assign(state.settings, { plannedMembers: v.members, monthlyFee: v.fee, dayPlayersPerGame: v.dayPerGame, dayFee: v.dayFee, gamesPerMonth: v.games });
-      ui.sim = null; save(); render(); toast('Cenário aplicado às premissas.');
+      ui.sim = null; save('aplicou cenário do simulador'); render(); toast('Cenário aplicado às premissas.');
       break;
     }
-    case 'export-json': download(`racha-do-lolo-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json'); toast('Backup baixado.'); break;
+    case 'export-json': download(`racha-do-lolo-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json'); logAudit('exportou backup', todayISO()); save(); toast('Backup baixado.'); break;
     case 'import-json': $('#import-file').click(); break;
+    case 'restore-backup': {
+      const b = backupList()[num(el.dataset.i)];
+      if (!b || !b.data) break;
+      confirmAction(`Restaurar a cópia de ${fmtDateTime(b.at)}? Os dados atuais serão substituídos.`, async () => {
+        state = b.data; normalizeState();
+        await hydratePhotos();
+        await persistPhotosFromState();
+        save('restaurou cópia automática', fmtDateTime(b.at)); render(); toast('Cópia restaurada.');
+      });
+      break;
+    }
     case 'import-csv': modalImportCSV(); break;
     case 'export-cash': exportCashCSV(); break;
     case 'export-players': exportPlayersCSV(); break;
     case 'load-demo': confirmAction('Substituir todos os dados atuais pelo exemplo?', () => {
-      state = makeDemoState(); ui.sim = null; save(); render(); toast('Exemplo carregado.');
+      photoClear(); state = makeDemoState(); ui.sim = null; save('carregou dados de exemplo'); render(); toast('Exemplo carregado.');
     }); break;
     case 'clear-demo': confirmAction('Remover todos os registros de demonstração? Suas premissas serão mantidas.', () => {
+      const demoIds = new Set(state.players.filter(x => x.demo).map(x => x.id));
       ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => state[k] = state[k].filter(x => !x.demo));
-      save(); render(); toast('Dados de exemplo removidos.');
+      demoIds.forEach(id => photoDel(id));
+      save('removeu dados de exemplo'); render(); toast('Dados de exemplo removidos.');
     }); break;
     case 'clear-all': confirmAction('Apagar TODOS os dados deste navegador? Esta ação não pode ser desfeita.', () => {
-      state = emptyState(); ui.sim = null; save(); navigate('dashboard'); toast('Tudo apagado.');
+      photoClear(); state = emptyState(); ui.sim = null; save('apagou todos os dados'); navigate('dashboard'); toast('Tudo apagado.');
     }); break;
   }
 });
@@ -2842,18 +3043,18 @@ document.addEventListener('submit', async (e) => {
     const idx = state.players.findIndex(p => p.id === data.id);
     if (idx >= 0) state.players[idx] = { ...state.players[idx], ...data, demo: false };
     else state.players.push(data);
-    save(); closeModal(); render(); toast('Jogador salvo.');
+    save(idx >= 0 ? 'editou jogador' : 'cadastrou jogador', data.name); closeModal(); render(); toast('Jogador salvo.');
   }
   else if (type === 'payment') {
     const playerId = v('playerId'), month = num(v('month')), y = year();
     state.payments = state.payments.filter(x => !(x.playerId === playerId && x.month === month && x.year === y));
     if (fd.get('paid') !== null) state.payments.push({ id: uid(), playerId, month, year: y, amount: num(v('amount')), paid: true });
-    save(); closeModal(); render(); toast('Pagamento salvo.');
+    save(fd.get('paid') !== null ? 'recebeu mensalidade' : 'removeu mensalidade', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast('Pagamento salvo.');
   }
   else if (type === 'game') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
     state.games.push({ id: uid(), date, month: m, year: y, done: false });
-    save(); closeModal(); render(); toast('Jogo criado.');
+    save('criou jogo', fmtDate(date)); closeModal(); render(); toast('Jogo criado.');
   }
   else if (type === 'checkin') {
     const gid = form.dataset.id;
@@ -2866,17 +3067,17 @@ document.addEventListener('submit', async (e) => {
       state.dayEntries.push({ id: uid(), gameId: gid, date: g.date, month: g.month, year: g.year, playerId: p.id, amount });
     });
     if (g) g.done = true;
-    save(); closeModal(); render(); toast('Check-in salvo.');
+    save('registrou presenças', g ? fmtDate(g.date) : gid); closeModal(); render(); toast('Check-in salvo.');
   }
   else if (type === 'day') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
     state.dayEntries.push({ id: uid(), date, month: m, year: y, playerId: v('playerId'), amount: num(v('amount')) });
-    save(); closeModal(); render(); toast('Diária lançada.');
+    save('lançou diária', `${playerName(v('playerId'))} · ${fmtDate(date)}`); closeModal(); render(); toast('Diária lançada.');
   }
   else if (type === 'expense') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
     state.expenses.push({ id: uid(), date, month: m, year: y, category: v('category'), description: v('description'), amount: num(v('amount')) });
-    save(); closeModal(); render(); toast('Despesa salva.');
+    save('lançou despesa', `${v('category')} · ${fmtDate(date)}`); closeModal(); render(); toast('Despesa salva.');
   }
   else if (type === 'award') {
     const m = currentMonth(), y = year();
@@ -2886,7 +3087,7 @@ document.addEventListener('submit', async (e) => {
       bestGk: v('bestGk'), defender: v('defender'), fairPlay: v('fairPlay'), crack: v('crack'),
       vipCount: num(v('vipCount')), gift: v('gift'), cost: num(v('cost')), delivered: fd.get('delivered') !== null, demo: false
     });
-    save(); render(); toast('Premiação salva.');
+    save('salvou premiação', `${monthName(m)}/${y}`); render(); toast('Premiação salva.');
   }
   else if (type === 'benefit') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
@@ -2894,7 +3095,7 @@ document.addEventListener('submit', async (e) => {
     const idx = state.benefits.findIndex(x => x.id === data.id);
     if (idx >= 0) state.benefits[idx] = { ...state.benefits[idx], ...data, demo: false };
     else state.benefits.push(data);
-    save(); closeModal(); render(); toast('Benefício salvo.');
+    save(idx >= 0 ? 'editou benefício' : 'lançou benefício', `${playerName(v('playerId'))} · ${fmtDate(date)}`); closeModal(); render(); toast('Benefício salvo.');
   }
   else if (type === 'csv') {
     importCSV(v('entity'), v('content'));
@@ -2907,7 +3108,7 @@ document.addEventListener('submit', async (e) => {
       if (!fd.has(k)) return;
       state.settings[k] = numeric.has(k) ? num(v(k)) : v(k);
     });
-    ui.sim = null; save(); render(); toast('Premissas salvas.');
+    ui.sim = null; save('alterou premissas'); render(); toast('Premissas salvas.');
   }
 });
 
@@ -2922,11 +3123,14 @@ document.addEventListener('change', (e) => {
   if (el.id === 'import-file' && el.files?.[0]) {
     const file = el.files[0];
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result);
         if (!data.settings || !Array.isArray(data.players)) throw new Error('Arquivo inválido');
-        state = data; normalizeState(); ui.sim = null; save(); render(); toast('Backup importado.');
+        state = data; normalizeState();
+        await hydratePhotos();
+        await persistPhotosFromState();
+        ui.sim = null; save('importou backup', file.name); render(); toast('Backup importado.');
       } catch (err) { toast('Não foi possível importar: ' + err.message, 'err'); }
       el.value = '';
     };
@@ -2992,15 +3196,20 @@ try {
   }
 } catch (e) { /* ignore */ }
 
-applyColors();
-if (window.RachaLicense) {
-  window.RachaLicense.init(() => {
-    if (viewToken) fetchViewData(true);
-    if (ui.paymentPage) renderPaymentPage(); else render();
-  });
+async function boot() {
+  /* Carrega as fotos do IndexedDB antes da primeira renderização. */
+  await hydratePhotos();
+  applyColors();
+  if (window.RachaLicense) {
+    window.RachaLicense.init(() => {
+      if (viewToken) fetchViewData(true);
+      if (ui.paymentPage) renderPaymentPage(); else render();
+    });
+  }
+  render();
+  handleHash();
 }
-render();
-handleHash();
+boot();
 
 /* Painel do admin acompanha respostas, notas e placar do mesmo retrato do grupo. */
 if (viewToken) {

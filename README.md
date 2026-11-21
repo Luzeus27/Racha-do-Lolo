@@ -43,6 +43,8 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 4. Use **⬇ Backup** no topo para baixar um arquivo `.json`. Guarde-o em local seguro.
 5. Para restaurar: **Configurações → ⬆ Importar backup**.
 
+> **Fotos e cópias automáticas:** as fotos ficam no `IndexedDB` do navegador (o `localStorage` tem cota pequena), mas são incluídas no backup `.json`. Em **Configurações** você encontra as **últimas 5 cópias automáticas** (a cada 10 minutos de alteração) e a **trilha de auditoria** com cadastros, mensalidades, despesas, presenças e exclusões. Se o navegador não oferecer IndexedDB, as fotos permanecem no modo antigo, dentro do `localStorage`.
+
 > O app começa com **dados de demonstração** para você ver tudo funcionando. Em **Visão geral**, clique em **Limpar demonstração** (ou em Configurações) para começar do zero. Suas premissas são mantidas.
 
 ## Módulos (equivalentes às abas da planilha)
