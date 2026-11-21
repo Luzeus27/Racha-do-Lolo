@@ -108,6 +108,22 @@ function sanitizeSettings(raw) {
   return settings;
 }
 
+/* Contatos privados ficam FORA do snapshot público. Somente send-reminders
+   usa este mapa para abrir o chat direto de cada jogador nos lembretes. */
+function privateContacts(rawPlayers, tokens) {
+  const out = dict();
+  const list = Array.isArray(rawPlayers) ? rawPlayers.slice(0, 200) : [];
+  list.forEach((value) => {
+    const p = isObject(value) ? value : {};
+    const id = text(p.id, 60);
+    if (!id || !Object.prototype.hasOwnProperty.call(tokens, id)) return;
+    let digits = String(p.phone ?? '').replace(/\D/g, '');
+    if (digits.length === 10 || digits.length === 11) digits = '55' + digits;
+    if (/^55\d{10,11}$/.test(digits)) out[id] = digits;
+  });
+  return out;
+}
+
 /* Lista branca: nada de telefone, e-mail, chave PIX, comprovantes ou observações. */
 function sanitize(raw) {
   const src = isObject(raw) ? raw : {};
@@ -286,6 +302,8 @@ export default async (req) => {
     expiresAt: cleanExpiry(body.expiresAt),
     revokedAt: null,
     snapshot: { ...snapshot, publishedAt: now },
+    /* Nunca vai para get-view/get-player-view: apenas os lembretes leem. */
+    contacts: privateContacts(isObject(body.snapshot) ? body.snapshot.players : [], playerTokens),
     /* Respostas, fila, notas e ao vivo pertencem ao link e sobrevivem a
        republicações do retrato. */
     playerTokens,

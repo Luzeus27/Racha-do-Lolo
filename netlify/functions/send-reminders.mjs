@@ -128,6 +128,7 @@ export default async (req) => {
     const snapshot = isObject(record.snapshot) ? record.snapshot : {};
     const games = Array.isArray(snapshot.games) ? snapshot.games.slice(0, 500) : [];
     const tokens = isObject(record.playerTokens) ? record.playerTokens : {};
+    const contacts = isObject(record.contacts) ? record.contacts : {};
     const players = Object.entries(tokens).slice(0, 200)
       .filter(([id, token]) => !!text(id, 60) && PLAYER_TOKEN.test(String(token)))
       .map(([id, token]) => [text(id, 60), String(token)]);
@@ -146,13 +147,18 @@ export default async (req) => {
         if (reminders.length >= MAX_REMINDERS) break;
         const link = base + '/jogador.html?v=' + vw + '&p=' + playerToken;
         const message = '🏽 Racha do Loló: jogo em ' + labelBR(date) + '! Confirme sua presença: ' + link;
+        const rawNumber = String(contacts[playerId] || '');
+        const number = /^55\d{10,11}$/.test(rawNumber) ? rawNumber : '';
         reminders.push({
           vw,
           gameId,
           date,
           when,
           playerId,
-          url: 'https://wa.me/?text=' + encodeURIComponent(message)
+          direct: !!number,
+          url: number
+            ? 'https://wa.me/' + number + '?text=' + encodeURIComponent(message)
+            : 'https://wa.me/?text=' + encodeURIComponent(message)
         });
       }
     }
