@@ -1,8 +1,9 @@
 /* Publica um retrato somente leitura do racha para o link compartilhável.
-   Só a conta master (vitalícia), no aparelho vinculado, pode publicar. */
+   Assinantes ativos (mensal/anual) e a conta vitalícia, no aparelho vinculado,
+   podem publicar. Cada licença publica apenas o seu próprio retrato. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, siteUrl, cleanDevice, deviceAllowed } from './_shared.mjs';
+import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil } from './_shared.mjs';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const PHOTO_MAX = 160000;
@@ -127,8 +128,19 @@ export default async (req) => {
   if (!key || !device) return json({ error: 'Licença ou dispositivo não identificado.' }, 401);
 
   const record = await licenses().get(key, { type: 'json', consistency: 'strong' });
-  if (!record || record.master !== true || record.status !== 'active' || record.plan !== 'lifetime' || !deviceAllowed(record, device)) {
-    return json({ error: 'Somente a conta master deste aparelho pode publicar.' }, 403);
+  if (!record || !/^[A-Z0-9-]{8,40}$/.test(key)) {
+    return json({ error: 'Licença não encontrada.' }, 403);
+  }
+
+  /* Vale para mensal/anual ativo e para a conta vitalícia. O cancelamento
+     solicitado só encerra o acesso depois do fim do período já pago. */
+  let active = normalizeStatus(record.status) === 'active' && validUntil(record.nextPaymentAt);
+  if (record.cancelRequestedAt && record.nextPaymentAt) {
+    const end = Date.parse(record.nextPaymentAt);
+    if (Number.isFinite(end) && end <= Date.now()) active = false;
+  }
+  if (!active || !deviceAllowed(record, device)) {
+    return json({ error: 'Assinatura ativa e aparelho vinculado são necessários para publicar.' }, 403);
   }
 
   const snapshot = sanitize(body.snapshot);
@@ -153,7 +165,7 @@ export default async (req) => {
     createdAt: (await store.get(token, { type: 'json', consistency: 'strong' }))?.createdAt || now,
     updatedAt: now,
     snapshot: { ...snapshot, publishedAt: now }
-  }, { metadata: { owner: 'master' } });
+  }, { metadata: { owner: 'license' } });
 
   return json({
     ok: true,
