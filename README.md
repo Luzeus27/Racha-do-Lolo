@@ -23,7 +23,8 @@ Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar
 - **Privacidade:** o token VW é secreto e o VP é individual. Telefone, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** aparecem na visão pública — PIX aparece apenas na área do próprio jogador.
 - **Segurança:** publicar, revogar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
 - **Validade e revogação:** em **Configurações → Link para o grupo** você pode definir uma data de expiração e revogar o link. Links revogados ou vencidos param de responder (aviso `410`) e não aceitam confirmações, notas nem lances ao vivo. Ao publicar novamente, um novo token `VW-` é gerado e os links individuais `VP-` são atualizados.
-- **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
+- **Envio dos links individuais:** em **Configurações → Links individuais dos jogadores**, o botão **📤 WhatsApp** abre o chat do jogador com o link dele já escrito — basta confirmar o envio. O mesmo botão existe na ficha individual. Se o jogador não tiver telefone cadastrado, o app abre o WhatsApp para escolher o contato, e **📋 Copiar** continua disponível. Cada link vai somente ao seu dono.
+- **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo, abrindo o chat direto de cada jogador quando há telefone cadastrado. Os telefones ficam em `contacts` no registro do servidor, **fora** do snapshot público — `get-view.mjs` e `get-player-view.mjs` nunca os devolvem. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
 - **Conciliação:** `reconcile-licenses.mjs` roda às 03h e compara todas as assinaturas com o Mercado Pago, corrigindo o acesso se um webhook tiver sido perdido. Chamada manual: configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - Sem Netlify (GitHub Pages) esses recursos **não funcionam**: dependem de funções e Netlify Blobs. Use sempre o domínio principal.
 
@@ -74,7 +75,7 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 - **Dashboard com gráficos**: receitas × despesas, saldo acumulado, progresso da meta e da reserva do churrasco.
 - **Simulador interativo**: arraste mensalidade, nº de mensalistas, diaristas e jogos; veja o resultado na hora e o ponto de equilíbrio.
 - **Ranking com pódio** e filtros por trimestre/ano.
-- **Perfil do jogador**: pontos, gols, assistências, mensalidades pagas e diárias recebidas. A ficha ampliada mostra presença mês a mês, situação das 12 mensalidades, posição por trimestre, média força/velocidade e botão para copiar o link individual do jogador.
+- **Perfil do jogador**: pontos, gols, assistências, mensalidades pagas e diárias recebidas. A ficha ampliada mostra presença mês a mês, situação das 12 mensalidades, posição por trimestre, média força/velocidade e botões para copiar ou enviar no WhatsApp o link individual do jogador.
 - **Perfil, busca e filtros** em jogadores.
 - **Exportação CSV** de caixa e jogadores.
 - **Importação CSV** vinda do Excel (Configurações → Importar CSV).

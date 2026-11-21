@@ -888,6 +888,21 @@ function liveUrl() {
 
 function waLink(text) { return 'https://wa.me/?text=' + encodeURIComponent(String(text || '')); }
 
+/* Número do WhatsApp já com o código do Brasil. Aceita 10/11 dígitos ou 55+DDD. */
+function waNumber(phone) {
+  let d = String(phone || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length === 10 || d.length === 11) d = '55' + d;
+  return /^55\d{10,11}$/.test(d) ? d : '';
+}
+
+/* Abre o chat do jogador quando há telefone cadastrado; senão deixa escolher. */
+function waDirect(phone, message) {
+  const number = waNumber(phone);
+  const text = String(message || '');
+  return number ? 'https://wa.me/' + number + '?text=' + encodeURIComponent(text) : waLink(text);
+}
+
 function shareMessage(kind) {
   if (kind === 'view') return `🏽 Racha do Loló — acompanhe jogos, escalas e ranking em tempo real (somente leitura): ${viewUrl()}`;
   if (kind === 'team') {
@@ -924,7 +939,7 @@ function reminderLinks() {
       const p = playerById(pid);
       if (!p || !url) return;
       const text = `🏽 Racha do Loló: jogo em ${fmtDate(g.date)}! Confirme sua presença: ${url}`;
-      out.push({ when, name: p.name, url: 'https://wa.me/?text=' + encodeURIComponent(text) });
+      out.push({ when, name: p.name, url: waDirect(p.phone, text), direct: !!waNumber(p.phone) });
     });
   });
   return out.slice(0, 100);
@@ -933,7 +948,7 @@ function reminderLinks() {
 function modalReminders() {
   const list = reminderLinks();
   openModal('Lembretes para o grupo', 'Jogos nas janelas de 24h e 2h', list.length ? `
-    <p class="small muted">Toque em cada linha para abrir o WhatsApp com a mensagem pronta. A função agendada do servidor envia automaticamente quando configurada.</p>
+    <p class="small muted">Toque em cada linha para abrir o chat do jogador com a mensagem pronta. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. A função agendada do servidor gera os mesmos lembretes.</p>
     <div class="stack mt">${list.map(r => `<a class="btn btn-ghost" href="${esc(r.url)}" target="_blank" rel="noopener">🔔 ${esc(r.when)} · ${esc(r.name)}</a>`).join('')}</div>` : `
     <p class="small muted">Nenhum jogo cai nas janelas de 24h ou 2h agora. Volte mais perto da partida.</p>`);
 }
@@ -2134,9 +2149,9 @@ function pageSettings() {
         <div class="card">
           ${section('Links individuais dos jogadores', 'Cada jogador confirma presença sem senha', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
           <div class="card-body stack">
-            <p class="small muted">Envie o link de cada jogador somente a ele. Lá ele confirma presença, avalia os jogos e vê as próprias mensalidades com PIX. O link é a credencial — não publique no grupo.</p>
-            ${Object.keys(playerLinks).length ? `<div class="table-wrap"><table><thead><tr><th>Jogador</th><th>Link</th></tr></thead><tbody>
-              ${Object.entries(playerLinks).map(([pid, url]) => `<tr><td>${esc(playerName(pid))}</td><td><button class="btn btn-sm btn-ghost" type="button" data-act="copy-player-link" data-id="${esc(pid)}">📋 Copiar link</button></td></tr>`).join('')}
+            <p class="small muted">Toque em <strong>📤 WhatsApp</strong> para abrir o chat do jogador com o link dele já escrito — você só confirma o envio. Quem não tem telefone cadastrado pode usar <strong>📋 Copiar</strong>. Envie sempre somente ao dono do link: ele é a credencial da pessoa e não deve ir para o grupo.</p>
+            ${Object.keys(playerLinks).length ? `<div class="table-wrap"><table><thead><tr><th>Jogador</th><th>Envio</th></tr></thead><tbody>
+              ${Object.entries(playerLinks).map(([pid, url]) => `<tr><td>${esc(playerName(pid))}</td><td><div class="row" style="gap:6px"><button class="btn btn-sm btn-primary" type="button" data-act="send-player-link" data-id="${esc(pid)}">📤 WhatsApp</button><button class="btn btn-sm btn-ghost" type="button" data-act="copy-player-link" data-id="${esc(pid)}">📋 Copiar</button></div></td></tr>`).join('')}
             </tbody></table></div>` : `<p class="tiny muted">Os links aparecem depois que o link do grupo for criado/atualizado.</p>`}
             <p class="tiny muted">Limite de vagas por jogo: <strong>${num(settings().maxPlayers) || 'sem limite'}</strong>. Quem entrar depois disso vai para a fila de espera.</p>
           </div>
@@ -2845,7 +2860,7 @@ function modalProfile(id) {
       <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
       <div class="card card-pad"><div class="label tiny muted">AVALIAÇÃO INTERNA</div><strong>${playerRating(p)}</strong><div class="tiny muted mt">média de força e velocidade · ${p.position || 'sem posição'}</div></div>
     </div>
-    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>🔗 Link do jogador</button><button class="btn btn-primary" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
+    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>🔗 Copiar link</button><button class="btn btn-primary" type="button" data-act="send-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>📤 Enviar no WhatsApp</button><button class="btn btn-ghost" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
 }
 
 /* ------------------------------------------------------------
@@ -2857,7 +2872,7 @@ function cobrar(playerId) {
   const m = currentMonth();
   const link = paymentLink(p.id, m, settings().monthlyFee);
   const msg = `Olá ${p.name.split(' ')[0]}! Falta a mensalidade de ${monthName(m)}/${year()} do Racha do Loló (${money(settings().monthlyFee)}). Pode pagar? ⚽\n\nLink: ${link}`;
-  window.open(`https://wa.me/55${p.phone.replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
+  window.open(waDirect(p.phone, msg), '_blank', 'noopener');
 }
 
 function upsertScore(playerId, key, value) {
@@ -3282,6 +3297,17 @@ document.addEventListener('click', (e) => {
     case 'copy-player-link':
       copyText(playerLinks[id] || '').then(ok => toast(ok ? 'Link do jogador copiado!' : 'Link indisponível. Atualize o link do grupo.', ok ? 'ok' : 'err'));
       break;
+    case 'send-player-link': {
+      const url = playerLinks[id] || '';
+      if (!url) { toast('Link indisponível. Atualize o link do grupo.', 'err'); break; }
+      const p = playerById(id);
+      const first = String(p?.name || 'jogador').split(' ')[0];
+      const msg = `Olá ${first}! Aqui está seu link pessoal do Racha do Loló ⚽\n\n${url}\n\nUse-o para confirmar presença, avaliar jogos e ver suas mensalidades. Guarde o link: ele é o seu acesso e não deve ser compartilhado.`;
+      const direct = !!waNumber(p?.phone);
+      window.open(waDirect(p?.phone, msg), '_blank', 'noopener');
+      toast(direct ? `WhatsApp aberto para ${first}!` : 'Sem telefone cadastrado: escolha o contato no WhatsApp.', direct ? 'ok' : 'err');
+      break;
+    }
     case 'show-reminders': modalReminders(); break;
     case 'live-start': runLiveAction('start'); break;
     case 'live-goal': runLiveAction('goal'); break;
