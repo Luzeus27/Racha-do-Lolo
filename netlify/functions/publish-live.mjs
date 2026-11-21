@@ -2,7 +2,7 @@
    no aparelho vinculado e dona do link) pode iniciar, lançar eventos e encerrar. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, cleanDevice, deviceAllowed, normalizeStatus, validUntil } from './_shared.mjs';
+import { json, licenses, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const MAX_EVENTS = 1000;
@@ -74,6 +74,7 @@ function scoreFromEvents(events) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

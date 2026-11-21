@@ -1,7 +1,7 @@
 /* Visão individual de um jogador, liberada apenas pelo par de tokens VW + VP.
    Nunca devolve tokens de outros jogadores nem dados de contato. */
 import { getStore } from '@netlify/blobs';
-import { json } from './_shared.mjs';
+import { json, setCorsOrigin } from './_shared.mjs';
 
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
 const PLAYER_TOKEN = /^VP-[A-F0-9]{16}$/;
@@ -96,6 +96,7 @@ function openDues(raw, playerId) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'GET') return json({ error: 'Método não permitido.' }, 405);
 

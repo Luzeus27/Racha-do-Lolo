@@ -1,23 +1,44 @@
 /* Código compartilhado pelas funções de assinatura do Racha do Loló. */
 import { getStore } from '@netlify/blobs';
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type'
-};
+const PRODUCTION_ORIGIN = 'https://teal-griffin-a37fbe.netlify.app';
+const MIRROR_ORIGIN = 'https://luzeus27.github.io';
+
+/* Origem autorizada nesta invocação. Preenchida por setCorsOrigin() no início
+   de cada função. O header Origin NUNCA é usado para montar URLs de pagamento
+   nem para decidir para onde o Mercado Pago deve redirecionar o usuário. */
+let requestOrigin = '';
+
+export function setCorsOrigin(req) {
+  const origin = String(req?.headers?.get?.('origin') || '').trim().replace(/\/+$/, '');
+  const extra = String(process.env.ALLOWED_ORIGINS || '')
+    .split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  const allowed = [PRODUCTION_ORIGIN, MIRROR_ORIGIN, ...extra];
+  const loopback = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+  requestOrigin = origin && (allowed.includes(origin) || loopback) ? origin : '';
+}
+
+function corsHeaders(extra = {}) {
+  return {
+    'Access-Control-Allow-Origin': requestOrigin || PRODUCTION_ORIGIN,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
+    ...extra
+  };
+}
 
 export function json(body, status = 200, extra = {}) {
   /* Respostas 204 não podem ter corpo (usadas no preflight CORS). */
   if (status === 204) {
-    return new Response(null, { status: 204, headers: { ...CORS, ...extra } });
+    return new Response(null, { status: 204, headers: corsHeaders(extra) });
   }
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
-      ...CORS,
+      ...corsHeaders(),
       ...extra
     }
   });
@@ -29,11 +50,11 @@ export function licenses() {
   return getStore({ name: STORE_NAME, consistency: 'strong' });
 }
 
+/* Usa apenas variáveis de ambiente confiáveis do servidor (SITE_URL/URL).
+   O Origin vem do navegador e pode ser forjado — nunca é aceito aqui. */
 export function siteUrl(req) {
-  const configured = process.env.SITE_URL || process.env.URL;
+  const configured = process.env.SITE_URL || process.env.URL || process.env.DEPLOY_PRIME_URL;
   if (configured) return String(configured).replace(/\/+$/, '');
-  const origin = req.headers.get('origin');
-  if (origin && /^https?:\/\//i.test(origin)) return origin.replace(/\/+$/, '');
   return new URL(req.url).origin;
 }
 
@@ -80,7 +101,20 @@ export function validUntil(expiresAt) {
   if (!expiresAt) return true;
   const time = Date.parse(expiresAt);
   if (!Number.isFinite(time)) return true;
-  return time + 3 * 24 * 60 * 60 * 1000 > Date.now();
+  const graceDays = envNumber('LICENSE_GRACE_DAYS', 3);
+  return time + graceDays * 24 * 60 * 60 * 1000 > Date.now();
+}
+
+/* Se o titular reassinar depois de cancelar, o Mercado Pago devolve um novo
+   período. Só nesse caso o pedido de cancelamento antigo deve ser limpo. */
+export function clearStaleCancel(record, sub) {
+  if (!record?.cancelRequestedAt) return {};
+  const nextPayment = Date.parse(String(sub?.next_payment_date || sub?.next_payment_at || ''));
+  const requested = Date.parse(String(record.cancelRequestedAt));
+  if (Number.isFinite(nextPayment) && Number.isFinite(requested) && nextPayment > requested) {
+    return { cancelRequestedAt: null };
+  }
+  return {};
 }
 
 export async function mpFetch(path, { token, method = 'GET', body } = {}) {

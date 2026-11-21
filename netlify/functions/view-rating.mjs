@@ -1,6 +1,6 @@
 /* Nota (1..5) dada por um jogador a um jogo já realizado, no link compartilhado. */
 import { getStore } from '@netlify/blobs';
-import { json } from './_shared.mjs';
+import { json, setCorsOrigin } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -60,6 +60,7 @@ function copyRatings(raw) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

@@ -3,7 +3,7 @@
    podem publicar. Cada licença publica apenas o seu próprio retrato. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil } from './_shared.mjs';
+import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin } from './_shared.mjs';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -214,6 +214,7 @@ function syncPlayerTokens(players, previous) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

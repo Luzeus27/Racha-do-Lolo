@@ -1,13 +1,14 @@
 /* Cria uma licença vitalícia (conta master) para o administrador.
    Sem cobrança no Mercado Pago e sem recorrência. Uso único, protegido por segredo. */
 import { randomUUID } from 'node:crypto';
-import { json, licenses, cleanDevice } from './_shared.mjs';
+import { json, licenses, cleanDevice, setCorsOrigin } from './_shared.mjs';
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

@@ -1,7 +1,7 @@
 /* Resposta do jogador a um jogo do link compartilhado. O token VP é enviado
    apenas no link individual; aqui ele é trocado pelo id do jogador. */
 import { getStore } from '@netlify/blobs';
-import { json } from './_shared.mjs';
+import { json, setCorsOrigin } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -95,6 +95,7 @@ function cleanWaitlist(responses, waitlist) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

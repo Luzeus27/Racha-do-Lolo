@@ -1,7 +1,7 @@
 /* Consulta pública da licença. Nunca devolve token nem dados de pagamento. */
 import {
   json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus,
-  cleanDevice, deviceAllowed
+  cleanDevice, deviceAllowed, setCorsOrigin, clearStaleCancel
 } from './_shared.mjs';
 
 function cleanKey(value) {
@@ -30,6 +30,7 @@ async function syncFromMercadoPago(store, key, record) {
     amount: sub.auto_recurring?.transaction_amount || record.amount,
     nextPaymentAt: sub.next_payment_date || record.nextPaymentAt || null,
     email: sub.payer_email || record.email,
+    ...clearStaleCancel(record, sub),
     lastSyncAt: now,
     updatedAt: now,
     history: [...(record.history || []), { at: now, event: 'verify:' + sub.status }].slice(-20)
@@ -39,6 +40,7 @@ async function syncFromMercadoPago(store, key, record) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
 
   let key = '';

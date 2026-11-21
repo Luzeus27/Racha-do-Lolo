@@ -1,6 +1,6 @@
 /* Recebe as notificações do Mercado Pago e atualiza a licença no Netlify Blobs. */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { json, licenses, mpFetch, normalizeStatus } from './_shared.mjs';
+import { json, licenses, mpFetch, normalizeStatus, setCorsOrigin, clearStaleCancel } from './_shared.mjs';
 
 function parseSignature(header) {
   const result = {};
@@ -58,6 +58,7 @@ async function save(store, key, patch, event) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
 
   const token = process.env.MP_ACCESS_TOKEN;
@@ -67,12 +68,12 @@ export default async (req) => {
   const dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') || '';
   const requestId = req.headers.get('x-request-id') || '';
   const secret = process.env.MP_WEBHOOK_SECRET;
+  /* Falha fechada: sem segredo configurado, nenhuma notificação é aceita. */
+  if (!secret) return json({ received: false, error: 'Webhook sem segredo configurado.' }, 503);
 
-  if (secret) {
-    const signature = parseSignature(req.headers.get('x-signature'));
-    if (!signatureIsValid(secret, signature, dataId, requestId)) {
-      return json({ received: false, error: 'Assinatura inválida.' }, 401);
-    }
+  const signature = parseSignature(req.headers.get('x-signature'));
+  if (!signatureIsValid(secret, signature, dataId, requestId)) {
+    return json({ received: false, error: 'Assinatura inválida.' }, 401);
   }
 
   let payload = {};
@@ -102,6 +103,8 @@ export default async (req) => {
     const key = String(sub.external_reference || '').trim().toUpperCase();
     if (!key) return json({ received: true, ignored: 'sem external_reference' }, 200);
 
+    /* Reassinar depois de cancelar gera um novo período: libera o acesso. */
+    const current = await store.get(key, { type: 'json', consistency: 'strong' });
     await save(store, key, {
       email: sub.payer_email || undefined,
       subscriptionId: String(sub.id || id),
@@ -109,7 +112,8 @@ export default async (req) => {
       status: normalizeStatus(sub.status),
       amount: sub.auto_recurring?.transaction_amount || undefined,
       nextPaymentAt: sub.next_payment_date || null,
-      lastSyncAt: now
+      lastSyncAt: now,
+      ...clearStaleCancel(current, sub)
     }, 'subscription:' + sub.status);
 
     return json({ received: true, key }, 200);
@@ -144,12 +148,21 @@ export default async (req) => {
     const record = key ? await store.get(key, { type: 'json', consistency: 'strong' }) : null;
     if (!record) return json({ received: true, ignored: 'pagamento sem licença' }, 200);
 
+    const status = String(payment.status || '').toLowerCase();
+    /* Estorno e chargeback revogam o acesso; statuses intermediários não. */
+    const revoked = status === 'refunded' || status === 'chargeback';
+    const paid = Number(payment.transaction_amount);
+    const expected = Number(record.amount);
+    const mismatch = Number.isFinite(paid) && Number.isFinite(expected) && expected > 0 &&
+      Math.abs(paid - expected) > 0.01;
+
     await save(store, key, {
-      status: payment.status === 'approved' ? 'active' : record.status,
-      mpStatus: payment.status || record.mpStatus,
+      status: revoked ? 'inactive' : status === 'approved' ? 'active' : record.status,
+      mpStatus: status || record.mpStatus,
       lastPaymentAt: payment.date_approved || payment.date_created || now,
-      lastPaymentStatus: payment.status || ''
-    }, 'payment:' + payment.status);
+      lastPaymentStatus: status || '',
+      amountWarning: mismatch || undefined
+    }, 'payment:' + status + (revoked ? ':revogado' : '') + (mismatch ? ':valor_divergente' : ''));
 
     return json({ received: true, key }, 200);
   }

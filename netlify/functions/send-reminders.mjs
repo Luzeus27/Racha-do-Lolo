@@ -1,7 +1,7 @@
 /* Gera links de lembrete (WhatsApp) para jogos próximos dos links publicados.
    Função agendável: exige REMINDER_SECRET no header x-reminder-secret. */
 import { getStore } from '@netlify/blobs';
-import { json, siteUrl } from './_shared.mjs';
+import { json, siteUrl, setCorsOrigin } from './_shared.mjs';
 
 const MAX_REMINDERS = 200;
 const MAX_PAGES = 50;
@@ -99,6 +99,7 @@ function labelBR(date) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'GET' && req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

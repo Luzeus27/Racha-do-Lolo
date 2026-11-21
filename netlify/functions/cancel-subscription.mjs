@@ -1,11 +1,12 @@
 /* Cancela a assinatura no Mercado Pago a pedido do titular da chave. */
-import { json, licenses, mpFetch, cleanDevice, deviceAllowed } from './_shared.mjs';
+import { json, licenses, mpFetch, cleanDevice, deviceAllowed, setCorsOrigin } from './_shared.mjs';
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

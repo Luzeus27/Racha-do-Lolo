@@ -1,12 +1,13 @@
 /* Cria uma assinatura recorrente no Mercado Pago e devolve o link de pagamento. */
 import { randomUUID } from 'node:crypto';
-import { json, siteUrl, plans, licenses, mpFetch, cleanDevice } from './_shared.mjs';
+import { json, siteUrl, plans, licenses, mpFetch, cleanDevice, setCorsOrigin } from './_shared.mjs';
 
 function newKey() {
   return 'RL-' + randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 

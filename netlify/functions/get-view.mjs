@@ -1,7 +1,7 @@
 /* Leitura pública do retrato compartilhado. O token VW é a única credencial
    necessária aqui; nunca expor mensalidades, tokens VP ou dados de contato. */
 import { getStore } from '@netlify/blobs';
-import { json } from './_shared.mjs';
+import { json, setCorsOrigin } from './_shared.mjs';
 
 const PLAYER_FIELDS = [
   'id', 'name', 'type', 'position', 'active', 'age', 'height', 'weight',
@@ -135,6 +135,7 @@ function publicSnapshot(raw) {
 }
 
 export default async (req) => {
+  setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'GET' && req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 
