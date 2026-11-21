@@ -1,6 +1,6 @@
 /* Cria uma assinatura recorrente no Mercado Pago e devolve o link de pagamento. */
 import { randomUUID } from 'node:crypto';
-import { json, siteUrl, plans, licenses, mpFetch, cleanDevice, setCorsOrigin } from './_shared.mjs';
+import { json, siteUrl, plans, licenses, mpFetch, cleanDevice, setCorsOrigin, rateLimit } from './_shared.mjs';
 
 function newKey() {
   return 'RL-' + randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
@@ -24,6 +24,13 @@ export default async (req) => {
   const email = String(body.email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: 'Informe um e-mail válido para receber a assinatura.' }, 400);
+  }
+
+  const limit = await rateLimit(req, 'checkout', { max: 8, windowMs: 60000, key: email });
+  if (!limit.ok) {
+    return json({ error: 'Muitas tentativas de pagamento. Aguarde um minuto e tente novamente.' }, 429, {
+      'Retry-After': String(limit.retryAfter)
+    });
   }
 
   /* A chave passa a valer apenas neste aparelho (anti-compartilhamento). */

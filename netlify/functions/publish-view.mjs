@@ -3,7 +3,7 @@
    podem publicar. Cada licença publica apenas o seu próprio retrato. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin } from './_shared.mjs';
+import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin, rateLimit } from './_shared.mjs';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -217,6 +217,13 @@ export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
+
+  const limit = await rateLimit(req, 'publish-view', { max: 10, windowMs: 60000 });
+  if (!limit.ok) {
+    return json({ error: 'Muitas publicações em pouco tempo. Aguarde um minuto.' }, 429, {
+      'Retry-After': String(limit.retryAfter)
+    });
+  }
 
   const { body, tooLarge } = await readJson(req, MAX_BODY_BYTES);
   if (tooLarge) return json({ error: 'Retrato muito grande (fotos). Reduza as imagens.' }, 413);

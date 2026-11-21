@@ -1,7 +1,7 @@
 /* Consulta pública da licença. Nunca devolve token nem dados de pagamento. */
 import {
   json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus,
-  cleanDevice, deviceAllowed, setCorsOrigin, clearStaleCancel
+  cleanDevice, deviceAllowed, setCorsOrigin, clearStaleCancel, rateLimit
 } from './_shared.mjs';
 
 function cleanKey(value) {
@@ -42,6 +42,13 @@ async function syncFromMercadoPago(store, key, record) {
 export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
+
+  const limit = await rateLimit(req, 'license', { max: 60, windowMs: 60000 });
+  if (!limit.ok) {
+    return json({ error: 'Muitas consultas de licença. Aguarde um minuto.' }, 429, {
+      'Retry-After': String(limit.retryAfter)
+    });
+  }
 
   let key = '';
   let action = '';

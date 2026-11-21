@@ -1,4 +1,5 @@
 /* Código compartilhado pelas funções de assinatura do Racha do Loló. */
+import { createHash } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 
 const PRODUCTION_ORIGIN = 'https://teal-griffin-a37fbe.netlify.app';
@@ -115,6 +116,41 @@ export function clearStaleCancel(record, sub) {
     return { cancelRequestedAt: null };
   }
   return {};
+}
+
+/* Limite de requisições por IP (e, opcionalmente, por chave/email).
+   Usa um store separado das licenças e expira as contagens automaticamente.
+   Falhas de infraestrutura não bloqueiam o usuário: melhor permitir um excesso
+   do que derrubar o checkout por um problema temporário no Blobs. */
+export async function rateLimit(req, action, { max = 30, windowMs = 60000, key = '' } = {}) {
+  const headers = req?.headers;
+  const forwarded = String(headers?.get?.('x-forwarded-for') || '').split(',')[0];
+  const ip = String(
+    headers?.get?.('x-nf-client-connection-ip') ||
+    headers?.get?.('cf-connecting-ip') ||
+    forwarded ||
+    headers?.get?.('x-real-ip') ||
+    'desconhecido'
+  ).trim();
+  const hash = createHash('sha256')
+    .update(ip + '|' + action + '|' + String(key || ''))
+    .digest('hex')
+    .slice(0, 24);
+  const window = Math.floor(Date.now() / windowMs);
+  const id = `rl:${action}:${hash}:${window}`;
+  try {
+    const store = getStore({ name: 'racha-rate', consistency: 'strong' });
+    const current = await store.get(id, { type: 'json', consistency: 'strong' });
+    const count = Number(current?.count || 0) + 1;
+    await store.setJSON(id, { count, at: Date.now() }, { expireTtl: Math.ceil(windowMs / 1000) + 120 });
+    return {
+      ok: count <= max,
+      remaining: Math.max(0, max - count),
+      retryAfter: Math.ceil(windowMs / 1000)
+    };
+  } catch (e) {
+    return { ok: true, remaining: max, retryAfter: 0 };
+  }
 }
 
 export async function mpFetch(path, { token, method = 'GET', body } = {}) {

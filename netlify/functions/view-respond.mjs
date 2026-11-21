@@ -1,7 +1,7 @@
 /* Resposta do jogador a um jogo do link compartilhado. O token VP é enviado
    apenas no link individual; aqui ele é trocado pelo id do jogador. */
 import { getStore } from '@netlify/blobs';
-import { json, setCorsOrigin } from './_shared.mjs';
+import { json, setCorsOrigin, rateLimit } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -98,6 +98,13 @@ export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
+
+  const limit = await rateLimit(req, 'view-respond', { max: 30, windowMs: 60000 });
+  if (!limit.ok) {
+    return json({ error: 'Muitas respostas em pouco tempo. Aguarde um minuto.' }, 429, {
+      'Retry-After': String(limit.retryAfter)
+    });
+  }
 
   const { body, tooLarge } = await readJson(req);
   if (tooLarge) return json({ error: 'Requisição muito grande.' }, 413);
