@@ -97,7 +97,7 @@ Use `;` ou `,` como separador. A primeira linha deve conter os cabeçalhos.
 - O ano de controle padrão é **2027**, conforme a planilha original. Pode ser alterado em Configurações ou no seletor de ano no topo.
 - Benefícios a mensalistas e brindes/premiações entram automaticamente no fluxo de caixa (não precisam ser duplicados em Despesas).
 - Os cálculos de meta seguem a planilha: aluguel + goleiros + arbitragem + provisão do churrasco + reserva de brindes.
-- A reserva do churrasco pode ser **ligada/desligada** em Configurações → “Cenário e churrasco”. Desligada, ela sai da meta mensal e das linhas de reserva do fluxo de caixa e do painel; os lançamentos reais de churrasco em Despesas continuam normais e os valores configurados são preservados.
+- A reserva do churrasco pode ser **ligada/desligada** em Configurações → “Cenário e churrasco”. Desligada, ela sai da meta mensal e das linhas de reserva do fluxo de caixa e do painel; os valores configurados são preservados. A categoria `Churrasco` também desaparece dos KPIs de Despesas, do select de novos lançamentos, da tabela de fluxo e do CSV exportado. Lançamentos reais já existentes continuam contando nos totais e são exibidos como `Outros` (a descrição original é mantida).
 - Este é um app local: os dados ficam no navegador. Para sincronizar entre dispositivos, use o backup JSON.
 
 ## Instalar no celular (PWA)

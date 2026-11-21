@@ -711,6 +711,10 @@ const ui = {
 function activePlayers() { return state.players.filter(p => p.active !== false); }
 function playerById(id) { return state.players.find(p => p.id === id) || null; }
 function playerName(id) { return playerById(id)?.name || 'Jogador removido'; }
+function bbqHidden() { return state.settings.bbqEnabled === false; }
+function visibleExpenseCats() { return bbqHidden() ? EXPENSE_CATS.filter(c => c !== 'Churrasco') : EXPENSE_CATS; }
+function visibleCashRows() { return bbqHidden() ? CASH_ROWS.filter(c => c !== 'Churrasco') : CASH_ROWS; }
+function displayExpenseCat(cat) { return bbqHidden() && cat === 'Churrasco' ? 'Outros' : cat; }
 
 function meta() {
   const s = settings();
@@ -733,11 +737,11 @@ function expenses(m) {
   CASH_ROWS.forEach(c => byCat[c] = 0);
   state.expenses.filter(e => e.year === y && e.month === m).forEach(e => {
     const cat = CASH_ROWS.includes(e.category) ? e.category : 'Outros';
-    byCat[cat] += num(e.amount);
+    byCat[displayExpenseCat(cat)] += num(e.amount);
   });
   byCat['Benefícios'] = sum(state.benefits.filter(b => b.year === y && b.month === m && b.fromCash), b => b.amount);
   byCat['Brindes'] = sum(state.awards.filter(a => a.year === y && a.month === m), a => a.cost);
-  const total = CASH_ROWS.reduce((a, c) => a + byCat[c], 0);
+  const total = visibleCashRows().reduce((a, c) => a + byCat[c], 0);
   return { byCat, total };
 }
 
@@ -1456,10 +1460,10 @@ function pageExpenses() {
   const y = year();
   const all = state.expenses.filter(e => e.year === y).sort((a, b) => b.date.localeCompare(a.date));
   const byCat = {};
-  all.forEach(e => byCat[e.category] = (byCat[e.category] || 0) + num(e.amount));
+  all.forEach(e => { const c = displayExpenseCat(e.category); byCat[c] = (byCat[c] || 0) + num(e.amount); });
   return `
     <div class="grid grid-4">
-      ${CASH_ROWS.filter(c => ['Quadra', 'Goleiros', 'Material', 'Churrasco'].includes(c)).map((c, i) => `
+      ${visibleCashRows().filter(c => ['Quadra', 'Goleiros', 'Material', 'Churrasco'].includes(c)).map((c, i) => `
         <div class="card kpi ${i % 2 ? 'blue' : ''}"><div class="label">${esc(c)}</div><div class="value mono">${money(byCat[c] || 0)}</div><div class="foot">total no ano</div></div>`).join('')}
     </div>
     <div class="card mt">
@@ -1468,7 +1472,7 @@ function pageExpenses() {
         <button class="btn btn-sm btn-ghost" data-act="quick-expense" data-cat="Goleiros">＋ Goleiros</button>
         <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="expense">＋ Despesa</button>`)}
       <div class="table-wrap">${all.length ? `<table><thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th>Mês</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
-        ${all.map(e => `<tr><td>${fmtDate(e.date)}</td><td>${badge(e.category, e.category === 'Quadra' ? 'green' : e.category === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}">🗑️</button></td></tr>`).join('')}
+        ${all.map(e => `<tr><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}">🗑️</button></td></tr>`).join('')}
       </tbody></table>` : empty('Sem despesas', 'Lance o aluguel da quadra e os goleiros para começar.')}</div>
     </div>`;
 }
@@ -1511,7 +1515,7 @@ function pageCash() {
           <tr><td>Diárias</td>${rows.map(r => `<td class="right mono">${money(r.rev.dias)}</td>`).join('')}<td class="right mono">${money(total.rev.dias)}</td></tr>
           <tr class="total-row"><td>Total de receitas</td>${rows.map(r => `<td class="right mono">${money(r.rev.total)}</td>`).join('')}<td class="right mono">${money(total.rev.total)}</td></tr>
           <tr class="section-row"><td colspan="14">DESPESAS</td></tr>
-          ${CASH_ROWS.map(c => `<tr><td>${c}</td>${rows.map(r => `<td class="right mono">${money(r.exp.byCat[c])}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.exp.byCat[c], 0))}</td></tr>`).join('')}
+          ${visibleCashRows().map(c => `<tr><td>${c}</td>${rows.map(r => `<td class="right mono">${money(r.exp.byCat[c])}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.exp.byCat[c], 0))}</td></tr>`).join('')}
           <tr class="total-row"><td>Total de despesas</td>${rows.map(r => `<td class="right mono">${money(r.exp.total)}</td>`).join('')}<td class="right mono">${money(total.exp.total)}</td></tr>
           <tr class="total-row"><td>SALDO DO MÊS</td>${rows.map(r => `<td class="right mono ${r.balance < 0 ? 'negative' : 'positive'}">${money(r.balance)}</td>`).join('')}<td class="right mono ${total.balance < 0 ? 'negative' : 'positive'}">${money(total.balance)}</td></tr>
           <tr><td>Saldo acumulado</td>${rows.map(r => `<td class="right mono ${r.acc < 0 ? 'negative' : 'positive'}">${money(r.acc)}</td>`).join('')}<td class="right mono">${money(total.acc)}</td></tr>
@@ -2156,7 +2160,7 @@ function modalExpense(cat) {
   openModal('Nova despesa', 'Valor que sai do caixa', `
     <form data-form="expense" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${todayISO()}" required /></label>
-      <label class="field">Categoria<select name="category">${EXPENSE_CATS.map(c => `<option ${c === cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field">Categoria<select name="category">${visibleExpenseCats().map(c => `<option ${c === cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
       <label class="field">Descrição<input name="description" placeholder="Ex.: aluguel de janeiro" /></label>
       <label class="field">Valor (R$)<input name="amount" type="number" step="0.01" required /></label>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Salvar</button></div>
@@ -2332,7 +2336,7 @@ function exportCashCSV() {
   const line = (cells) => cells.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';');
   const out = [head, ...rows.map(r => [
     r.month, r.rev.mens, r.rev.dias, r.rev.total,
-    ...CASH_ROWS.map(c => r.exp.byCat[c]), r.exp.total, r.balance, r.acc,
+    ...visibleCashRows().map(c => r.exp.byCat[c]), r.exp.total, r.balance, r.acc,
     r.reserveTarget, r.reservePaid, r.reserveDiff, r.metaTarget, r.metaDiff
   ])].map(line).join('\r\n');
   download(`caixa-${year()}.csv`, '\ufeff' + out, 'text/csv;charset=utf-8');
