@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Racha do Loló — Visão do grupo</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    .view-wrap { max-width: 1100px; margin: 0 auto; padding: 18px 14px 60px; }
+    .view-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+    .view-logo { width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; font-weight: 900; color: #fff; background: linear-gradient(135deg, var(--accent), var(--blue)); }
+    .view-head h1 { margin: 0; font-size: 22px; }
+    .view-head p { margin: 2px 0 0; }
+    .avatar { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+    .avatar-fallback { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; background: var(--accent-soft); color: var(--accent); flex: 0 0 auto; }
+    .person { display: flex; align-items: center; gap: 9px; padding: 5px 0; }
+    .person span { font-size: 14px; }
+    .team { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--panel-2); }
+    .team h4 { margin: 0 0 8px; font-size: 14px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 800; }
+    .rank-row { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+    .rank-num { font-weight: 900; color: var(--muted); }
+    .big-num { font-size: 26px; font-weight: 900; }
+    .view-empty { padding: 26px; text-align: center; }
+    @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr !important; } }
+  </style>
+</head>
+<body>
+  <div class="view-wrap">
+    <div class="view-head">
+      <div class="view-logo">RL</div>
+      <div style="flex:1">
+        <h1>Racha do Loló</h1>
+        <p class="tiny muted" id="view-status">Carregando informações…</p>
+      </div>
+      <span class="pill">Somente leitura</span>
+    </div>
+    <div id="view-root"><div class="card"><div class="card-body view-empty">Carregando…</div></div></div>
+    <p class="tiny muted" style="text-align:center;margin-top:24px">
+      Informações publicadas pelo administrador. Para editar, use o app principal.
+    </p>
+  </div>
+  <script src="./visualizar.js" defer></script>
+</body>
+</html>

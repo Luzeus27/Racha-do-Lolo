@@ -5,6 +5,7 @@
 'use strict';
 
 const STORAGE_KEY = 'racha-do-lolo-v1';
+const VIEW_KEY = 'racha-view-token';
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const MONTH_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const EXPENSE_CATS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros'];
@@ -443,10 +444,101 @@ function normalizeState() {
 }
 normalizeState();
 
+let viewToken = '';
+try { viewToken = String(localStorage.getItem(VIEW_KEY) || '').trim().toUpperCase(); } catch (e) { viewToken = ''; }
+let viewTimer = null;
+let viewPublishing = false;
+
+/* Publicação automática: cada alteração salva agenda um envio do retrato ao grupo. */
+function scheduleViewPublish() {
+  if (!viewToken || !navigator.onLine || licenseLocked()) return;
+  clearTimeout(viewTimer);
+  viewTimer = setTimeout(() => { publishView(true); }, 2500);
+}
+
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch (e) { toast('Não foi possível salvar no navegador.', 'err'); }
+  scheduleViewPublish();
 }
+
+function viewUrl(token) {
+  const base = location.origin && location.origin !== 'null' ? location.origin : location.href.split('/').slice(0, 3).join('/');
+  return base + '/visualizar.html?v=' + encodeURIComponent(token || viewToken);
+}
+
+/* Retrato público: só o que o grupo deve ver. Telefone, PIX, comprovantes,
+   observações e despesas individuais ficam de fora. */
+function publicSnapshot() {
+  const paidByMonth = {};
+  let paid = 0, open = 0;
+  (state.payments || []).forEach((p) => {
+    const key = (num(p.year) || 0) + '-' + (num(p.month) || 0);
+    const row = paidByMonth[key] || (paidByMonth[key] = { year: num(p.year), month: num(p.month), paid: 0, open: 0 });
+    const amount = num(p.amount);
+    if (p.paid) { row.paid += amount; paid += amount; }
+    else { row.open += amount; open += amount; }
+  });
+  return {
+    publishedAt: new Date().toISOString(),
+    settings: {
+      year: num(settings().year), monthlyFee: num(settings().monthlyFee), dayFee: num(settings().dayFee),
+      goalkeepers: num(settings().goalkeepers), gamesPerMonth: num(settings().gamesPerMonth),
+      ptsGoal: num(settings().ptsGoal), ptsAssist: num(settings().ptsAssist), ptsPresence: num(settings().ptsPresence),
+      ptsFairPlay: num(settings().ptsFairPlay), ptsPunctual: num(settings().ptsPunctual), ptsCard: num(settings().ptsCard),
+      plannedMembers: num(settings().plannedMembers)
+    },
+    players: (state.players || []).map((p) => ({
+      id: p.id, name: p.name, type: p.type, position: p.position, active: p.active !== false,
+      age: num(p.age), height: num(p.height), weight: num(p.weight),
+      strength: num(p.strength), speed: num(p.speed), photo: typeof p.photo === 'string' ? p.photo : ''
+    })),
+    games: (state.games || []).map((g) => ({ id: g.id, date: g.date, month: num(g.month), year: num(g.year), done: !!g.done })),
+    confirmations: state.confirmations || {},
+    drawHistory: (state.drawHistory || []).map((h) => ({
+      id: h.id, createdAt: h.createdAt, gameKey: h.gameKey, gameLabel: h.gameLabel,
+      mode: h.mode, teamSize: num(h.teamSize), teams: h.teams || []
+    })),
+    scores: (state.scores || []).map((s) => ({
+      id: s.id, playerId: s.playerId, month: num(s.month), year: num(s.year),
+      goals: num(s.goals), assists: num(s.assists), presence: num(s.presence),
+      fairPlay: num(s.fairPlay), punctual: num(s.punctual), cards: num(s.cards)
+    })),
+    finance: { paid, open, byMonth: Object.values(paidByMonth) }
+  };
+}
+
+async function publishView(silent) {
+  if (viewPublishing) return { ok: false, error: 'Publicação em andamento.' };
+  if (!viewToken && !silent) toast('Criando link…');
+  viewPublishing = true;
+  try {
+    const res = await fetch('/.netlify/functions/publish-view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key(),
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken || undefined,
+        snapshot: publicSnapshot()
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível publicar.');
+    if (data.token && data.token !== viewToken) {
+      viewToken = data.token;
+      try { localStorage.setItem(VIEW_KEY, viewToken); } catch (e) { /* ignore */ }
+    }
+    if (!silent) toast('Link do grupo atualizado!', 'ok');
+    return { ok: true, url: data.url || viewUrl(viewToken) };
+  } catch (err) {
+    if (!silent) toast(err.message || 'Não foi possível publicar.', 'err');
+    return { ok: false, error: err.message || 'Não foi possível publicar.' };
+  } finally {
+    viewPublishing = false;
+  }
+}
+
 function settings() { return state.settings; }
 function year() { return num(state.settings.year) || 2027; }
 
@@ -1300,6 +1392,24 @@ function pageSettings() {
           </div>
         </div>
         <div class="card">
+          ${section('Link para o grupo', 'Visualização somente leitura e atualização automática')}
+          <div class="card-body stack">
+            <p class="small muted">Compartilhe um link para os membros acompanharem jogos, escalas, presença, ranking e o resumo financeiro. Eles não conseguem editar nada. O link é secreto — envie apenas ao grupo.</p>
+            ${viewToken ? `
+              <label class="field">Link de visualização<input id="view-link" readonly value="${esc(viewUrl(viewToken))}" /></label>
+              <div class="row">
+                <button class="btn btn-primary" type="button" data-act="copy-view-link">📋 Copiar link</button>
+                <button class="btn btn-ghost" type="button" data-act="open-view-link">🔗 Abrir</button>
+                <button class="btn btn-ghost" type="button" data-act="refresh-view-link">🔄 Atualizar agora</button>
+              </div>
+              <p class="tiny muted">Sempre que você salvar uma alteração, o link é atualizado automaticamente em alguns segundos.</p>
+            ` : `
+              <button class="btn btn-primary" type="button" data-act="create-view-link">🔗 Criar link de visualização</button>
+              <p class="tiny muted">O link usa o site principal (Netlify). O espelho do GitHub Pages não tem esse recurso.</p>
+            `}
+          </div>
+        </div>
+        <div class="card">
           ${section('Dados', 'Backup, importação e limpeza')}
           <div class="card-body stack">
             <p class="small muted">Os dados ficam salvos apenas neste navegador. Faça backup regularmente e guarde o arquivo em local seguro.</p>
@@ -1966,6 +2076,19 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'reset-colors': colors = { ...COLOR_PRESETS.padrao }; saveColors(); render(); toast('Cores restauradas.'); break;
+    case 'create-view-link':
+      publishView(false).then((r) => { if (r.ok) render(); });
+      break;
+    case 'copy-view-link':
+      copyText($('#view-link')?.value || viewUrl()).then((ok) => toast(ok ? 'Link copiado!' : 'Não foi possível copiar.', ok ? 'ok' : 'err'));
+      break;
+    case 'open-view-link':
+      window.open(viewUrl(), '_blank', 'noopener');
+      break;
+    case 'refresh-view-link':
+      toast('Atualizando link…');
+      publishView(false);
+      break;
     case 'install-app':
       if (deferredPrompt) {
         deferredPrompt.prompt();

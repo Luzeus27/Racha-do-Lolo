@@ -12,13 +12,25 @@ Aplicativo web **offline** criado a partir da planilha `Racha_do_Lolo_Controle.x
 
 O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver um commit na branch `main`, o Netlify publica automaticamente a nova versão e o GitHub Pages atualiza o espelho.
 
+## Link de visualização para o grupo
+
+O administrador pode gerar em **Configurações → Link para o grupo** um endereço como `https://teal-griffin-a37fbe.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
+
+- A página é **somente leitura**: mostra próximos jogos, presença confirmada, times sorteados, ranking e resumo financeiro.
+- **Atualização automática:** cada alteração salva no app publica um novo retrato depois de ~2,5 s; a página do grupo recarrega sozinha a cada 15 s.
+- **Privacidade:** o token é secreto e imprevisível. Telefones, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** são publicados — o financeiro vai apenas em totais.
+- **Segurança:** somente a conta master vitalícia, no aparelho vinculado, pode publicar (`netlify/functions/publish-view.mjs`). A leitura pública é feita por `netlify/functions/get-view.mjs`.
+- O espelho do GitHub Pages **não** tem as funções; use sempre o domínio do Netlify.
+
+> status: código escrito e versionado; publicação depende da retoma dos deploys do Netlify.
+
 ## Aviso legal
 
 Este projeto é de uso exclusivo do titular. O código, o nome, a identidade visual e os materiais são protegidos e **todos os direitos estão reservados**. O fato de o repositório ser público permite apenas a visualização; não autoriza copiar, modificar, redistribuir, revender ou publicar em outro domínio sem permissão por escrito. Veja o arquivo [LICENSE](LICENSE) e os [Termos de Uso](termos.html).
 
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `subscription.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook e licença), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master e visualização do grupo), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
 
 ## Como usar
 
