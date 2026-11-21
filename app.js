@@ -372,7 +372,7 @@ function defaultSettings() {
   return {
     year: 2027, monthlyFee: 60, dayFee: 20, fieldRent: 825,
     goalkeepers: 2, goalkeeperFee: 30, gamesPerMonth: 4,
-    bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
+    bbqEnabled: true, bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
     dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
     pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO'
@@ -458,6 +458,7 @@ function normalizeState() {
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
   if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
+  if (typeof state.settings.bbqEnabled !== 'boolean') state.settings.bbqEnabled = true;
 }
 normalizeState();
 
@@ -714,7 +715,7 @@ function playerName(id) { return playerById(id)?.name || 'Jogador removido'; }
 function meta() {
   const s = settings();
   const fixed = num(s.fieldRent) + num(s.goalkeepers) * num(s.goalkeeperFee) * num(s.gamesPerMonth) + num(s.refereeFee) * num(s.gamesPerMonth);
-  const bbqAnnual = num(s.bbqCostPerPerson) * num(s.bbqPeople) * num(s.bbqPerYear);
+  const bbqAnnual = s.bbqEnabled === false ? 0 : num(s.bbqCostPerPerson) * num(s.bbqPeople) * num(s.bbqPerYear);
   const bbqMonthly = bbqAnnual / 12;
   return { fixed, bbqAnnual, bbqMonthly, base: fixed + bbqMonthly, withGifts: fixed + bbqMonthly + num(s.giftsReserve) };
 }
@@ -931,10 +932,11 @@ function pageDashboard() {
             <div class="spread small"><span>Recebido em ${shortMonth(m)}</span><strong class="mono">${money(r.rev.total)}</strong></div>
             <div class="progress mt ${progress < 100 ? 'amber' : ''}"><span style="width:${progress}%"></span></div>
             <p class="tiny muted mt">${r.metaDiff >= 0 ? `✅ Acima da meta em <strong class="positive">${money(r.metaDiff)}</strong>` : `⚠️ Faltam <strong class="negative">${money(-r.metaDiff)}</strong> para bater a meta`}</p>
+            ${mm.bbqAnnual ? `
             <hr style="border:0;border-top:1px solid var(--border-soft);margin:18px 0">
             <div class="spread small"><span>Reserva do churrasco</span><strong class="mono">${money(r.reservePaid)} / ${money(mm.bbqAnnual)}</strong></div>
             <div class="progress mt"><span style="width:${reservePct}%"></span></div>
-            <p class="tiny muted mt">Provisão mensal de ${money(mm.bbqMonthly)} · ${r.reserveDiff >= 0 ? '<span class="positive">reserva em dia</span>' : `<span class="warn">faltam ${money(-r.reserveDiff)}</span>`}</p>
+            <p class="tiny muted mt">Provisão mensal de ${money(mm.bbqMonthly)} · ${r.reserveDiff >= 0 ? '<span class="positive">reserva em dia</span>' : `<span class="warn">faltam ${money(-r.reserveDiff)}</span>`}</p>` : ''}
           </div>
         </div>
         <div class="card">
@@ -1513,10 +1515,11 @@ function pageCash() {
           <tr class="total-row"><td>Total de despesas</td>${rows.map(r => `<td class="right mono">${money(r.exp.total)}</td>`).join('')}<td class="right mono">${money(total.exp.total)}</td></tr>
           <tr class="total-row"><td>SALDO DO MÊS</td>${rows.map(r => `<td class="right mono ${r.balance < 0 ? 'negative' : 'positive'}">${money(r.balance)}</td>`).join('')}<td class="right mono ${total.balance < 0 ? 'negative' : 'positive'}">${money(total.balance)}</td></tr>
           <tr><td>Saldo acumulado</td>${rows.map(r => `<td class="right mono ${r.acc < 0 ? 'negative' : 'positive'}">${money(r.acc)}</td>`).join('')}<td class="right mono">${money(total.acc)}</td></tr>
+          ${m.bbqAnnual ? `
           <tr class="section-row"><td colspan="14">RESERVA DO CHURRASCO</td></tr>
           <tr><td>Meta acumulada</td>${rows.map(r => `<td class="right mono">${money(r.reserveTarget)}</td>`).join('')}<td class="right mono">${money(m.bbqAnnual)}</td></tr>
           <tr><td>Já pago</td>${rows.map(r => `<td class="right mono">${money(r.reservePaid)}</td>`).join('')}<td class="right mono">${money(total.reservePaid)}</td></tr>
-          <tr><td>Folga / falta</td>${rows.map(r => `<td class="right mono ${r.reserveDiff < 0 ? 'negative' : 'positive'}">${money(r.reserveDiff)}</td>`).join('')}<td class="right mono">${money(total.reserveDiff)}</td></tr>
+          <tr><td>Folga / falta</td>${rows.map(r => `<td class="right mono ${r.reserveDiff < 0 ? 'negative' : 'positive'}">${money(r.reserveDiff)}</td>`).join('')}<td class="right mono">${money(total.reserveDiff)}</td></tr>` : ''}
           <tr class="section-row"><td colspan="14">META DE RECEITA</td></tr>
           <tr><td>Meta mensal</td>${rows.map(() => `<td class="right mono">${money(m.withGifts)}</td>`).join('')}<td class="right mono">${money(m.withGifts * 12)}</td></tr>
           <tr><td>Acima / abaixo</td>${rows.map(r => `<td class="right mono ${r.metaDiff < 0 ? 'negative' : 'positive'}">${money(r.metaDiff)}</td>`).join('')}<td class="right mono">${money(total.metaDiff)}</td></tr>
@@ -1690,7 +1693,7 @@ function pageAwards() {
 
 function pageSettings() {
   const s = settings();
-  const f = (name, label, step = '0.01') => `<label class="field">${esc(label)}<input name="${name}" type="number" step="${step}" value="${num(s[name])}" /></label>`;
+  const f = (name, label, step = '0.01', hidden = false) => `<label class="field"${hidden ? ' style="display:none"' : ''}>${esc(label)}<input name="${name}" type="number" step="${step}" value="${num(s[name])}" /></label>`;
   const viewReason = viewBlockReason();
   const viewAllowed = !viewReason;
   const viewNote = viewReason || 'O link usa o site principal (Netlify). O espelho do GitHub Pages não tem esse recurso.';
@@ -1720,9 +1723,10 @@ function pageSettings() {
             ${f('plannedMembers', 'Mensalistas planejados', '1')}
             ${f('maxPlayers', 'Limite por jogo (0 = sem limite)', '1')}
             ${f('dayPlayersPerGame', 'Diaristas médios por jogo', '1')}
-            ${f('bbqCostPerPerson', 'Churrasco: custo por pessoa (R$)')}
-            ${f('bbqPeople', 'Churrasco: nº de pessoas', '1')}
-            ${f('bbqPerYear', 'Churrascos por ano', '1')}
+            <label class="field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px"><input name="bbqEnabled" type="checkbox" ${s.bbqEnabled !== false ? 'checked' : ''} style="width:16px" /> Reserva do churrasco ativa (entra na meta e no fluxo de caixa)</label>
+            ${f('bbqCostPerPerson', 'Churrasco: custo por pessoa (R$)', '0.01', s.bbqEnabled === false)}
+            ${f('bbqPeople', 'Churrasco: nº de pessoas', '1', s.bbqEnabled === false)}
+            ${f('bbqPerYear', 'Churrascos por ano', '1', s.bbqEnabled === false)}
             ${f('giftsReserve', 'Reserva mensal p/ brindes (R$)')}
           </div>
         </div>
@@ -2894,7 +2898,11 @@ document.addEventListener('submit', async (e) => {
   }
   else if (type === 'settings') {
     const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard']);
-    Object.keys(defaultSettings()).forEach(k => { state.settings[k] = numeric.has(k) ? num(v(k)) : v(k); });
+    Object.keys(defaultSettings()).forEach(k => {
+      if (k === 'bbqEnabled') { state.settings.bbqEnabled = fd.get('bbqEnabled') !== null; return; }
+      if (!fd.has(k)) return;
+      state.settings[k] = numeric.has(k) ? num(v(k)) : v(k);
+    });
     ui.sim = null; save(); render(); toast('Premissas salvas.');
   }
 });
