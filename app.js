@@ -344,6 +344,92 @@ function printReceipt(rec) {
   setTimeout(() => { w.focus(); w.print(); }, 500);
 }
 
+/* Relatório mensal para impressão ou "Salvar como PDF". */
+function monthlyReportHTML(m) {
+  const y = year(), rev = revenue(m), exp = expenses(m), goal = meta(m).withGifts;
+  const bal = rev.total - exp.total;
+  const pays = state.payments.filter(p => p.year === y && p.month === m);
+  const scores = state.scores.filter(s => s.year === y && s.month === m);
+  const rank = rankingFor(Math.ceil(m / 3));
+  const cell = (v) => `<td>${esc(String(v ?? '—'))}</td>`;
+  const moneyCell = (v) => `<td class="right mono">${money(v)}</td>`;
+  const catRows = visibleCashRows().filter(c => num(exp.byCat[c]) > 0)
+    .map(c => `<tr>${cell(c)}${moneyCell(exp.byCat[c])}</tr>`).join('');
+  const payRows = pays.map(p => `<tr>${cell(playerName(p.playerId))}${cell(p.paid !== false ? 'Pago' : 'Em aberto')}${moneyCell(p.amount)}</tr>`).join('');
+  const scoreRows = scores.map(s => `<tr>${cell(playerName(s.playerId))}${cell(num(s.presence))}${cell(num(s.goals))}${cell(num(s.assists))}${cell(scorePoints(s))}</tr>`).join('');
+  const rankRows = rank.slice(0, 10).map(r => `<tr>${cell('#' + r.pos)}${cell(r.player?.name || playerName(r.playerId))}${cell(r.points)}${cell(r.goals)}</tr>`).join('');
+  const extraRows = goals().filter(g => g.mode === 'monthly' && (!g.month || num(g.month) === m))
+    .map(g => `<tr>${cell(g.name)}${moneyCell(g.amount)}</tr>`).join('');
+  const empty = (span, text) => `<tr><td colspan="${span}" class="muted center">${esc(text)}</td></tr>`;
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório ${m}/${y} · Racha do Loló</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; color: #16213a; margin: 0; font-size: 13px; }
+    .top { background: ${colors.accent}; color: #fff; padding: 22px; border-radius: 12px; display: flex; align-items: center; gap: 14px; }
+    .logo { width: 50px; height: 50px; border-radius: 12px; background: rgba(255,255,255,.2); display: grid; place-items: center; font-weight: 900; }
+    .top strong { font-size: 20px; display: block; }
+    .top span { font-size: 12px; opacity: .9; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }
+    .kpi { border: 1px solid #e3e9f2; border-radius: 10px; padding: 12px; }
+    .kpi span { display: block; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: .6px; }
+    .kpi strong { display: block; font-size: 18px; margin-top: 5px; }
+    h2 { font-size: 14px; margin: 22px 0 8px; color: ${colors.accent}; text-transform: uppercase; letter-spacing: .6px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+    th, td { padding: 7px 8px; border-bottom: 1px solid #e8edf5; text-align: left; }
+    th { font-size: 10px; text-transform: uppercase; color: #64748b; background: #f6f8fc; }
+    .right { text-align: right; }
+    .mono { font-family: monospace; }
+    .muted { color: #94a3b8; }
+    .center { text-align: center; }
+    .total td { font-weight: 800; border-top: 2px solid #16213a; }
+    .foot { margin-top: 36px; font-size: 10px; color: #94a3b8; border-top: 1px solid #e8edf5; padding-top: 12px; }
+    @media print { .no-print { display: none; } }
+  </style></head><body>
+    <div class="top"><div class="logo">RL</div><div><strong>RACHA DO LOLO</strong><span>Relatório mensal · ${esc(monthName(m))}/${y}</span></div></div>
+    <div class="kpis">
+      <div class="kpi"><span>Receitas</span><strong>${money(rev.total)}</strong></div>
+      <div class="kpi"><span>Despesas</span><strong>${money(exp.total)}</strong></div>
+      <div class="kpi"><span>Resultado</span><strong style="color:${bal < 0 ? '#dc2626' : colors.accent}">${money(bal)}</strong></div>
+      <div class="kpi"><span>Meta do mês</span><strong>${money(goal)}</strong></div>
+    </div>
+    <h2>Receitas</h2>
+    <table><thead><tr><th>Origem</th><th class="right">Valor</th></tr></thead><tbody>
+      <tr><td>Mensalidades</td>${moneyCell(rev.mens)}</tr>
+      <tr><td>Diárias</td>${moneyCell(rev.dias)}</tr>
+      <tr class="total"><td>Total</td>${moneyCell(rev.total)}</tr>
+    </tbody></table>
+    <h2>Despesas por categoria</h2>
+    <table><thead><tr><th>Categoria</th><th class="right">Valor</th></tr></thead><tbody>
+      ${catRows || empty(2, 'Sem despesas no mês.')}
+      <tr class="total"><td>Total</td>${moneyCell(exp.total)}</tr>
+    </tbody></table>
+    <h2>Mensalidades</h2>
+    <table><thead><tr><th>Jogador</th><th>Status</th><th class="right">Valor</th></tr></thead><tbody>
+      ${payRows || empty(3, 'Sem lançamentos no mês.')}
+    </tbody></table>
+    <h2>Presença e pontuação</h2>
+    <table><thead><tr><th>Jogador</th><th>Presenças</th><th>Gols</th><th>Assist.</th><th>Pontos</th></tr></thead><tbody>
+      ${scoreRows || empty(5, 'Sem pontuação lançada no mês.')}
+    </tbody></table>
+    <h2>Ranking do trimestre</h2>
+    <table><thead><tr><th>Pos.</th><th>Jogador</th><th class="right">Pontos</th><th class="right">Gols</th></tr></thead><tbody>
+      ${rankRows || empty(4, 'Sem ranking no trimestre.')}
+    </tbody></table>
+    ${extraRows ? `<h2>Metas extras do mês</h2><table><thead><tr><th>Meta</th><th class="right">Valor</th></tr></thead><tbody>${extraRows}</tbody></table>` : ''}
+    <div class="foot">Documento gerado pelo aplicativo Racha do Loló · registro interno<br>Emitido em ${esc(fmtDateTime(new Date().toISOString()))}</div>
+  </body></html>`;
+}
+
+function printMonthlyReport(m) {
+  const html = monthlyReportHTML(m);
+  const w = window.open('', '_blank', 'width=900,height=1000');
+  if (!w) { toast('Permita pop-ups para salvar o PDF.', 'err'); return; }
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => { w.focus(); w.print(); }, 500);
+}
+
 function resizePhoto(file, done) {
   const reader = new FileReader();
   reader.onload = () => {
@@ -375,7 +461,7 @@ function defaultSettings() {
     bbqEnabled: true, bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
     dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
-    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO'
+    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: ''
   };
 }
 
@@ -384,7 +470,7 @@ function emptyState() {
     version: 1,
     settings: defaultSettings(),
     players: [], payments: [], dayEntries: [], expenses: [], games: [],
-    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: [], audit: []
+    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: [], audit: [], goals: [], bank: []
   };
 }
 
@@ -460,6 +546,8 @@ function normalizeState() {
   if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
   if (typeof state.settings.bbqEnabled !== 'boolean') state.settings.bbqEnabled = true;
   if (!Array.isArray(state.audit)) state.audit = [];
+  if (!Array.isArray(state.goals)) state.goals = [];
+  if (!Array.isArray(state.bank)) state.bank = [];
 }
 normalizeState();
 
@@ -728,6 +816,7 @@ async function publishView(silent) {
         licenseKey: window.RachaLicense.key,
         deviceId: window.RachaLicense.deviceId(),
         token: viewToken || undefined,
+        expiresAt: settings().viewExpiresAt || null,
         snapshot: publicSnapshot()
       })
     });
@@ -749,6 +838,31 @@ async function publishView(silent) {
     return { ok: false, error: err.message || 'Não foi possível publicar.' };
   } finally {
     viewPublishing = false;
+  }
+}
+
+async function revokeView() {
+  if (!viewToken) { toast('Não há link para revogar.', 'err'); return; }
+  try {
+    const res = await fetch('/.netlify/functions/revoke-view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key,
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível revogar.');
+    viewToken = ''; playerLinks = {};
+    try { localStorage.removeItem(VIEW_KEY); localStorage.removeItem(PLAYER_LINKS_KEY); } catch (e) { /* ignore */ }
+    viewData = null;
+    save('revogou link do grupo', data.token || '');
+    render();
+    toast('Link revogado. O antigo não funciona mais.', 'ok');
+  } catch (err) {
+    toast(err.message || 'Não foi possível revogar.', 'err');
   }
 }
 
@@ -868,7 +982,9 @@ const ui = {
   playerFilter: 'all',
   drawGame: null,
   drawMode: 'balanced',
-  drawSize: 6
+  drawSize: 6,
+  bankRows: [],
+  bankText: ''
 };
 
 /* ------------------------------------------------------------
@@ -882,12 +998,33 @@ function visibleExpenseCats() { return bbqHidden() ? EXPENSE_CATS.filter(c => c 
 function visibleCashRows() { return bbqHidden() ? CASH_ROWS.filter(c => c !== 'Churrasco') : CASH_ROWS; }
 function displayExpenseCat(cat) { return bbqHidden() && cat === 'Churrasco' ? 'Outros' : cat; }
 
-function meta() {
+function goals() { return Array.isArray(state.goals) ? state.goals : []; }
+
+/* Metas mensais extras: sem mês = recorrente; com mês = apenas aquele mês. */
+function monthlyGoalFor(m) {
+  return sum(goals().filter(g => g.mode === 'monthly' && (!g.month || num(g.month) === m)), g => num(g.amount));
+}
+
+function annualGoals() {
+  return goals().filter(g => g.mode === 'annual' && (!g.year || num(g.year) === year()));
+}
+
+function goalProgress(g) {
+  const pct = num(g.amount) > 0 ? (num(g.progress) / num(g.amount)) * 100 : 0;
+  return Math.max(0, Math.min(100, pct));
+}
+
+function meta(month = currentMonth()) {
   const s = settings();
   const fixed = num(s.fieldRent) + num(s.goalkeepers) * num(s.goalkeeperFee) * num(s.gamesPerMonth) + num(s.refereeFee) * num(s.gamesPerMonth);
   const bbqAnnual = s.bbqEnabled === false ? 0 : num(s.bbqCostPerPerson) * num(s.bbqPeople) * num(s.bbqPerYear);
   const bbqMonthly = bbqAnnual / 12;
-  return { fixed, bbqAnnual, bbqMonthly, base: fixed + bbqMonthly, withGifts: fixed + bbqMonthly + num(s.giftsReserve) };
+  const customMonthly = monthlyGoalFor(month);
+  return {
+    fixed, bbqAnnual, bbqMonthly, customMonthly,
+    base: fixed + bbqMonthly + customMonthly,
+    withGifts: fixed + bbqMonthly + customMonthly + num(s.giftsReserve)
+  };
 }
 
 function revenue(m) {
@@ -917,6 +1054,7 @@ function cashRows() {
   const rows = [];
   for (let i = 1; i <= 12; i++) {
     const rev = revenue(i), exp = expenses(i);
+    const mm = meta(i);
     const balance = rev.total - exp.total;
     acc += balance;
     paidBbq += exp.byCat['Churrasco'];
@@ -924,7 +1062,7 @@ function cashRows() {
       month: i, rev, exp, balance, acc,
       reserveTarget: m.bbqMonthly * i, reservePaid: paidBbq,
       reserveDiff: paidBbq - m.bbqMonthly * i,
-      metaTarget: m.withGifts, metaDiff: rev.total - m.withGifts
+      metaTarget: mm.withGifts, metaDiff: rev.total - mm.withGifts
     });
   }
   return rows;
@@ -1664,15 +1802,39 @@ function pageBenefits() {
 function pageCash() {
   const rows = cashRows(), m = meta();
   const total = rows[11];
+  const annualTarget = rows.reduce((a, r) => a + r.metaTarget, 0);
   return `
     <div class="grid grid-4">
       <div class="card kpi blue"><div class="label">Receitas do ano</div><div class="value mono">${money(total.rev.total)}</div><div class="foot">mensalidades + diárias</div></div>
       <div class="card kpi amber"><div class="label">Despesas do ano</div><div class="value mono">${money(total.exp.total)}</div><div class="foot">inclui brindes e benefícios</div></div>
       <div class="card kpi ${total.acc < 0 ? 'red' : ''}"><div class="label">Saldo final previsto</div><div class="value mono ${total.acc < 0 ? 'negative' : 'positive'}">${money(total.acc)}</div><div class="foot">com saldo inicial</div></div>
-      <div class="card kpi"><div class="label">Meta anual</div><div class="value mono">${money(m.withGifts * 12)}</div><div class="foot">${money(m.withGifts)} / mês</div></div>
+      <div class="card kpi"><div class="label">Meta anual</div><div class="value mono">${money(annualTarget)}</div><div class="foot">média ${money(annualTarget / 12)} / mês</div></div>
     </div>
+    ${annualGoals().length ? `
     <div class="card mt">
-      ${section('Fluxo de caixa · ' + year(), 'Tudo automático a partir dos lançamentos', `<button class="btn btn-sm btn-ghost" data-act="export-cash">⬇ Exportar CSV</button>`)}
+      ${section('Metas anuais', 'Acompanhamento separado da meta de receita')}
+      <div class="card-body stack">
+        ${annualGoals().map(g => `
+          <div>
+            <div class="row" style="justify-content:space-between;gap:8px">
+              <span><strong>${esc(g.name)}</strong> <span class="tiny muted">${esc(g.year || year())}</span></span>
+              <span class="mono small">${money(g.progress)} / ${money(g.amount)}</span>
+            </div>
+            <div class="progress"><span style="width:${goalProgress(g)}%"></span></div>
+            <div class="row mt" style="gap:8px;align-items:center">
+              <input type="number" min="0" step="0.01" value="${num(g.progress)}" data-goal-progress="${g.id}" aria-label="Progresso de ${esc(g.name)}" style="width:120px" />
+              <span class="tiny muted">atualizar valor arrecadado</span>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+    <div class="card mt">
+      ${section('Fluxo de caixa · ' + year(), 'Tudo automático a partir dos lançamentos', `
+        <select id="report-month" aria-label="Mês do relatório" style="max-width:120px">
+          ${MONTHS.map((n, i) => `<option value="${i + 1}" ${i + 1 === currentMonth() ? 'selected' : ''}>${n}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="monthly-report">🖨 Relatório PDF</button>
+        <button class="btn btn-sm btn-ghost" data-act="export-cash">⬇ Exportar CSV</button>`)}
       <div class="table-wrap"><table>
         <thead><tr><th>Item</th>${MONTHS.map(x => `<th class="right">${x}</th>`).join('')}<th class="right">Total</th></tr></thead>
         <tbody>
@@ -1691,8 +1853,9 @@ function pageCash() {
           <tr><td>Já pago</td>${rows.map(r => `<td class="right mono">${money(r.reservePaid)}</td>`).join('')}<td class="right mono">${money(total.reservePaid)}</td></tr>
           <tr><td>Folga / falta</td>${rows.map(r => `<td class="right mono ${r.reserveDiff < 0 ? 'negative' : 'positive'}">${money(r.reserveDiff)}</td>`).join('')}<td class="right mono">${money(total.reserveDiff)}</td></tr>` : ''}
           <tr class="section-row"><td colspan="14">META DE RECEITA</td></tr>
-          <tr><td>Meta mensal</td>${rows.map(() => `<td class="right mono">${money(m.withGifts)}</td>`).join('')}<td class="right mono">${money(m.withGifts * 12)}</td></tr>
-          <tr><td>Acima / abaixo</td>${rows.map(r => `<td class="right mono ${r.metaDiff < 0 ? 'negative' : 'positive'}">${money(r.metaDiff)}</td>`).join('')}<td class="right mono">${money(total.metaDiff)}</td></tr>
+          <tr><td>Meta mensal</td>${rows.map(r => `<td class="right mono">${money(r.metaTarget)}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.metaTarget, 0))}</td></tr>
+          <tr><td>Metas extras</td>${rows.map(r => `<td class="right mono">${money(monthlyGoalFor(r.month))}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + monthlyGoalFor(r.month), 0))}</td></tr>
+          <tr><td>Acima / abaixo</td>${rows.map(r => `<td class="right mono ${r.metaDiff < 0 ? 'negative' : 'positive'}">${money(r.metaDiff)}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.metaDiff, 0))}</td></tr>
         </tbody>
       </table></div>
     </div>`;
@@ -1871,7 +2034,7 @@ function pageSettings() {
     <form data-form="settings">
       <div class="grid grid-2">
         <div class="card">
-          ${section('Financeiro', 'Valores base usados nas simulações')}
+          ${section('Financeiro', 'Valores base usados nas simulações', `<button class="btn btn-sm btn-ghost" type="button" data-act="open-reconcile">Conciliar extrato</button>`)}
           <div class="card-body form-grid">
             ${f('year', 'Ano de controle', '1')}
             ${f('monthlyFee', 'Mensalidade (R$/mês)')}
@@ -1898,6 +2061,25 @@ function pageSettings() {
             ${f('bbqPeople', 'Churrasco: nº de pessoas', '1', s.bbqEnabled === false)}
             ${f('bbqPerYear', 'Churrascos por ano', '1', s.bbqEnabled === false)}
             ${f('giftsReserve', 'Reserva mensal p/ brindes (R$)')}
+          </div>
+        </div>
+        <div class="card">
+          ${section('Metas genéricas', 'Extras mensais e metas anuais separadas')}
+          <div class="card-body stack">
+            <div class="form-grid">
+              <label class="field">Nome<input id="goal-name" placeholder="Ex.: Camisa nova" /></label>
+              <label class="field">Valor (R$)<input id="goal-amount" type="number" min="0" step="0.01" placeholder="0,00" /></label>
+              <label class="field">Tipo<select id="goal-mode"><option value="monthly">Mensal (recorrente)</option><option value="monthly-month">Mensal (mês específico)</option><option value="annual">Anual (separada)</option></select></label>
+              <label class="field">Mês<select id="goal-month"><option value="0">Todos os meses</option>${MONTHS.map((n, i) => `<option value="${i + 1}">${n}</option>`).join('')}</select></label>
+              <label class="field">Ano<input id="goal-year" type="number" min="2000" max="2100" value="${year()}" /></label>
+            </div>
+            <button class="btn btn-primary" type="button" data-act="add-goal">➕ Adicionar meta</button>
+            ${goals().length ? `<div class="stack">${goals().map(g => `
+              <div class="row" style="justify-content:space-between;gap:8px;align-items:center">
+                <span class="small"><strong>${esc(g.name)}</strong> <span class="tiny muted">${g.mode === 'annual' ? `anual ${esc(g.year || year())}` : g.mode === 'monthly' ? 'todo mês' : `${shortMonth(num(g.month))} · mensal`} · ${money(g.amount)}</span></span>
+                <button class="btn btn-sm btn-ghost" type="button" data-act="delete-goal" data-id="${g.id}">Excluir</button>
+              </div>`).join('')}</div>` : '<p class="tiny muted">Nenhuma meta genérica cadastrada.</p>'}
+            <p class="tiny muted">Metas mensais somam na meta de receita. Metas anuais aparecem em Fluxo de caixa com progresso próprio.</p>
           </div>
         </div>
         <div class="card">
@@ -1936,6 +2118,11 @@ function pageSettings() {
                 <button class="btn btn-ghost" type="button" data-act="open-view-link">🔗 Abrir</button>
                 <button class="btn btn-ghost" type="button" data-act="share-whatsapp" data-kind="view">📤 WhatsApp</button>
                 <button class="btn btn-ghost" type="button" data-act="refresh-view-link" ${viewAllowed ? '' : 'disabled'}>🔄 Atualizar agora</button>
+                <button class="btn btn-danger" type="button" data-act="revoke-view" ${viewAllowed ? '' : 'disabled'}>🚫 Revogar link</button>
+              </div>
+              <div class="row mt" style="align-items:flex-end;gap:8px">
+                <label class="field" style="flex:1">Validade do link (deixe vazio = sem expiração)<input id="view-expiry" type="date" value="${esc(String(settings().viewExpiresAt || '').slice(0, 10))}" /></label>
+                <button class="btn btn-ghost" type="button" data-act="save-view-expiry" ${viewAllowed ? '' : 'disabled'}>Salvar validade</button>
               </div>
               <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
             ` : `
@@ -2426,6 +2613,166 @@ function modalBenefit(id) {
     </form>`);
 }
 
+/* ------------------------------------------------------------
+   Conciliação com extrato bancário (CSV ou OFX)
+   ------------------------------------------------------------ */
+function normText(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function parseBankDate(raw) {
+  const s = String(raw || '').trim();
+  let m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})/.exec(s);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return '';
+}
+
+function parseBankAmount(raw) {
+  const original = String(raw || '').trim();
+  const negative = /^\s*-|^\s*\(/.test(original);
+  let s = original.replace(/[^\d,.-]/g, '');
+  if (s.includes(',') && s.includes('.')) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (s.includes(',')) s = s.replace(',', '.');
+  const n = Number(s);
+  if (!Number.isFinite(n)) return 0;
+  return negative ? -Math.abs(n) : Math.abs(n);
+}
+
+function splitBankLine(line, delim) {
+  const out = [];
+  let cur = '', quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (quoted && line[i + 1] === '"') { cur += '"'; i++; }
+      else quoted = !quoted;
+    } else if (c === delim && !quoted) { out.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function parseBankStatement(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  if (/<STMTTRN/i.test(raw)) {
+    const out = [];
+    (raw.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || []).forEach(block => {
+      const field = (name) => {
+        const m = new RegExp('<' + name + '>([^<]*)', 'i').exec(block);
+        return m ? m[1].trim() : '';
+      };
+      const date = parseBankDate(field('DTPOSTED'));
+      const amount = parseBankAmount(field('TRNAMT'));
+      if (!date || !amount) return;
+      out.push({
+        id: field('FITID') || '', date, amount,
+        desc: field('MEMO') || field('NAME') || field('TRNTYPE') || 'Lançamento OFX'
+      });
+    });
+    return out;
+  }
+
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return [];
+  const delim = lines[0].includes(';') ? ';' : lines[0].includes('\t') ? '\t' : ',';
+  const head = splitBankLine(lines[0], delim).map(normText);
+  const idx = (...names) => head.findIndex(h => names.some(n => h.includes(n)));
+  const hasHeader = idx('data', 'date', 'valor', 'amount', 'historico', 'descricao', 'memo') >= 0;
+  const iDate = hasHeader ? idx('data', 'date', 'dt') : 0;
+  const iDesc = hasHeader ? idx('historico', 'descricao', 'description', 'memo', 'nome', 'name') : 1;
+  const iAmount = hasHeader ? idx('valor', 'amount', 'value') : 2;
+  if (iDate < 0 || iAmount < 0) return [];
+  return lines.slice(hasHeader ? 1 : 0).map(line => {
+    const cells = splitBankLine(line, delim);
+    const date = parseBankDate(cells[iDate]);
+    const amount = parseBankAmount(cells[iAmount]);
+    if (!date || !amount) return null;
+    return { id: '', date, amount, desc: iDesc >= 0 ? cells[iDesc] : 'Lançamento' };
+  }).filter(Boolean);
+}
+
+function bankCandidates() {
+  const list = [];
+  state.payments.forEach(p => list.push({
+    type: 'payment', id: p.id, amount: num(p.amount),
+    date: isoDate(p.year, p.month, 5),
+    label: `${playerName(p.playerId)} · ${monthName(p.month)}/${p.year}`,
+    terms: `${playerName(p.playerId)} mensalidade ${monthName(p.month)}`
+  }));
+  state.dayEntries.forEach(d => list.push({
+    type: 'day', id: d.id, amount: num(d.amount), date: d.date,
+    label: `${playerName(d.playerId)} · ${fmtDate(d.date)}`,
+    terms: `${playerName(d.playerId)} diaria`
+  }));
+  state.expenses.forEach(e => list.push({
+    type: 'expense', id: e.id, amount: num(e.amount), date: e.date,
+    label: `${e.description || e.category} · ${fmtDate(e.date)}`,
+    terms: `${e.description} ${e.category}`
+  }));
+  state.benefits.forEach(b => list.push({
+    type: 'benefit', id: b.id, amount: num(b.amount), date: b.date,
+    label: `${playerName(b.playerId)} · ${fmtDate(b.date)}`,
+    terms: `${playerName(b.playerId)} beneficio ${b.type}`
+  }));
+  return list;
+}
+
+function findBankMatch(row) {
+  const desc = normText(row.desc);
+  let best = null;
+  bankCandidates().forEach(c => {
+    if (Math.abs(Math.abs(c.amount) - Math.abs(row.amount)) > 0.01) return;
+    let score = 5;
+    const day = c.date ? Math.abs(Date.parse(c.date) - Date.parse(row.date)) / 86400000 : 99;
+    if (Number.isFinite(day) && day <= 7) score += 4;
+    else if (c.type === 'payment' && c.label.includes(String(row.date).slice(0, 7))) score += 3;
+    const terms = normText(c.terms).split(/\s+/).filter(t => t.length >= 3);
+    if (terms.some(t => desc.includes(t))) score += 4;
+    if (!best || score > best.score) best = { ...c, score };
+  });
+  return best && best.score >= 9 ? best : null;
+}
+
+function renderBankRows() {
+  if (!ui.bankRows.length) return '<p class="tiny muted">Nenhum lançamento para revisar.</p>';
+  return ui.bankRows.map((row, i) => `
+    <div class="card card-pad" style="margin-bottom:8px">
+      <div class="row" style="justify-content:space-between;gap:8px">
+        <span><strong>${esc(row.desc || 'Lançamento')}</strong><br><span class="tiny muted">${fmtDate(row.date)}${row.id ? ' · ' + esc(row.id) : ''}</span></span>
+        <span class="mono ${row.amount < 0 ? 'negative' : 'positive'}">${money(Math.abs(row.amount))}</span>
+      </div>
+      <div class="tiny mt">${row.match ? `Sugestão: <strong>${esc(row.match.label)}</strong> (${esc(row.match.type)})` : '<span class="muted">Sem sugestão automática.</span>'}</div>
+      <div class="row mt" style="gap:6px;flex-wrap:wrap">
+        ${row.match ? `<button class="btn btn-sm btn-primary" data-act="bank-confirm" data-i="${i}">Conciliar</button>` : ''}
+        <button class="btn btn-sm btn-ghost" data-act="bank-import" data-i="${i}">Importar como despesa</button>
+        <button class="btn btn-sm btn-ghost" data-act="bank-ignore" data-i="${i}">Ignorar</button>
+      </div>
+    </div>`).join('');
+}
+
+function modalReconcile() {
+  openModal('Conciliar extrato', 'CSV ou OFX: valores e datas são comparados com os lançamentos do app', `
+    <div class="stack">
+      <label class="field">Arquivo do banco<input type="file" id="bank-file" accept=".csv,.ofx,.txt,.qfx" /></label>
+      <label class="field">Ou cole o conteúdo<textarea id="bank-text" rows="8" placeholder="Data;Histórico;Valor&#10;21/11/2026;CHURRASCO;-720,00">${esc(ui.bankText || '')}</textarea></label>
+      <div class="row"><button class="btn btn-primary" type="button" data-act="parse-bank">🔎 Analisar extrato</button></div>
+      <div id="bank-results">${renderBankRows()}</div>
+    </div>`);
+}
+
+function bankRegister(row, status, ref) {
+  state.bank.push({
+    id: row.id || uid(), date: row.date, amount: row.amount,
+    desc: row.desc || '', status, refType: ref?.type || '', refId: ref?.id || '', at: new Date().toISOString()
+  });
+}
+
 function modalImportCSV() {
   openModal('Importar CSV', 'Exporte a aba do Excel como CSV e cole o conteúdo abaixo', `
     <form data-form="csv" class="form-grid one">
@@ -2450,6 +2797,10 @@ function modalProfile(id) {
   const paid = state.payments.filter(x => x.playerId === id && x.paid !== false);
   const days = state.dayEntries.filter(d => d.playerId === id);
   const rank = rankingFor('year').find(r => r.playerId === id);
+  const thisYear = state.scores.filter(s => s.playerId === id && s.year === year());
+  const presenceByMonth = MONTHS.map((_, i) => num(thisYear.find(s => s.month === i + 1)?.presence));
+  const payByMonth = MONTHS.map((_, i) => state.payments.find(x => x.playerId === id && x.year === year() && x.month === i + 1));
+  const quarters = [1, 2, 3, 4].map(q => rankingFor(q).find(r => r.playerId === id)?.pos || '—');
   const info = (label, value) => `<div class="card kpi"><div class="label">${label}</div><div class="value" style="font-size:19px">${value}</div></div>`;
   return openModal(p.name, `${p.type} · ${p.position || 'sem posição'}`, `
     <div class="center">${avatarHTML(p, false).replace('class="avatar', 'class="avatar big')}</div>
@@ -2475,9 +2826,26 @@ function modalProfile(id) {
       <div class="card card-pad"><div class="label tiny muted">CONTATO</div><strong>${esc(p.phone || '—')}</strong><div class="tiny muted mt">${esc(p.note || 'Sem observações')}</div></div>
     </div>
     <div class="grid grid-2 mt">
-      <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
+      <div class="card card-pad"><div class="label tiny muted">PRESENÇA POR MÊS · ${year()}</div>
+        <div class="row mt" style="gap:4px;align-items:flex-end;height:64px">
+          ${presenceByMonth.map((n, i) => `<div style="flex:1;text-align:center"><div style="height:${Math.max(3, n * 9)}px;background:${colors.accent};border-radius:4px 4px 0 0" title="${n} presenças"></div><span class="tiny muted">${i + 1}</span></div>`).join('')}
+        </div>
+      </div>
+      <div class="card card-pad"><div class="label tiny muted">MENSALIDADES · ${year()}</div>
+        <div class="row mt" style="gap:4px;flex-wrap:wrap">
+          ${payByMonth.map((pay, i) => `<span class="badge ${pay && pay.paid !== false ? 'green' : 'red'}" title="${shortMonth(i + 1)}">${i + 1}</span>`).join('')}
+        </div>
+        <div class="tiny muted mt">${payByMonth.filter(x => x && x.paid !== false).length}/12 pagas · ${money(sum(payByMonth.filter(x => x && x.paid !== false), x => x.amount))}</div>
+      </div>
     </div>
-    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-primary" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
+    <div class="grid grid-4 mt">
+      ${quarters.map((pos, i) => info(`Trimestre ${i + 1}`, pos === '—' ? '—' : '#' + pos)).join('')}
+    </div>
+    <div class="grid grid-2 mt">
+      <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
+      <div class="card card-pad"><div class="label tiny muted">AVALIAÇÃO INTERNA</div><strong>${playerRating(p)}</strong><div class="tiny muted mt">média de força e velocidade · ${p.position || 'sem posição'}</div></div>
+    </div>
+    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>🔗 Link do jogador</button><button class="btn btn-primary" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
 }
 
 /* ------------------------------------------------------------
@@ -2655,6 +3023,17 @@ document.addEventListener('click', (e) => {
     case 'refresh-view-link':
       toast('Atualizando link…');
       publishView(false);
+      break;
+    case 'save-view-expiry': {
+      const date = $('#view-expiry')?.value || '';
+      state.settings.viewExpiresAt = date ? `${date}T23:59:59` : '';
+      save('alterou validade do link', date || 'sem expiração');
+      toast('Validade salva. Atualizando link…');
+      publishView(false).then(() => render());
+      break;
+    }
+    case 'revoke-view':
+      confirmAction('Revogar o link do grupo? O link antigo deixará de funcionar imediatamente e será necessário criar um novo.', () => revokeView());
       break;
     case 'install-app':
       if (deferredPrompt) {
@@ -2915,6 +3294,69 @@ document.addEventListener('click', (e) => {
       save(); render(); toast('Histórico de sorteios apagado.');
     }); break;
 
+    case 'add-goal': {
+      const name = String($('#goal-name')?.value || '').trim();
+      const amount = num($('#goal-amount')?.value);
+      const mode = $('#goal-mode')?.value || 'monthly';
+      if (!name || amount <= 0) { toast('Informe o nome e um valor maior que zero.', 'err'); break; }
+      state.goals.push({
+        id: uid(), name, amount,
+        mode: mode === 'annual' ? 'annual' : 'monthly',
+        month: mode === 'monthly-month' ? num($('#goal-month')?.value) || null : null,
+        year: mode === 'annual' ? num($('#goal-year')?.value) || year() : null,
+        progress: 0
+      });
+      save('cadastrou meta', name); render(); toast('Meta adicionada.');
+      break;
+    }
+    case 'delete-goal': confirmAction('Excluir esta meta?', () => {
+      const g = goals().find(x => x.id === id);
+      state.goals = goals().filter(x => x.id !== id);
+      save('excluiu meta', g?.name || id); render(); toast('Meta excluída.');
+    }); break;
+
+    case 'open-reconcile': modalReconcile(); break;
+    case 'parse-bank': {
+      ui.bankText = $('#bank-text')?.value || '';
+      const parsed = parseBankStatement(ui.bankText);
+      const done = new Set((state.bank || []).map(b => b.id).filter(Boolean));
+      ui.bankRows = parsed.filter(r => !r.id || !done.has(r.id)).map(r => ({ ...r, match: findBankMatch(r) }));
+      modalReconcile();
+      toast(ui.bankRows.length ? `${ui.bankRows.length} lançamentos para revisar.` : 'Nenhum lançamento novo encontrado.', ui.bankRows.length ? 'ok' : 'err');
+      break;
+    }
+    case 'bank-confirm':
+    case 'bank-import':
+    case 'bank-ignore': {
+      const row = ui.bankRows[num(el.dataset.i)];
+      if (!row) break;
+      if (el.dataset.act === 'bank-confirm' && row.match) {
+        const ref = bankCandidates().find(c => c.type === row.match.type && c.id === row.match.id);
+        if (ref) {
+          const target = row.match.type === 'payment' ? state.payments.find(x => x.id === ref.id)
+            : row.match.type === 'day' ? state.dayEntries.find(x => x.id === ref.id)
+            : row.match.type === 'expense' ? state.expenses.find(x => x.id === ref.id)
+            : state.benefits.find(x => x.id === ref.id);
+          if (target) target.reconciledAt = new Date().toISOString();
+        }
+        bankRegister(row, 'matched', row.match);
+        save('conciliou extrato', row.desc);
+      } else if (el.dataset.act === 'bank-import') {
+        const date = row.date, [y, m] = date.split('-').map(Number);
+        state.expenses.push({ id: uid(), date, month: m, year: y, category: 'Outros', description: row.desc || 'Importado do extrato', amount: Math.abs(row.amount), reconciledAt: new Date().toISOString() });
+        bankRegister(row, 'imported');
+        save('importou despesa do extrato', row.desc);
+      } else {
+        bankRegister(row, 'ignored');
+        save('ignorou lançamento do extrato', row.desc);
+      }
+      ui.bankRows = ui.bankRows.filter((_, i) => i !== num(el.dataset.i));
+      modalReconcile();
+      render();
+      toast('Lançamento processado.');
+      break;
+    }
+
     case 'quick-expense': {
       const cat = el.dataset.cat, m = currentMonth(), y = year();
       const amount = cat === 'Quadra' ? num(settings().fieldRent) : num(settings().goalkeepers) * num(settings().goalkeeperFee) * num(settings().gamesPerMonth);
@@ -2957,6 +3399,7 @@ document.addEventListener('click', (e) => {
     }
     case 'import-csv': modalImportCSV(); break;
     case 'export-cash': exportCashCSV(); break;
+    case 'monthly-report': printMonthlyReport(num($('#report-month')?.value) || currentMonth()); break;
     case 'export-players': exportPlayersCSV(); break;
     case 'load-demo': confirmAction('Substituir todos os dados atuais pelo exemplo?', () => {
       photoClear(); state = makeDemoState(); ui.sim = null; save('carregou dados de exemplo'); render(); toast('Exemplo carregado.');
@@ -3114,7 +3557,24 @@ document.addEventListener('submit', async (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
-  if (licenseLocked() && ['year-select', 'import-file', 'pay-month', 'score-month', 'award-month'].includes(el.id)) { warnLocked(); return; }
+  if (licenseLocked() && (['year-select', 'import-file', 'bank-file', 'pay-month', 'score-month', 'award-month'].includes(el.id) || el.dataset.goalProgress)) { warnLocked(); return; }
+  if (el.id === 'bank-file' && el.files?.[0]) {
+    const file = el.files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+      ui.bankText = String(reader.result || '');
+      const area = $('#bank-text');
+      if (area) area.value = ui.bankText;
+      toast(`Arquivo ${file.name} carregado. Clique em Analisar.`);
+    };
+    reader.readAsText(file);
+    return;
+  }
+  if (el.dataset.goalProgress) {
+    const g = goals().find(x => x.id === el.dataset.goalProgress);
+    if (g) { g.progress = num(el.value); save('atualizou meta', g.name); render(); }
+    return;
+  }
   if (el.id === 'year-select') { state.settings.year = num(el.value); ui.sim = null; save(); render(); return; }
   if (el.id === 'pay-month') { ui.payMonth = num(el.value); render(); return; }
   if (el.id === 'score-month') { ui.scoreMonth = num(el.value); render(); return; }

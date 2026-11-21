@@ -21,7 +21,8 @@ Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar
 - **Ao vivo (`ao-vivo.html`)** — página pública de placar, gols, assistências e cartões, atualizada a cada 5 s. O administrador lança os lances em **Ao vivo** no app.
 - **Atualização automática:** cada alteração salva publica um novo retrato depois de ~2,5 s; o grupo recarrega a cada 15 s e o placar a cada 5 s.
 - **Privacidade:** o token VW é secreto e o VP é individual. Telefone, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** aparecem na visão pública — PIX aparece apenas na área do próprio jogador.
-- **Segurança:** publicar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
+- **Segurança:** publicar, revogar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
+- **Validade e revogação:** em **Configurações → Link para o grupo** você pode definir uma data de expiração e revogar o link. Links revogados ou vencidos param de responder (aviso `410`) e não aceitam confirmações, notas nem lances ao vivo. Ao publicar novamente, um novo token `VW-` é gerado e os links individuais `VP-` são atualizados.
 - **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
 - **Conciliação:** `reconcile-licenses.mjs` roda às 03h e compara todas as assinaturas com o Mercado Pago, corrigindo o acesso se um webhook tiver sido perdido. Chamada manual: configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - Sem Netlify (GitHub Pages) esses recursos **não funcionam**: dependem de funções e Netlify Blobs. Use sempre o domínio principal.
@@ -34,7 +35,7 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `jogador.html`, `jogador.js`, `ao-vivo.html`, `ao-vivo.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master, visualização do grupo, respostas, notas, placar ao vivo e lembretes), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `jogador.html`, `jogador.js`, `ao-vivo.html`, `ao-vivo.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master, publicação/revogação da visualização do grupo, respostas, notas, placar ao vivo, lembretes e reconciliação), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
 
 ## Como usar
 
@@ -73,10 +74,13 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 - **Dashboard com gráficos**: receitas × despesas, saldo acumulado, progresso da meta e da reserva do churrasco.
 - **Simulador interativo**: arraste mensalidade, nº de mensalistas, diaristas e jogos; veja o resultado na hora e o ponto de equilíbrio.
 - **Ranking com pódio** e filtros por trimestre/ano.
-- **Perfil do jogador**: pontos, gols, assistências, mensalidades pagas e diárias recebidas.
+- **Perfil do jogador**: pontos, gols, assistências, mensalidades pagas e diárias recebidas. A ficha ampliada mostra presença mês a mês, situação das 12 mensalidades, posição por trimestre, média força/velocidade e botão para copiar o link individual do jogador.
 - **Perfil, busca e filtros** em jogadores.
 - **Exportação CSV** de caixa e jogadores.
 - **Importação CSV** vinda do Excel (Configurações → Importar CSV).
+- **Conciliação com extrato bancário**: em Configurações → **Conciliar extrato**, cole um CSV ou OFX. O app compara valor/data/descrição, sugere lançamentos existentes, permite importar o que faltou ou ignorar, e registra tudo na auditoria.
+- **Metas genéricas**: extras mensais recorrentes ou em um mês específico entram na meta de receita; metas anuais separadas têm progresso próprio em Fluxo de caixa.
+- **Relatório mensal PDF**: em Fluxo de caixa, escolha o mês e use **🖨 Relatório PDF**. A janela de impressão permite salvar um relatório com receitas, despesas, mensalidades, presença, pontuação, ranking do trimestre e metas extras.
 - **Tema claro/escuro**, layout responsivo e atalhos de lançamento.
 - **Foto do jogador**: adicione/troque/remova a foto na aba Jogadores (botão 📷). A imagem é redimensionada automaticamente.
 - **Cores personalizáveis**: em Configurações → Aparência, escolha cores ou paletas prontas.
@@ -95,11 +99,13 @@ Use `;` ou `,` como separador. A primeira linha deve conter os cabeçalhos.
 - **Despesas**: `Data;Categoria;Descrição;Valor` (data em `dd/mm/aaaa` ou `aaaa-mm-dd`)
 - **Diárias**: `Data;Jogador;Valor`
 
+Para conciliação, o extrato pode ser **CSV** (`Data;Histórico;Valor`, com `;` ou `,` e cabeçalho opcional) ou **OFX/QFX** (tags `<STMTTRN>`, `<DTPOSTED>`, `<TRNAMT>`, `<FITID>` e `<MEMO>`). Datas aceitas: `aaaa-mm-dd` ou `dd/mm/aaaa`.
+
 ## Observações
 
 - O ano de controle padrão é **2027**, conforme a planilha original. Pode ser alterado em Configurações ou no seletor de ano no topo.
 - Benefícios a mensalistas e brindes/premiações entram automaticamente no fluxo de caixa (não precisam ser duplicados em Despesas).
-- Os cálculos de meta seguem a planilha: aluguel + goleiros + arbitragem + provisão do churrasco + reserva de brindes.
+- Os cálculos de meta seguem a planilha: aluguel + goleiros + arbitragem + provisão do churrasco + reserva de brindes + metas mensais extras cadastradas. O KPI "Meta anual" soma a meta de cada mês, respeitando extras específicas.
 - A reserva do churrasco pode ser **ligada/desligada** em Configurações → “Cenário e churrasco”. Desligada, ela sai da meta mensal e das linhas de reserva do fluxo de caixa e do painel; os valores configurados são preservados. A categoria `Churrasco` também desaparece dos KPIs de Despesas, do select de novos lançamentos, da tabela de fluxo e do CSV exportado. Lançamentos reais já existentes continuam contando nos totais e são exibidos como `Outros` (a descrição original é mantida).
 - Este é um app local: os dados ficam no navegador. Para sincronizar entre dispositivos, use o backup JSON.
 
@@ -183,7 +189,8 @@ Elas já explicam renovação, cancelamento, o direito de arrependimento de 7 di
 | `netlify/functions/license.mjs` | Consulta se a chave está ativa, valida o aparelho e transfere o vínculo mediante o e-mail do titular |
 | `netlify/functions/cancel-subscription.mjs` | Cancela a recorrência no Mercado Pago a pedido do titular |
 | `netlify/functions/create-master.mjs` | Cria a licença vitalícia do administrador (protegida por segredo) |
-| `netlify/functions/_shared.mjs` | Configuração compartilhada (Blobs, preços, CORS, chamadas à API) |
+| `netlify/functions/revoke-view.mjs` | Revoga o link do grupo e invalida tokens VW/VP imediatamente |
+| `netlify/functions/_shared.mjs` | Configuração compartilhada (Blobs, preços, CORS, chamadas à API, validade do link) |
 | `netlify.toml` | Habilita as funções e define Node 20 |
 | `package.json` | Instala a biblioteca `@netlify/blobs` usada pelas funções |
 
