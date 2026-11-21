@@ -44,6 +44,8 @@ async function findBySubscription(store, subscriptionId) {
 async function save(store, key, patch, event) {
   const current = (await store.get(key, { type: 'json', consistency: 'strong' })) || {};
   const clean = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+  /* Um aviso tardio do Mercado Pago não pode reativar uma assinatura cancelada. */
+  if (current.cancelRequestedAt && clean.status === 'active') delete clean.status;
   const next = {
     ...current,
     ...clean,

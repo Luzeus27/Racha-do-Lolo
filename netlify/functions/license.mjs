@@ -1,5 +1,8 @@
 /* Consulta pública da licença. Nunca devolve token nem dados de pagamento. */
-import { json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus } from './_shared.mjs';
+import {
+  json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus,
+  cleanDevice, deviceAllowed
+} from './_shared.mjs';
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -10,7 +13,7 @@ function cleanKey(value) {
 async function syncFromMercadoPago(store, key, record) {
   const token = process.env.MP_ACCESS_TOKEN;
   const subscriptionId = record && record.subscriptionId;
-  if (!token || !subscriptionId || record.status === 'active') return record;
+  if (!token || !subscriptionId || record.status === 'active' || record.cancelRequestedAt) return record;
 
   const res = await mpFetch('/preapproval/' + encodeURIComponent(subscriptionId), { token });
   if (!res.ok || !res.data) return record;
@@ -19,6 +22,7 @@ async function syncFromMercadoPago(store, key, record) {
   const status = normalizeStatus(sub.status);
   if (status !== 'active') return record;
 
+  const now = new Date().toISOString();
   const next = {
     ...record,
     status,
@@ -26,9 +30,9 @@ async function syncFromMercadoPago(store, key, record) {
     amount: sub.auto_recurring?.transaction_amount || record.amount,
     nextPaymentAt: sub.next_payment_date || record.nextPaymentAt || null,
     email: sub.payer_email || record.email,
-    lastSyncAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    history: [...(record.history || []), { at: new Date().toISOString(), event: 'verify:' + sub.status }].slice(-20)
+    lastSyncAt: now,
+    updatedAt: now,
+    history: [...(record.history || []), { at: now, event: 'verify:' + sub.status }].slice(-20)
   };
   await store.setJSON(key, next);
   return next;
@@ -39,14 +43,20 @@ export default async (req) => {
 
   let key = '';
   let action = '';
+  let device = '';
+  let email = '';
   if (req.method === 'POST') {
     try {
       const body = await req.json();
       key = cleanKey(body.key);
       action = String(body.action || '');
+      device = cleanDevice(body.deviceId);
+      email = String(body.email || '').trim().toLowerCase();
     } catch (e) { key = ''; }
   } else if (req.method === 'GET') {
-    key = cleanKey(new URL(req.url).searchParams.get('key'));
+    const params = new URL(req.url).searchParams;
+    key = cleanKey(params.get('key'));
+    device = cleanDevice(params.get('device'));
   } else {
     return json({ error: 'Método não permitido.' }, 405);
   }
@@ -71,12 +81,53 @@ export default async (req) => {
     return json({ ...publicInfo, valid: false, state: 'not_found' }, 200);
   }
 
+  /* Troca de aparelho: confirma o e-mail do titular e move o vínculo.
+     Mantém uma licença ativa por dispositivo por vez. */
+  if (action === 'transfer') {
+    if (!device) return json({ ...publicInfo, error: 'Dispositivo não identificado.' }, 400);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email !== String(record.email || '').toLowerCase()) {
+      return json({ ...publicInfo, valid: false, error: 'O e-mail informado não corresponde ao titular da assinatura.' }, 403);
+    }
+    const now = new Date().toISOString();
+    record = {
+      ...record,
+      devices: [device],
+      updatedAt: now,
+      history: [...(record.history || []), { at: now, event: 'transfer:device' }].slice(-20)
+    };
+    await store.setJSON(key, record);
+    return json({ ...publicInfo, ok: true, message: 'Chave vinculada a este aparelho.' }, 200);
+  }
+
+  /* Chave vinculada a outro aparelho: não revela e-mail nem dados da assinatura. */
+  if (!deviceAllowed(record, device)) {
+    return json({
+      ...publicInfo,
+      valid: false,
+      state: 'device_mismatch',
+      message: 'Esta chave está vinculada a outro dispositivo. Use o aparelho original ou fale com o administrador.'
+    }, 200);
+  }
+
+  /* Licenças criadas antes do vínculo são associadas ao primeiro aparelho que consultar. */
+  if (device && !(record.devices || []).length) {
+    record = { ...record, devices: [device], updatedAt: new Date().toISOString() };
+    await store.setJSON(key, record);
+  }
+
   if (action === 'verify') {
     try { record = await syncFromMercadoPago(store, key, record); }
     catch (e) { /* mantém o status atual se o MP estiver indisponível */ }
   }
 
-  const status = record.status === 'active' && validUntil(record.nextPaymentAt) ? 'active' : record.status || 'pending';
+  let status = record.status === 'active' && validUntil(record.nextPaymentAt) ? 'active' : record.status || 'pending';
+
+  /* Cancelamento solicitado: o acesso permanece até o fim do período já pago. */
+  if (record.cancelRequestedAt && record.nextPaymentAt) {
+    const end = Date.parse(record.nextPaymentAt);
+    if (Number.isFinite(end) && end <= Date.now()) status = 'inactive';
+  }
+
   const valid = status === 'active';
 
   return json({
@@ -89,6 +140,7 @@ export default async (req) => {
     emailMasked: maskEmail(record.email),
     nextPaymentAt: record.nextPaymentAt || null,
     lastPaymentAt: record.lastPaymentAt || null,
+    cancelRequestedAt: record.cancelRequestedAt || null,
     updatedAt: record.updatedAt || record.createdAt || null
   }, 200);
 };

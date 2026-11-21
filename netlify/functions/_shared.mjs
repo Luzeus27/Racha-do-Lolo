@@ -52,6 +52,19 @@ export function maskEmail(email) {
   return value[0] + '***' + value.slice(at);
 }
 
+/* Identificador anônimo do aparelho, gerado no navegador. Não contém dados pessoais. */
+export function cleanDevice(value) {
+  const id = String(value || '').trim().toUpperCase();
+  return /^DEV-[A-F0-9]{24}$/.test(id) ? id : '';
+}
+
+/* Licenças antigas (sem vínculo) continuam válidas até a primeira consulta. */
+export function deviceAllowed(record, device) {
+  const allowed = Array.isArray(record?.devices) ? record.devices : [];
+  if (!allowed.length) return true;
+  return !!device && allowed.includes(device);
+}
+
 export function normalizeStatus(status) {
   const s = String(status || '').toLowerCase();
   if (['authorized', 'active', 'active_pending_cancel'].includes(s)) return 'active';

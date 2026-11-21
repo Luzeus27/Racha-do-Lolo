@@ -1,6 +1,6 @@
 /* Cria uma assinatura recorrente no Mercado Pago e devolve o link de pagamento. */
 import { randomUUID } from 'node:crypto';
-import { json, siteUrl, plans, licenses, mpFetch } from './_shared.mjs';
+import { json, siteUrl, plans, licenses, mpFetch, cleanDevice } from './_shared.mjs';
 
 function newKey() {
   return 'RL-' + randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
@@ -24,6 +24,9 @@ export default async (req) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: 'Informe um e-mail válido para receber a assinatura.' }, 400);
   }
+
+  /* A chave passa a valer apenas neste aparelho (anti-compartilhamento). */
+  const device = cleanDevice(body.deviceId);
 
   const allPlans = plans();
   const plan = Object.prototype.hasOwnProperty.call(allPlans, body.plan) ? body.plan : 'monthly';
@@ -67,6 +70,7 @@ export default async (req) => {
     email,
     plan,
     amount: chosen.amount,
+    devices: device ? [device] : [],
     status: 'pending',
     mpStatus: result.data.status || 'pending',
     subscriptionId: String(result.data.id || ''),
