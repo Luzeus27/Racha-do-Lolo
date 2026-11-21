@@ -14,13 +14,13 @@ O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver u
 
 ## Link de visualização para o grupo
 
-O administrador pode gerar em **Configurações → Link para o grupo** um endereço como `https://teal-griffin-a37fbe.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
+Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar em **Configurações → Link para o grupo** um endereço como `https://teal-griffin-a37fbe.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
 
-- A página é **somente leitura**: mostra próximos jogos, presença confirmada, times sorteados, ranking e resumo financeiro.
+- A página é **somente leitura**: mostra próximos jogos, presença confirmada, times sorteados, ranking e resumo financeiro. O grupo não paga e não precisa de conta.
 - **Atualização automática:** cada alteração salva no app publica um novo retrato depois de ~2,5 s; a página do grupo recarrega sozinha a cada 15 s.
 - **Privacidade:** o token é secreto e imprevisível. Telefones, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** são publicados — o financeiro vai apenas em totais.
-- **Segurança:** somente a conta master vitalícia, no aparelho vinculado, pode publicar (`netlify/functions/publish-view.mjs`). A leitura pública é feita por `netlify/functions/get-view.mjs`.
-- O espelho do GitHub Pages **não** tem as funções; use sempre o domínio do Netlify.
+- **Segurança:** a publicação exige licença ativa e aparelho vinculado (`netlify/functions/publish-view.mjs`); cada assinante tem seu próprio link, que não pode ser roubado por outro token. A leitura pública é feita por `netlify/functions/get-view.mjs`.
+- Sem Netlify (GitHub Pages) o recurso **não funciona**: ele depende das funções e do Netlify Blobs. Use sempre o domínio principal.
 
 > status: código escrito e versionado; publicação depende da retoma dos deploys do Netlify.
 

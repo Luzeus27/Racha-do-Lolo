@@ -50,6 +50,18 @@ function licenseLocked() {
   return !!(window.RachaLicense && window.RachaLicense.isLocked());
 }
 
+/* O link do grupo é um benefício de quem assinou o app: exige acesso ativo
+   e o site principal (o espelho do GitHub não tem as funções). */
+function viewBlockReason() {
+  const L = window.RachaLicense;
+  if (!L || !L.canUseServer()) return 'Disponível no site principal: o espelho do GitHub não publica links.';
+  if (!L.key) return 'Disponível para assinantes: assine para criar o link do grupo.';
+  if (L.status().kind === 'pending') return 'Aguardando a confirmação do pagamento para liberar o link.';
+  if (licenseLocked()) return 'Renove a assinatura para voltar a atualizar o link.';
+  return '';
+}
+function canPublishView() { return !viewBlockReason(); }
+
 function warnLocked() {
   toast('Período/assinatura encerrado. A edição está bloqueada; seus dados estão intactos.', 'err');
   navigate('subscription');
@@ -451,7 +463,7 @@ let viewPublishing = false;
 
 /* Publicação automática: cada alteração salva agenda um envio do retrato ao grupo. */
 function scheduleViewPublish() {
-  if (!viewToken || !navigator.onLine || licenseLocked()) return;
+  if (!viewToken || !navigator.onLine || !canPublishView()) return;
   clearTimeout(viewTimer);
   viewTimer = setTimeout(() => { publishView(true); }, 2500);
 }
@@ -510,6 +522,11 @@ function publicSnapshot() {
 
 async function publishView(silent) {
   if (viewPublishing) return { ok: false, error: 'Publicação em andamento.' };
+  const blocked = viewBlockReason();
+  if (blocked) {
+    if (!silent) toast(blocked, 'err');
+    return { ok: false, error: blocked };
+  }
   if (!viewToken && !silent) toast('Criando link…');
   viewPublishing = true;
   try {
@@ -517,7 +534,7 @@ async function publishView(silent) {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        licenseKey: window.RachaLicense.key(),
+        licenseKey: window.RachaLicense.key,
         deviceId: window.RachaLicense.deviceId(),
         token: viewToken || undefined,
         snapshot: publicSnapshot()
@@ -1335,6 +1352,9 @@ function pageAwards() {
 function pageSettings() {
   const s = settings();
   const f = (name, label, step = '0.01') => `<label class="field">${esc(label)}<input name="${name}" type="number" step="${step}" value="${num(s[name])}" /></label>`;
+  const viewReason = viewBlockReason();
+  const viewAllowed = !viewReason;
+  const viewNote = viewReason || 'O link usa o site principal (Netlify). O espelho do GitHub Pages não tem esse recurso.';
   return `
     <form data-form="settings">
       <div class="grid grid-2">
@@ -1392,20 +1412,20 @@ function pageSettings() {
           </div>
         </div>
         <div class="card">
-          ${section('Link para o grupo', 'Visualização somente leitura e atualização automática')}
+          ${section('Link para o grupo', 'Benefício para assinantes · somente leitura')}
           <div class="card-body stack">
-            <p class="small muted">Compartilhe um link para os membros acompanharem jogos, escalas, presença, ranking e o resumo financeiro. Eles não conseguem editar nada. O link é secreto — envie apenas ao grupo.</p>
+            <p class="small muted">Compartilhe um link para os membros acompanharem jogos, escalas, presença, ranking e o resumo financeiro. Eles não conseguem editar nada e não precisam assinar. O link é secreto — envie apenas ao grupo.</p>
             ${viewToken ? `
               <label class="field">Link de visualização<input id="view-link" readonly value="${esc(viewUrl(viewToken))}" /></label>
               <div class="row">
                 <button class="btn btn-primary" type="button" data-act="copy-view-link">📋 Copiar link</button>
                 <button class="btn btn-ghost" type="button" data-act="open-view-link">🔗 Abrir</button>
-                <button class="btn btn-ghost" type="button" data-act="refresh-view-link">🔄 Atualizar agora</button>
+                <button class="btn btn-ghost" type="button" data-act="refresh-view-link" ${viewAllowed ? '' : 'disabled'}>🔄 Atualizar agora</button>
               </div>
-              <p class="tiny muted">Sempre que você salvar uma alteração, o link é atualizado automaticamente em alguns segundos.</p>
+              <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
             ` : `
-              <button class="btn btn-primary" type="button" data-act="create-view-link">🔗 Criar link de visualização</button>
-              <p class="tiny muted">O link usa o site principal (Netlify). O espelho do GitHub Pages não tem esse recurso.</p>
+              <button class="btn btn-primary" type="button" data-act="create-view-link" ${viewAllowed ? '' : 'disabled'}>🔗 Criar link de visualização</button>
+              <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
             `}
           </div>
         </div>
@@ -1474,6 +1494,7 @@ function pageSubscription() {
               <div class="plan-price">${money(plans.monthly.amount)} <small>/ mês</small></div>
               <ul class="plan-list">
                 <li>Todos os 12 módulos do app</li>
+                <li>Link de visualização para o grupo (somente leitura)</li>
                 <li>Instalação como aplicativo no celular</li>
                 <li>Backup e comprovantes ilimitados</li>
               </ul>
