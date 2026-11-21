@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#35d07f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Racha do Loló">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Racha do Loló — Área do jogador</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    .view-wrap { max-width: 1080px; margin: 0 auto; padding: 18px 14px 60px; }
+    .view-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+    .view-logo { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 14px; display: grid; place-items: center; font-weight: 900; color: #04180d; background: linear-gradient(135deg, var(--accent), var(--blue)); }
+    .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 800; white-space: nowrap; }
+    .list-row { padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+    .list-row:first-child { padding-top: 0; }
+    .list-row:last-child { border-bottom: 0; padding-bottom: 0; }
+    .avatar-j { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px; object-fit: cover; }
+    .avatar-j-fallback { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: var(--accent-soft); color: var(--accent); }
+    .stars { display: flex; gap: 2px; flex-wrap: wrap; }
+    .star { border: 0; background: transparent; color: var(--muted-2); font-size: 22px; line-height: 1; padding: 2px 3px; border-radius: 6px; transition: .12s ease; }
+    .star.on { color: var(--amber); }
+    .star:not(:disabled):hover { transform: scale(1.15); color: var(--amber); }
+    .star:disabled { cursor: default; opacity: .7; }
+    .games-actions .btn { min-width: 128px; }
+    .wait-note { margin: 9px 0 0; padding: 9px 12px; border-radius: 10px; background: var(--amber-soft); border: 1px solid var(--amber); color: var(--amber); font-size: 11.5px; font-weight: 600; }
+    @media (max-width: 640px) { .games-actions .btn { flex: 1 1 100%; } }
+  </style>
+</head>
+<body>
+  <div class="view-wrap">
+    <header class="view-head">
+      <div class="view-logo">RL</div>
+      <div style="flex:1;min-width:0">
+        <h1>Racha do Loló</h1>
+        <p class="small muted">Área do jogador · somente suas informações</p>
+        <p class="tiny muted" id="player-status" aria-live="polite">Carregando…</p>
+      </div>
+      <span class="pill">Sem senha</span>
+    </header>
+
+    <main id="player-root" class="stack">
+      <div class="card"><div class="card-body empty">Carregando…</div></div>
+    </main>
+
+    <p class="tiny muted center" style="margin-top:22px">Este link é pessoal. Não compartilhe.</p>
+  </div>
+
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script src="./jogador.js" defer></script>
+</body>
+</html>

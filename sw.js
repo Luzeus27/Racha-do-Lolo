@@ -1,5 +1,5 @@
 /* Service worker — cache offline do Racha do Loló */
-const CACHE = 'racha-do-lolo-v9';
+const CACHE = 'racha-do-lolo-v10';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,10 @@ const ASSETS = [
   './subscription.js',
   './visualizar.html',
   './visualizar.js',
+  './jogador.html',
+  './jogador.js',
+  './ao-vivo.html',
+  './ao-vivo.js',
   './manifest.webmanifest',
   './icon-192.png',
   './icon-512.png',

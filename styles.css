@@ -372,6 +372,14 @@ body.payment-mode .content { padding: 26px 16px 50px; }
 .legal-back { display: inline-block; font-size: 12px; font-weight: 700; margin-bottom: 18px; }
 .legal-note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin: 16px 0; }
 
+/* ---------- placar ao vivo ---------- */
+.live-board { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; max-width: 420px; margin: 6px auto 8px; padding: 18px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.live-side { display: grid; gap: 2px; text-align: center; }
+.live-side strong { font-size: 52px; line-height: 1; font-weight: 900; letter-spacing: -.05em; color: var(--accent); }
+.live-side:last-child strong { color: var(--blue, var(--secondary)); }
+.live-x { font-size: 28px; font-weight: 800; color: var(--muted-2); }
+.card kpi code { font-size: 11px; color: var(--accent); }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

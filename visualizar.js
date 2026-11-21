@@ -19,6 +19,7 @@
 
   const token = String(new URLSearchParams(location.search).get('v') || '').trim().toUpperCase();
   let current = null;
+  let publicData = null;
 
   function card(title, sub, body) {
     return `<div class="card"><div class="card-head"><div><strong>${esc(title)}</strong><div class="sub">${esc(sub)}</div></div></div><div class="card-body stack">${body}</div></div>`;
@@ -45,6 +46,14 @@
     $('#view-root').innerHTML = `<div class="card"><div class="card-body view-empty"><p class="small muted">${esc(msg)}</p></div></div>`;
   }
 
+  function confirmedFor(gameId) {
+    const fromPlayers = Object.keys((publicData?.responses || {})[gameId] || {})
+      .filter((id) => publicData.responses[gameId][id] === 'yes');
+    if (fromPlayers.length) return fromPlayers;
+    const manual = (current?.confirmations || {})[gameId];
+    return Array.isArray(manual) ? manual : [];
+  }
+
   function renderNextGames(s, byId) {
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = (s.games || [])
@@ -55,21 +64,40 @@
       return card('Próximos jogos', 'Agenda do racha', '<p class="small muted">Nenhum jogo futuro cadastrado.</p>');
     }
     const rows = upcoming.map((g) => {
-      const confirmed = Array.isArray((s.confirmations || {})[g.id]) ? s.confirmations[g.id] : [];
+      const confirmed = confirmedFor(g.id);
+      const wait = (publicData?.waitlist || {})[g.id] || [];
       const names = confirmed.slice(0, 8).map((id) => esc((byId[id] || {}).name || '')).filter(Boolean).join(', ');
-      return `<div class="person"><span class="pill">${esc(fmtDate(g.date))}</span><span style="flex:1"><strong>${confirmed.length} confirmado(s)</strong><div class="tiny muted">${names || 'Aguardando confirmações'}${confirmed.length > 8 ? '…' : ''}</div></span></div>`;
+      const extra = wait.length ? `<span class="tiny" style="color:var(--amber)"> · ${wait.length} na fila</span>` : '';
+      return `<div class="person"><span class="pill">${esc(fmtDate(g.date))}</span><span style="flex:1"><strong>${confirmed.length} confirmado(s)</strong>${extra}<div class="tiny muted">${names || 'Aguardando confirmações'}${confirmed.length > 8 ? '…' : ''}</div></span></div>`;
     }).join('');
     return card('Próximos jogos', 'Datas e presença confirmada', rows);
   }
 
   function renderConfirmations(s, byId) {
-    const entries = Object.keys(s.confirmations || {}).filter((k) => Array.isArray(s.confirmations[k]) && s.confirmations[k].length);
+    const entries = Object.keys((publicData?.responses) || (s.confirmations) || {})
+      .filter((k) => confirmedFor(k).length);
     if (!entries.length) return card('Confirmados', 'Presença por jogo', '<p class="small muted">Nenhuma confirmação registrada.</p>');
     const game = (s.games || []).find((g) => g.id === entries[0]);
     const label = game ? fmtDate(game.date) : 'Jogo';
-    const list = s.confirmations[entries[0]].map((id) => byId[id]).filter(Boolean);
+    const list = confirmedFor(entries[0]).map((id) => byId[id]).filter(Boolean);
+    const wait = ((publicData?.waitlist || {})[entries[0]] || []).map((id) => byId[id]).filter(Boolean);
     return card('Confirmados', 'Presença confirmada · ' + label,
-      `<div class="grid-2" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 16px">${list.map((p) => person(p)).join('')}</div>`);
+      `<div class="grid-2" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:4px 16px">${list.map((p) => person(p)).join('')}</div>
+       ${wait.length ? `<div class="tiny" style="color:var(--amber);margin-top:10px">Fila de espera: ${wait.map((p) => esc(p.name)).join(', ')}</div>` : ''}`);
+  }
+
+  function renderLive() {
+    const live = publicData?.live;
+    if (!live) return '';
+    const score = live.score || { A: 0, B: 0 };
+    const events = (live.events || []).slice(-5).reverse();
+    const ico = { goal: '⚽', assist: '🅰️', card: '🟨' };
+    const byId = {};
+    (current?.players || []).forEach((p) => { if (p && p.id) byId[p.id] = p; });
+    return card('Ao vivo', live.endedAt ? 'Partida encerrada' : 'Placar em tempo real', `
+      <div class="live-score"><strong>${num(score.A)}</strong><span>×</span><strong>${num(score.B)}</strong></div>
+      ${events.length ? `<div class="mt">${events.map((ev) => `<div class="person"><span>${ico[ev.type] || '•'}</span><span style="flex:1"><strong>${esc((byId[ev.playerId] || {}).name || 'Jogador')}</strong> <span class="tiny muted">· equipe ${esc(ev.team || 'A')}</span></span></div>`).join('')}</div>` : ''}
+      <a class="btn btn-ghost mt" href="./ao-vivo.html?v=${encodeURIComponent(token)}">🔴 Abrir placar completo</a>`);
   }
 
   function renderDraw(s, byId) {
@@ -107,7 +135,20 @@
       .sort((a, b) => b.points - a.points)
       .slice(0, 10);
     if (!top.length) return card('Ranking', 'Campeonato interno', '<p class="small muted">Ainda não há pontuação lançada.</p>');
-    return card('Ranking', 'Campeonato interno · pontos', top.map((x, i) => `
+    const rated = {};
+    Object.values(publicData?.ratings || {}).forEach((byPlayer) => {
+      Object.entries(byPlayer || {}).forEach(([id, r]) => {
+        const n = num(r);
+        if (n < 1 || n > 5) return;
+        const row = rated[id] || (rated[id] = { sum: 0, n: 0 });
+        row.sum += n; row.n++;
+      });
+    });
+    const mvp = Object.keys(rated).map((id) => ({ id, avg: rated[id].sum / rated[id].n, n: rated[id].n }))
+      .sort((a, b) => b.avg - a.avg || b.n - a.n)[0];
+    const mvpLine = mvp && byId[mvp.id]
+      ? `<div class="person" style="border-bottom:1px solid var(--border-soft);padding-bottom:10px;margin-bottom:6px"><span>⭐</span><span style="flex:1"><strong>MVP do grupo</strong><div class="tiny muted">${esc(byId[mvp.id].name)} · ${mvp.n} avaliação(ões)</div></span><strong style="color:var(--accent)">${mvp.avg.toFixed(1)} / 5</strong></div>` : '';
+    return card('Ranking', 'Campeonato interno · pontos', mvpLine + top.map((x, i) => `
       <div class="rank-row">
         <span class="rank-num">${i + 1}º</span>
         ${person(x.player, `<span class="tiny muted" style="text-align:right">${x.goals} gols · ${x.assists} assist.</span>`)}
@@ -133,6 +174,7 @@
     (s.players || []).forEach((p) => { if (p && p.id) byId[p.id] = p; });
     $('#view-status').textContent = 'Atualizado em ' + fmtTime(updatedAt || s.publishedAt) + ' · atualização automática';
     $('#view-root').innerHTML = [
+      renderLive(),
       renderNextGames(s, byId),
       renderConfirmations(s, byId),
       renderDraw(s, byId),
@@ -151,6 +193,7 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { showError(data.error || 'Link inválido.'); return; }
       current = data.snapshot || {};
+      publicData = data;
       render(data.updatedAt);
     } catch (e) {
       showError('Sem conexão. Tente recarregar em instantes.');

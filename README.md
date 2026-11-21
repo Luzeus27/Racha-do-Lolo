@@ -12,15 +12,18 @@ Aplicativo web **offline** criado a partir da planilha `Racha_do_Lolo_Controle.x
 
 O repositório está conectado ao Netlify e ao GitHub Pages. Sempre que houver um commit na branch `main`, o Netlify publica automaticamente a nova versão e o GitHub Pages atualiza o espelho.
 
-## Link de visualização para o grupo
+## Links do grupo, do jogador e ao vivo
 
 Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar em **Configurações → Link para o grupo** um endereço como `https://teal-griffin-a37fbe.netlify.app/visualizar.html?v=VW-XXXXXXXXXXXXXXXX`.
 
-- A página é **somente leitura**: mostra próximos jogos, presença confirmada, times sorteados, ranking e resumo financeiro. O grupo não paga e não precisa de conta.
-- **Atualização automática:** cada alteração salva no app publica um novo retrato depois de ~2,5 s; a página do grupo recarrega sozinha a cada 15 s.
-- **Privacidade:** o token é secreto e imprevisível. Telefones, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** são publicados — o financeiro vai apenas em totais.
-- **Segurança:** a publicação exige licença ativa e aparelho vinculado (`netlify/functions/publish-view.mjs`); cada assinante tem seu próprio link, que não pode ser roubado por outro token. A leitura pública é feita por `netlify/functions/get-view.mjs`.
-- Sem Netlify (GitHub Pages) o recurso **não funciona**: ele depende das funções e do Netlify Blobs. Use sempre o domínio principal.
+- **Visão do grupo (`visualizar.html`)** — somente leitura: próximos jogos, presença, fila, times sorteados, ranking, MVP, placar ao vivo e resumo financeiro. O grupo não paga e não precisa de conta.
+- **Área do jogador (`jogador.html`)** — cada membro recebe um link pessoal `?v=VW...&p=VP...` e, sem senha, confirma presença, entra na fila de espera, avalia os jogos de 1 a 5 e copia o PIX das próprias mensalidades.
+- **Ao vivo (`ao-vivo.html`)** — página pública de placar, gols, assistências e cartões, atualizada a cada 5 s. O administrador lança os lances em **Ao vivo** no app.
+- **Atualização automática:** cada alteração salva publica um novo retrato depois de ~2,5 s; o grupo recarrega a cada 15 s e o placar a cada 5 s.
+- **Privacidade:** o token VW é secreto e o VP é individual. Telefone, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** aparecem na visão pública — PIX aparece apenas na área do próprio jogador.
+- **Segurança:** publicar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
+- **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
+- Sem Netlify (GitHub Pages) esses recursos **não funcionam**: dependem de funções e Netlify Blobs. Use sempre o domínio principal.
 
 > status: código escrito e versionado; publicação depende da retoma dos deploys do Netlify.
 
@@ -30,7 +33,7 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master e visualização do grupo), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `jogador.html`, `jogador.js`, `ao-vivo.html`, `ao-vivo.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master, visualização do grupo, respostas, notas, placar ao vivo e lembretes), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular) e este README.
 
 ## Como usar
 

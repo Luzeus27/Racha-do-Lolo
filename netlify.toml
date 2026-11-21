@@ -14,3 +14,7 @@
   for = "/.netlify/functions/*"
   [headers.values]
     Cache-Control = "no-store"
+
+# Lembretes 24h/2h antes dos jogos (agendado; REMINDER_SECRET é opcional).
+[functions."send-reminders"]
+  schedule = "0 12 * * *"

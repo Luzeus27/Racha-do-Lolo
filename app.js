@@ -6,6 +6,7 @@
 
 const STORAGE_KEY = 'racha-do-lolo-v1';
 const VIEW_KEY = 'racha-view-token';
+const PLAYER_LINKS_KEY = 'racha-player-links';
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const MONTH_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const EXPENSE_CATS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros'];
@@ -21,7 +22,8 @@ const PAGES = {
   cash:       { title: 'Fluxo de caixa',   sub: 'Receitas, despesas, reserva e metas do ano', ico: '💰' },
   simulator:  { title: 'Simulador',        sub: 'Teste cenários de mensalidade e diaristas', ico: '📊' },
   scores:     { title: 'Pontuação',        sub: 'Lançamento mensal de gols, assistências e presença', ico: '⚽' },
-  sorteador:  { title: 'Sorteador',        sub: 'Monte as equipes do racha de forma equilibrada ou aleatória', ico: '🎲' },
+  sorteador:  { title: 'Sorteador',        sub: 'Monte as equipes do racha em seis modos diferentes', ico: '🎲' },
+  live:       { title: 'Ao vivo',          sub: 'Placar e lances do jogo, com atualização para o grupo', ico: '🔴' },
   ranking:    { title: 'Ranking',          sub: 'Campeonato interno trimestral e anual', ico: '🏆' },
   awards:     { title: 'Premiações',       sub: 'Vencedores do mês e brindes entregues', ico: '🎁' },
   subscription: { title: 'Assinatura',     sub: 'Período gratuito, plano e chave de licença', ico: '⭐' },
@@ -30,7 +32,7 @@ const PAGES = {
 
 const NAV = [
   { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'sorteador', 'expenses', 'benefits', 'cash'] },
-  { group: 'Desempenho', items: ['scores', 'ranking', 'awards'] },
+  { group: 'Desempenho', items: ['scores', 'ranking', 'awards', 'live'] },
   { group: 'Planejamento', items: ['simulator', 'settings'] },
   { group: 'Conta', items: ['subscription'] }
 ];
@@ -43,7 +45,9 @@ const WRITE_ACTS = new Set([
   'pay-all', 'clear-month', 'generate-games', 'delete-day', 'quick-expense',
   'delete-expense', 'edit-benefit', 'delete-benefit', 'apply-sim',
   'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv',
-  'toggle-confirm', 'confirm-all', 'confirm-none', 'do-draw', 'clear-draw-history'
+  'toggle-confirm', 'confirm-all', 'confirm-none', 'do-draw', 'clear-draw-history',
+  'apply-group-confirmations', 'save-manual-draw',
+  'live-start', 'live-goal', 'live-assist', 'live-card', 'live-undo', 'live-stop'
 ]);
 
 function licenseLocked() {
@@ -370,7 +374,7 @@ function defaultSettings() {
     goalkeepers: 2, goalkeeperFee: 30, gamesPerMonth: 4,
     bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
-    dayPlayersPerGame: 6, plannedMembers: 18, initialCash: 300, refereeFee: 0,
+    dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
     pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO'
   };
 }
@@ -453,11 +457,17 @@ function normalizeState() {
   ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
+  if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
 }
 normalizeState();
 
 let viewToken = '';
 try { viewToken = String(localStorage.getItem(VIEW_KEY) || '').trim().toUpperCase(); } catch (e) { viewToken = ''; }
+let playerLinks = {};
+try { playerLinks = JSON.parse(localStorage.getItem(PLAYER_LINKS_KEY) || '{}') || {}; } catch (e) { playerLinks = {}; }
+let liveState = null;
+let liveSignature = '';
+let viewData = null;
 let viewTimer = null;
 let viewPublishing = false;
 
@@ -483,13 +493,24 @@ function viewUrl(token) {
    observações e despesas individuais ficam de fora. */
 function publicSnapshot() {
   const paidByMonth = {};
+  const dues = {};
   let paid = 0, open = 0;
   (state.payments || []).forEach((p) => {
     const key = (num(p.year) || 0) + '-' + (num(p.month) || 0);
     const row = paidByMonth[key] || (paidByMonth[key] = { year: num(p.year), month: num(p.month), paid: 0, open: 0 });
     const amount = num(p.amount);
     if (p.paid) { row.paid += amount; paid += amount; }
-    else { row.open += amount; open += amount; }
+    else {
+      row.open += amount; open += amount;
+      const pid = String(p.playerId || '');
+      if (pid) {
+        const txid = txidFor(pid, num(p.month));
+        (dues[pid] || (dues[pid] = [])).push({
+          month: num(p.month), year: num(p.year), amount, paid: false,
+          pix: pixCode(amount, txid), txid, receiptId: p.receiptId || ''
+        });
+      }
+    }
   });
   return {
     publishedAt: new Date().toISOString(),
@@ -498,7 +519,7 @@ function publicSnapshot() {
       goalkeepers: num(settings().goalkeepers), gamesPerMonth: num(settings().gamesPerMonth),
       ptsGoal: num(settings().ptsGoal), ptsAssist: num(settings().ptsAssist), ptsPresence: num(settings().ptsPresence),
       ptsFairPlay: num(settings().ptsFairPlay), ptsPunctual: num(settings().ptsPunctual), ptsCard: num(settings().ptsCard),
-      plannedMembers: num(settings().plannedMembers)
+      plannedMembers: num(settings().plannedMembers), maxPlayers: num(settings().maxPlayers)
     },
     players: (state.players || []).map((p) => ({
       id: p.id, name: p.name, type: p.type, position: p.position, active: p.active !== false,
@@ -516,7 +537,10 @@ function publicSnapshot() {
       goals: num(s.goals), assists: num(s.assists), presence: num(s.presence),
       fairPlay: num(s.fairPlay), punctual: num(s.punctual), cards: num(s.cards)
     })),
-    finance: { paid, open, byMonth: Object.values(paidByMonth) }
+    finance: { paid, open, byMonth: Object.values(paidByMonth) },
+    /* dues NÃO vai no retrato público: o get-view remove antes de servir.
+       Cada jogador vê apenas as próprias pendências em jogador.html. */
+    dues
   };
 }
 
@@ -546,6 +570,11 @@ async function publishView(silent) {
       viewToken = data.token;
       try { localStorage.setItem(VIEW_KEY, viewToken); } catch (e) { /* ignore */ }
     }
+    if (data.playerLinks && typeof data.playerLinks === 'object') {
+      playerLinks = data.playerLinks;
+      try { localStorage.setItem(PLAYER_LINKS_KEY, JSON.stringify(playerLinks)); } catch (e) { /* ignore */ }
+    }
+    await fetchViewData(true);
     if (!silent) toast('Link do grupo atualizado!', 'ok');
     return { ok: true, url: data.url || viewUrl(viewToken) };
   } catch (err) {
@@ -554,6 +583,106 @@ async function publishView(silent) {
   } finally {
     viewPublishing = false;
   }
+}
+
+/* Lê o retrato público (respostas, fila, notas e placar) para o painel do admin. */
+async function fetchViewData(silent) {
+  if (!viewToken || !navigator.onLine || !window.RachaLicense?.canUseServer()) return null;
+  try {
+    const res = await fetch('/.netlify/functions/get-view?v=' + encodeURIComponent(viewToken), { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    if (!data || !data.token) return null;
+    viewData = data;
+    const sig = JSON.stringify(data.live || null);
+    if (sig !== liveSignature) { liveSignature = sig; liveState = data.live || null; }
+    return data;
+  } catch (e) { if (!silent) toast('Sem conexão com o link do grupo.', 'err'); return null; }
+}
+
+function liveUrl() {
+  const base = location.origin && location.origin !== 'null' ? location.origin : location.href.split('/').slice(0, 3).join('/');
+  return base + '/ao-vivo.html?v=' + encodeURIComponent(viewToken);
+}
+
+function waLink(text) { return 'https://wa.me/?text=' + encodeURIComponent(String(text || '')); }
+
+function shareMessage(kind) {
+  if (kind === 'view') return `🏽 Racha do Loló — acompanhe jogos, escalas e ranking em tempo real (somente leitura): ${viewUrl()}`;
+  if (kind === 'team') {
+    const last = state.drawHistory[0];
+    if (!last) return '';
+    const lines = (last.teams || []).map((t, i) => `Time ${i + 1}: ${t.map(id => playerName(id)).join(', ')}`);
+    return `🎲 Times do racha (${last.gameLabel || 'jogo'})\n${lines.join('\n')}`;
+  }
+  const today = todayISO();
+  const games = state.games.filter(g => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5);
+  if (!games.length) return '';
+  return `📅 Próximos jogos do Racha do Loló\n${games.map(g => `• ${fmtDate(g.date)}`).join('\n')}\nConfirme sua presença no grupo!`;
+}
+
+async function shareWhatsApp(kind) {
+  const text = shareMessage(kind);
+  if (!text) { toast('Ainda não há nada para compartilhar.', 'err'); return; }
+  window.open(waLink(text), '_blank', 'noopener');
+  toast('Mensagem pronta no WhatsApp!');
+}
+
+/* Lembretes manuais: usam os links individuais já publicados.
+   Em produção, a função agendada send-reminders faz o mesmo automaticamente. */
+function reminderLinks() {
+  const now = Date.now();
+  const games = (viewData?.snapshot?.games || []).filter(g => g.date && !g.done).slice(0, 20);
+  const entries = Object.entries(playerLinks || {});
+  const out = [];
+  games.forEach(g => {
+    const hours = (new Date(g.date + 'T12:00:00').getTime() - now) / 3600000;
+    const when = hours >= 23 && hours <= 25 ? '24h' : hours >= 1 && hours <= 3 ? '2h' : '';
+    if (!when) return;
+    entries.forEach(([pid, url]) => {
+      const p = playerById(pid);
+      if (!p || !url) return;
+      const text = `🏽 Racha do Loló: jogo em ${fmtDate(g.date)}! Confirme sua presença: ${url}`;
+      out.push({ when, name: p.name, url: 'https://wa.me/?text=' + encodeURIComponent(text) });
+    });
+  });
+  return out.slice(0, 100);
+}
+
+function modalReminders() {
+  const list = reminderLinks();
+  openModal('Lembretes para o grupo', 'Jogos nas janelas de 24h e 2h', list.length ? `
+    <p class="small muted">Toque em cada linha para abrir o WhatsApp com a mensagem pronta. A função agendada do servidor envia automaticamente quando configurada.</p>
+    <div class="stack mt">${list.map(r => `<a class="btn btn-ghost" href="${esc(r.url)}" target="_blank" rel="noopener">🔔 ${esc(r.when)} · ${esc(r.name)}</a>`).join('')}</div>` : `
+    <p class="small muted">Nenhum jogo cai nas janelas de 24h ou 2h agora. Volte mais perto da partida.</p>`);
+}
+
+async function publishLive(body) {
+  try {
+    const res = await fetch('/.netlify/functions/publish-live', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.assign({
+        licenseKey: window.RachaLicense.key, deviceId: window.RachaLicense.deviceId(), v: viewToken
+      }, body || {}))
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível atualizar o placar.');
+    liveState = data.live || null;
+    liveSignature = JSON.stringify(liveState);
+    toast('Placar atualizado!', 'ok');
+    await fetchViewData(true);
+    render(true);
+    return data;
+  } catch (err) { toast(err.message || 'Não foi possível atualizar o placar.', 'err'); return { ok: false }; }
+}
+
+function runLiveAction(action) {
+  const gameId = $('#live-game')?.value || '';
+  const playerId = $('#live-player')?.value || '';
+  const team = $('#live-team')?.value || 'A';
+  if ((action === 'start' || action === 'goal' || action === 'assist' || action === 'card') && !$('#live-game')) return;
+  if ((action === 'goal' || action === 'assist' || action === 'card') && !playerId) { toast('Escolha o jogador.', 'err'); return; }
+  publishLive({ action, gameId, playerId, team });
 }
 
 function settings() { return state.settings; }
@@ -663,6 +792,24 @@ function autoWinners(m) {
   const list = state.scores.filter(sc => sc.year === year() && sc.month === m);
   const best = (fn) => list.slice().sort((a, b) => fn(b) - fn(a) || a.playerId.localeCompare(b.playerId))[0]?.playerId || '';
   return { goals: best(x => num(x.goals)), assists: best(x => num(x.assists)), points: best(x => scorePoints(x)) };
+}
+
+/* Notas de 1 a 5 enviadas pelos jogadores no link individual. */
+function groupRatings() {
+  const all = viewData?.ratings || {};
+  const map = {};
+  Object.values(all).forEach(byPlayer => {
+    if (!byPlayer || typeof byPlayer !== 'object') return;
+    Object.entries(byPlayer).forEach(([id, r]) => {
+      const n = num(r);
+      if (n < 1 || n > 5) return;
+      const row = map[id] || (map[id] = { sum: 0, n: 0 });
+      row.sum += n; row.n++;
+    });
+  });
+  return Object.entries(map).map(([id, x]) => ({
+    playerId: id, avg: x.sum / x.n, n: x.n, player: playerById(id)
+  })).filter(x => x.player).sort((a, b) => b.avg - a.avg || b.n - a.n);
 }
 
 function simulate(members, fee, dayPerGame, dayFee, games) {
@@ -925,6 +1072,58 @@ function drawTeamsBalanced(players, teamsCount) {
   return teams;
 }
 
+/* Novos modos pedidos pelo grupo:
+   - position: goleiro em cada equipe antes de distribuir os demais
+   - rating: ordem estrita pela nota (força + velocidade)
+   - avoid: prioriza duplas que ainda não jogaram juntas
+   - manual: o administrador monta as equipes na tela */
+function drawTeamsByPosition(players, teamsCount) {
+  const gks = players.filter(p => p.position === 'Goleiro').sort((a, b) => playerRating(b) - playerRating(a));
+  const others = players.filter(p => p.position !== 'Goleiro').sort((a, b) => playerRating(b) - playerRating(a));
+  const teams = Array.from({ length: teamsCount }, () => []);
+  gks.forEach((p, i) => teams[i % teamsCount].push(p));
+  let idx = 0, dir = 1;
+  others.forEach(p => {
+    teams[idx].push(p);
+    if (dir === 1) { if (idx === teamsCount - 1) dir = -1; else idx++; }
+    else { if (idx === 0) dir = 1; else idx--; }
+  });
+  return teams;
+}
+
+function drawTeamsByRating(players, teamsCount) {
+  return drawTeamsBalanced(players, teamsCount);
+}
+
+function pairKey(a, b) { return [a, b].sort().join('+'); }
+
+function usedPairSet() {
+  const set = new Set();
+  state.drawHistory.forEach(h => (h.teams || []).forEach(team => {
+    const ids = team.map(id => String(id));
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) set.add(pairKey(ids[i], ids[j]));
+  }));
+  return set;
+}
+
+function drawTeamsAvoid(players, teamsCount) {
+  const used = usedPairSet();
+  let best = null, bestRepeats = Infinity;
+  for (let attempt = 0; attempt < 250; attempt++) {
+    const teams = drawTeamsRandom(players, teamsCount);
+    let repeats = 0;
+    teams.forEach(team => {
+      for (let i = 0; i < team.length; i++) for (let j = i + 1; j < team.length; j++) {
+        if (used.has(pairKey(team[i].id, team[j].id))) repeats++;
+      }
+    });
+    if (repeats < bestRepeats) { bestRepeats = repeats; best = teams; }
+    if (!repeats) break;
+  }
+  balanceGoalkeepers(best);
+  return best;
+}
+
 function balanceGoalkeepers(teams) {
   const gkCount = (t) => t.filter(p => p.position === 'Goleiro').length;
   for (let pass = 0; pass < 6; pass++) {
@@ -943,6 +1142,20 @@ function avgRating(team) {
   return team.length ? Math.round(sum(team, p => playerRating(p)) / team.length) : 0;
 }
 
+function drawTeamsForMode(players, teamsCount) {
+  switch (ui.drawMode) {
+    case 'random': return drawTeamsRandom(players, teamsCount);
+    case 'position': return drawTeamsByPosition(players, teamsCount);
+    case 'rating': return drawTeamsByRating(players, teamsCount);
+    case 'avoid': return drawTeamsAvoid(players, teamsCount);
+    default: return drawTeamsBalanced(players, teamsCount);
+  }
+}
+
+function drawModeLabel(mode) {
+  return ({ balanced: 'Equilibrado', random: 'Aleatório', position: 'Por posição', rating: 'Por nota', avoid: 'Sem repetir duplas', manual: 'Manual' })[mode] || 'Equilibrado';
+}
+
 function doDraw() {
   const key = drawGameKey();
   const players = confirmedIds(key).map(playerById).filter(Boolean).filter(p => p.active !== false);
@@ -951,12 +1164,14 @@ function doDraw() {
   if (players.length < 4) { toast('Confirme pelo menos 4 jogadores para sortear.', 'err'); return; }
   const teamsCount = Math.max(2, Math.round(players.length / size));
 
+  if (ui.drawMode === 'manual') { toast('Use o formulário “Equipes manuais” abaixo.', 'err'); return; }
+
   const usedTeamSigs = new Set();
   state.drawHistory.forEach(h => (h.teamSigs || []).forEach(s => usedTeamSigs.add(s)));
 
   let best = null, bestRepeats = Infinity;
   for (let attempt = 0; attempt < 150; attempt++) {
-    const teams = ui.drawMode === 'random' ? drawTeamsRandom(players, teamsCount) : drawTeamsBalanced(players, teamsCount);
+    const teams = drawTeamsForMode(players, teamsCount);
     const teamSigs = teams.map(t => t.map(p => p.id).sort().join('+'));
     const repeats = teamSigs.filter(s => usedTeamSigs.has(s)).length;
     if (repeats < bestRepeats) { bestRepeats = repeats; best = { teams, teamSigs }; }
@@ -968,7 +1183,7 @@ function doDraw() {
     createdAt: new Date().toISOString(),
     gameKey: key,
     gameLabel: drawGameLabel(key),
-    mode: ui.drawMode === 'random' ? 'random' : 'balanced',
+    mode: ui.drawMode,
     teamSize: size,
     teams: best.teams.map(t => t.map(p => p.id)),
     teamSigs: best.teamSigs
@@ -984,7 +1199,7 @@ function doDraw() {
 function renderDrawResult(entry) {
   const teams = (entry.teams || []).map(t => t.map(playerById).filter(Boolean));
   return `<div class="card mt">
-    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), (entry.mode === 'random' ? 'Sorteio aleatório' : 'Equilibrado por características') + ' · ' + teams.length + ' equipes', `<span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
+    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), drawModeLabel(entry.mode) + ' · ' + teams.length + ' equipes', `<button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="team">📤 WhatsApp</button> <span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
     <div class="card-body">
       <div class="grid grid-3">
         ${teams.map((t, i) => `
@@ -1007,10 +1222,46 @@ function renderDrawHistory() {
       ${state.drawHistory.slice(0, 15).map(h => `<tr>
         <td class="tiny muted">${new Date(h.createdAt).toLocaleString('pt-BR')}</td>
         <td>${esc(h.gameLabel || 'Avulso')}</td>
-        <td>${h.mode === 'random' ? 'Aleatório' : 'Equilibrado'}</td>
+        <td>${drawModeLabel(h.mode)}</td>
         <td class="tiny">${(h.teams || []).map((t, i) => `<div><strong>E${i + 1}:</strong> ${t.map(id => esc(playerName(id))).join(', ')}</div>`).join('')}</td>
       </tr>`).join('')}
     </tbody></table></div>
+  </div>`;
+}
+
+function renderGroupResponses(key) {
+  if (!viewToken || !viewData) return '';
+  const resp = (viewData.responses || {})[key] || {};
+  const wait = (viewData.waitlist || {})[key] || [];
+  const yes = Object.keys(resp).filter(id => resp[id] === 'yes');
+  const no = Object.keys(resp).filter(id => resp[id] === 'no');
+  if (!yes.length && !no.length && !wait.length) return '';
+  const line = (ico, label, ids, cls) => ids.length ? `<div class="person"><span>${ico}</span><span style="flex:1"><strong>${label}: ${ids.length}</strong><div class="tiny muted">${ids.map(id => esc(playerName(id))).join(', ')}</div></span></div>` : '';
+  return `<div class="card mt">
+    ${section('Respostas do grupo', 'Enviadas pelo próprio jogador, pelo link individual', `
+      <button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>
+      <button class="btn btn-sm btn-primary" data-act="apply-group-confirmations" data-game="${esc(key)}">✅ Aplicar confirmações</button>`)}
+    <div class="card-body stack">
+      ${line('🟢', 'Vou jogar', yes)}
+      ${line('🔴', 'Não vou', no)}
+      ${line('🟡', 'Fila de espera', wait)}
+      <p class="tiny muted">“Aplicar” mantém quem você marcou manualmente e remove quem respondeu “Não vou”.</p>
+    </div>
+  </div>`;
+}
+
+function renderManualDrawForm(players, teamsCount) {
+  const labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  return `<div class="card mt">
+    ${section('Equipes manuais', 'Escolha em qual equipe cada jogador confirmado vai jogar')}
+    <div class="card-body">
+      <div class="form-grid">
+        ${players.map((p, i) => `<label class="field">${esc(p.name)}<select data-manual-player="${esc(p.id)}">
+          ${Array.from({ length: teamsCount }, (_, t) => `<option value="${t}" ${i % teamsCount === t ? 'selected' : ''}>Equipe ${labels[t] || (t + 1)}</option>`).join('')}
+        </select></label>`).join('')}
+      </div>
+      <button class="btn btn-primary mt" type="button" data-act="save-manual-draw">💾 Salvar equipes manuais</button>
+    </div>
   </div>`;
 }
 
@@ -1026,12 +1277,20 @@ function pageSorteador() {
   const gameOptions = [`<option value="__manual__" ${key === '__manual__' ? 'selected' : ''}>Avulso (sem data)</option>`,
     ...games.map(g => `<option value="${g.id}" ${key === g.id ? 'selected' : ''}>${fmtDate(g.date)} · ${g.done ? 'realizado' : 'agendado'}</option>`)].join('');
 
+  const modes = [
+    ['balanced', 'Equilibrado (força + velocidade)'], ['random', 'Aleatório'],
+    ['position', 'Por posição (goleiro em cada time)'], ['rating', 'Por nota (maior primeiro)'],
+    ['avoid', 'Evitar repetir duplas'], ['manual', 'Manual (eu monto as equipes)']
+  ];
+  const manual = ui.drawMode === 'manual';
+
   return `
     <div class="card">
       ${section('Jogadores confirmados', 'Marque quem confirmou presença no racha', `
         <select id="draw-game" style="width:200px">${gameOptions}</select>
         <button class="btn btn-sm btn-ghost" data-act="confirm-all">Marcar todos</button>
-        <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>`)}
+        <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>
+        <button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="games">📤 WhatsApp</button>`)}
       <div class="card-body">
         <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. A nota é a média de força e velocidade.</p>
         ${players.length ? `<div class="chip-grid">
@@ -1041,23 +1300,85 @@ function pageSorteador() {
       </div>
     </div>
 
+    ${renderGroupResponses(key)}
+
     <div class="card mt">
       ${section('Montagem das equipes', 'Escolha o formato e sorteie')}
       <div class="card-body">
         <div class="row" style="align-items:flex-end">
           <label class="field" style="max-width:170px">Jogadores por equipe<input id="draw-size" type="number" min="2" max="20" value="${num(ui.drawSize) || 6}" /></label>
-          <label class="field" style="max-width:260px">Modo do sorteio<select id="draw-mode">
-            <option value="balanced" ${ui.drawMode === 'balanced' ? 'selected' : ''}>Equilibrado (por características)</option>
-            <option value="random" ${ui.drawMode === 'random' ? 'selected' : ''}>Aleatório (sem características)</option>
+          <label class="field" style="max-width:300px">Modo do sorteio<select id="draw-mode">
+            ${modes.map(([k, l]) => `<option value="${k}" ${ui.drawMode === k ? 'selected' : ''}>${l}</option>`).join('')}
           </select></label>
-          <button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button>
+          ${manual ? '' : `<button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button>`}
         </div>
-        <p class="tiny muted mt">O sorteio equilibrado usa força e velocidade e distribui os goleiros entre as equipes. O aleatório ignora as características. Cada novo sorteio evita repetir equipes anteriores.</p>
+        <p class="tiny muted mt">Equilibrado usa força e velocidade; por posição garante um goleiro por time; evitar duplas consulta o histórico; manual você define na tela. Todo sorteio tenta não repetir equipes anteriores.</p>
       </div>
     </div>
 
+    ${manual && confirmed.length >= 4 ? renderManualDrawForm(confirmed, Math.max(2, Math.round(confirmed.length / (num(ui.drawSize) || 6)))) : ''}
+
     ${last ? renderDrawResult(last) : `<div class="card mt">${empty('Nenhum sorteio ainda', 'Confirme os jogadores e toque em “Sortear equipes”.')}</div>`}
     ${state.drawHistory.length > 1 ? renderDrawHistory() : ''}`;
+}
+
+function pageLive() {
+  const reason = viewBlockReason();
+  if (reason) return `<div class="card">${empty('Placar ao vivo indisponível', reason)}</div>`;
+  if (!viewToken) return `<div class="card">${empty('Crie o link do grupo primeiro', 'Vá em Configurações → Link para o grupo e depois volte aqui.')}</div>`;
+
+  const snap = viewData?.snapshot || {};
+  const games = (snap.games || []).filter(g => !g.done).sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 8);
+  const players = (snap.players || []).filter(p => p.active !== false);
+  const live = liveState;
+  const score = live?.score || { A: 0, B: 0 };
+  const events = (live?.events || []).slice(-12).reverse();
+  const ico = { goal: '⚽', assist: '🅰️', card: '🟨' };
+  const lastDraw = (snap.drawHistory || [])[0];
+
+  const board = live ? `
+    <div class="live-board">
+      <div class="live-side"><span class="tiny muted">Equipe A</span><strong>${num(score.A)}</strong></div>
+      <div class="live-x">×</div>
+      <div class="live-side"><span class="tiny muted">Equipe B</span><strong>${num(score.B)}</strong></div>
+    </div>
+    <p class="tiny muted center">Iniciado em ${live.startedAt ? new Date(live.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}${live.endedAt ? ' · encerrado' : ''}</p>
+    ${events.length ? `<div class="mt">${events.map(ev => {
+      const p = players.find(x => x.id === ev.playerId);
+      return `<div class="person"><span>${ico[ev.type] || '•'}</span><span style="flex:1"><strong>${esc(p?.name || 'Jogador')}</strong> <span class="tiny muted">· equipe ${esc(ev.team || 'A')}${ev.minute ? ' · ' + esc(ev.minute) + "'" : ''}</span></span><span class="tiny muted">${ev.at ? new Date(ev.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}</span></div>`;
+    }).join('')}</div>` : '<p class="tiny muted center">Nenhum lance registrado ainda.</p>'}` : `
+    <p class="small muted center">A partida ainda não começou. Escolha o jogo e toque em “Iniciar placar”.</p>`;
+
+  return `
+    <div class="card">
+      ${section('Comandos do placar', 'Cada lance atualiza a página do grupo em segundos', `
+        <button class="btn btn-sm btn-ghost" data-act="open-live-link">🔗 Abrir no grupo</button>`)}
+      <div class="card-body">
+        <div class="row" style="flex-wrap:wrap">
+          <label class="field" style="min-width:190px">Jogo<select id="live-game">
+            <option value="">Avulso / sem data</option>
+            ${games.map(g => `<option value="${esc(g.id)}" ${live?.gameId === g.id ? 'selected' : ''}>${fmtDate(g.date)}</option>`).join('')}
+          </select></label>
+          <label class="field" style="min-width:190px">Jogador<select id="live-player">
+            <option value="">— escolha —</option>
+            ${players.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+          </select></label>
+          <label class="field" style="max-width:120px">Equipe<select id="live-team"><option value="A">A</option><option value="B">B</option></select></label>
+        </div>
+        <div class="row mt">
+          <button class="btn btn-primary" data-act="live-start" type="button">▶ Iniciar</button>
+          <button class="btn btn-primary" data-act="live-goal" type="button">⚽ Gol</button>
+          <button class="btn btn-ghost" data-act="live-assist" type="button">🅰️ Assistência</button>
+          <button class="btn btn-ghost" data-act="live-card" type="button">🟨 Cartão</button>
+          <button class="btn btn-ghost" data-act="live-undo" type="button">↩ Desfazer</button>
+          <button class="btn btn-danger" data-act="live-stop" type="button">⏹ Encerrar</button>
+        </div>
+        ${lastDraw ? `<p class="tiny muted mt">Times do último sorteio: ${(lastDraw.teams || []).map((t, i) => `<strong>${i ? 'B' : 'A'}:</strong> ${t.map(id => esc(playerName(id))).slice(0, 5).join(', ')}`).join(' · ')}</p>` : ''}
+      </div>
+    </div>
+    <div class="card mt">${section('Placar', 'Somente leitura para o grupo', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
+      <div class="card-body">${board}</div>
+    </div>`;
 }
 
 function pagePayments() {
@@ -1296,7 +1617,25 @@ function pageRanking() {
   const rank = rankingFor(ui.rankFilter);
   const top3 = rank.slice(0, 3);
   const label = ui.rankFilter === 'year' ? 'do ano de ' + year() : `do ${ui.rankFilter}º trimestre de ${year()}`;
+  const rated = groupRatings();
+  const yearScores = state.scores.filter(s => s.year === year());
+  const xerifao = yearScores.slice().sort((a, b) => num(b.cards) - num(a.cards))[0];
+  const mvpCard = rated.length ? `
+    <div class="card" style="margin-bottom:16px">
+      ${section('Destaques do grupo', 'MVP e notas enviadas após as partidas', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
+      <div class="card-body">
+        <div class="grid grid-3">
+          <div class="card kpi amber"><div class="label">⭐ MVP (nota do grupo)</div><div class="value" style="font-size:16px">${esc(rated[0].player?.name || '—')}</div><div class="foot">${rated[0].avg.toFixed(1)} / 5 · ${rated[0].n} avaliação(ões)</div></div>
+          <div class="card kpi red"><div class="label">🪓 Xerifão</div><div class="value" style="font-size:16px">${esc(playerName(xerifao?.playerId))}</div><div class="foot">${num(xerifao?.cards)} cartões no ano</div></div>
+          <div class="card kpi blue"><div class="label">⚽ Artilheiro</div><div class="value" style="font-size:16px">${esc(playerName(rankingFor('year')[0]?.playerId))}</div><div class="foot">${num(rankingFor('year')[0]?.goals)} gols no ano</div></div>
+        </div>
+        <div class="table-wrap mt"><table><thead><tr><th>Jogador</th><th class="right">Nota média</th><th class="right">Avaliações</th></tr></thead><tbody>
+          ${rated.slice(0, 10).map(r => `<tr><td>${playerCell(r.player)}</td><td class="right mono">${r.avg.toFixed(1)}</td><td class="right mono">${r.n}</td></tr>`).join('')}
+        </tbody></table></div>
+      </div>
+    </div>` : '';
   return `
+    ${mvpCard}
     <div class="card">
       ${section('Ranking ' + label, 'Pontos = gols×' + settings().ptsGoal + ' + assistências×' + settings().ptsAssist + ' + presença×' + settings().ptsPresence + ' + bônus', 
         filters.map(([k, l]) => `<button class="btn btn-sm ${String(ui.rankFilter) === String(k) ? 'btn-primary' : 'btn-ghost'}" data-act="rank-filter" data-filter="${k}">${l}</button>`).join(''))}
@@ -1379,6 +1718,7 @@ function pageSettings() {
           ${section('Cenário e churrasco', 'Planejamento e reserva')}
           <div class="card-body form-grid">
             ${f('plannedMembers', 'Mensalistas planejados', '1')}
+            ${f('maxPlayers', 'Limite por jogo (0 = sem limite)', '1')}
             ${f('dayPlayersPerGame', 'Diaristas médios por jogo', '1')}
             ${f('bbqCostPerPerson', 'Churrasco: custo por pessoa (R$)')}
             ${f('bbqPeople', 'Churrasco: nº de pessoas', '1')}
@@ -1420,6 +1760,7 @@ function pageSettings() {
               <div class="row">
                 <button class="btn btn-primary" type="button" data-act="copy-view-link">📋 Copiar link</button>
                 <button class="btn btn-ghost" type="button" data-act="open-view-link">🔗 Abrir</button>
+                <button class="btn btn-ghost" type="button" data-act="share-whatsapp" data-kind="view">📤 WhatsApp</button>
                 <button class="btn btn-ghost" type="button" data-act="refresh-view-link" ${viewAllowed ? '' : 'disabled'}>🔄 Atualizar agora</button>
               </div>
               <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
@@ -1427,6 +1768,23 @@ function pageSettings() {
               <button class="btn btn-primary" type="button" data-act="create-view-link" ${viewAllowed ? '' : 'disabled'}>🔗 Criar link de visualização</button>
               <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
             `}
+          </div>
+        </div>
+        <div class="card">
+          ${section('Links individuais dos jogadores', 'Cada jogador confirma presença sem senha', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
+          <div class="card-body stack">
+            <p class="small muted">Envie o link de cada jogador somente a ele. Lá ele confirma presença, avalia os jogos e vê as próprias mensalidades com PIX. O link é a credencial — não publique no grupo.</p>
+            ${Object.keys(playerLinks).length ? `<div class="table-wrap"><table><thead><tr><th>Jogador</th><th>Link</th></tr></thead><tbody>
+              ${Object.entries(playerLinks).map(([pid, url]) => `<tr><td>${esc(playerName(pid))}</td><td><button class="btn btn-sm btn-ghost" type="button" data-act="copy-player-link" data-id="${esc(pid)}">📋 Copiar link</button></td></tr>`).join('')}
+            </tbody></table></div>` : `<p class="tiny muted">Os links aparecem depois que o link do grupo for criado/atualizado.</p>`}
+            <p class="tiny muted">Limite de vagas por jogo: <strong>${num(settings().maxPlayers) || 'sem limite'}</strong>. Quem entrar depois disso vai para a fila de espera.</p>
+          </div>
+        </div>
+        <div class="card">
+          ${section('Lembretes automáticos', '24h e 2h antes de cada jogo')}
+          <div class="card-body stack">
+            <p class="small muted">O servidor gera lembretes com o link individual de cada jogador nas janelas de 24h e 2h antes do jogo, prontos para o WhatsApp. A função <code>send-reminders</code> pode ser agendada no Netlify.</p>
+            <button class="btn btn-ghost" type="button" data-act="show-reminders">🔔 Ver lembretes de agora</button>
           </div>
         </div>
         <div class="card">
@@ -1653,7 +2011,7 @@ function handleHash() {
 const PAGE_FNS = {
   dashboard: pageDashboard, players: pagePlayers, payments: pagePayments, games: pageGames,
   expenses: pageExpenses, benefits: pageBenefits, cash: pageCash, simulator: pageSimulator, scores: pageScores,
-  sorteador: pageSorteador, ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
+  sorteador: pageSorteador, live: pageLive, ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
 };
 
 function renderNav() {
@@ -1664,14 +2022,15 @@ function renderNav() {
   $('#year-select').innerHTML = [year() - 1, year(), year() + 1, year() + 2].map(y => `<option value="${y}" ${y === year() ? 'selected' : ''}>${y}</option>`).join('');
 }
 
-function render() {
+function render(keepScroll) {
+  const y = window.scrollY;
   renderNav();
   const p = PAGES[ui.page];
   $('#page-title').textContent = p.title;
   $('#page-subtitle').textContent = p.sub;
   $('#content').innerHTML = PAGE_FNS[ui.page]();
   if (window.RachaLicense) window.RachaLicense.renderBanner();
-  window.scrollTo({ top: 0, behavior: 'instant' });
+  window.scrollTo({ top: keepScroll ? y : 0, behavior: 'instant' });
 }
 
 function navigate(page) {
@@ -2106,6 +2465,9 @@ document.addEventListener('click', (e) => {
     case 'open-view-link':
       window.open(viewUrl(), '_blank', 'noopener');
       break;
+    case 'open-live-link':
+      if (viewToken) window.open(liveUrl(), '_blank', 'noopener');
+      break;
     case 'refresh-view-link':
       toast('Atualizando link…');
       publishView(false);
@@ -2312,6 +2674,47 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'do-draw': doDraw(); break;
+    case 'refresh-view-data':
+      fetchViewData(false).then(() => render(true));
+      break;
+    case 'apply-group-confirmations': {
+      const key = el.dataset.game || drawGameKey();
+      const resp = (viewData?.responses || {})[key] || {};
+      const wait = (viewData?.waitlist || {})[key] || [];
+      const set = new Set(confirmedIds(key));
+      Object.keys(resp).forEach(id => { if (resp[id] === 'yes') set.add(id); else set.delete(id); });
+      wait.forEach(id => set.delete(id));
+      state.confirmations[key] = [...set];
+      save(); render(true); toast('Confirmações do grupo aplicadas!');
+      break;
+    }
+    case 'save-manual-draw': {
+      const key = drawGameKey();
+      const players = confirmedIds(key).map(playerById).filter(Boolean);
+      const buckets = {};
+      $$('[data-manual-player]').forEach(sel => {
+        const t = num(sel.value);
+        (buckets[t] || (buckets[t] = [])).push(sel.dataset.manualPlayer);
+      });
+      const teams = Object.keys(buckets).sort((a, b) => num(a) - num(b)).map(k => buckets[k]);
+      if (teams.length < 2 || players.some(p => !teams.some(t => t.includes(p.id)))) { toast('Distribua todos os jogadores em pelo menos 2 equipes.', 'err'); break; }
+      const teamSigs = teams.map(t => t.slice().sort().join('+'));
+      state.drawHistory.unshift({ id: uid(), createdAt: new Date().toISOString(), gameKey: key, gameLabel: drawGameLabel(key), mode: 'manual', teamSize: teams[0].length, teams, teamSigs });
+      if (state.drawHistory.length > 60) state.drawHistory.length = 60;
+      save(); render(true); toast('Equipes manuais salvas!');
+      break;
+    }
+    case 'share-whatsapp': shareWhatsApp(el.dataset.kind); break;
+    case 'copy-player-link':
+      copyText(playerLinks[id] || '').then(ok => toast(ok ? 'Link do jogador copiado!' : 'Link indisponível. Atualize o link do grupo.', ok ? 'ok' : 'err'));
+      break;
+    case 'show-reminders': modalReminders(); break;
+    case 'live-start': runLiveAction('start'); break;
+    case 'live-goal': runLiveAction('goal'); break;
+    case 'live-assist': runLiveAction('assist'); break;
+    case 'live-card': runLiveAction('card'); break;
+    case 'live-undo': runLiveAction('undo'); break;
+    case 'live-stop': runLiveAction('stop'); break;
     case 'clear-draw-history': confirmAction('Apagar todo o histórico de sorteios?', () => {
       state.drawHistory = [];
       save(); render(); toast('Histórico de sorteios apagado.');
@@ -2490,7 +2893,7 @@ document.addEventListener('submit', async (e) => {
     closeModal();
   }
   else if (type === 'settings') {
-    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard']);
+    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard']);
     Object.keys(defaultSettings()).forEach(k => { state.settings[k] = numeric.has(k) ? num(v(k)) : v(k); });
     ui.sim = null; save(); render(); toast('Premissas salvas.');
   }
@@ -2580,11 +2983,29 @@ try {
 applyColors();
 if (window.RachaLicense) {
   window.RachaLicense.init(() => {
+    if (viewToken) fetchViewData(true);
     if (ui.paymentPage) renderPaymentPage(); else render();
   });
 }
 render();
 handleHash();
+
+/* Painel do admin acompanha respostas, notas e placar do mesmo retrato do grupo. */
+if (viewToken) {
+  fetchViewData(true).then(() => { if (['sorteador', 'live', 'ranking'].includes(ui.page)) render(true); });
+  setInterval(async () => {
+    if (document.hidden || $('#modal-root').classList.contains('open')) return;
+    if (!['sorteador', 'live', 'ranking'].includes(ui.page)) return;
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    const before = JSON.stringify([viewData?.responses, viewData?.waitlist, viewData?.ratings, viewData?.live]);
+    await fetchViewData(true);
+    const after = JSON.stringify([viewData?.responses, viewData?.waitlist, viewData?.ratings, viewData?.live]);
+    if (before !== after) render(true);
+  }, 15000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) fetchViewData(true).then(() => render(true));
+  });
+}
 
 window.addEventListener('hashchange', handleHash);
 
