@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 
-const PRODUCTION_ORIGIN = 'https://teal-griffin-a37fbe.netlify.app';
+const PRODUCTION_ORIGIN = 'https://rachadololo.netlify.app';
 const MIRROR_ORIGIN = 'https://luzeus27.github.io';
 
 /* Origem autorizada nesta invocação. Preenchida por setCorsOrigin() no início
