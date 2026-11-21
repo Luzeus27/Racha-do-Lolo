@@ -143,6 +143,21 @@ export default async (req) => {
 
       const gameId = text(game.id, 60);
       if (!gameId) continue;
+
+      /* Aviso único para o grupo: apenas o retrato público (VW). Nunca inclui
+         tokens VP, telefones, mensalidades ou qualquer dado individual. */
+      const groupLink = base + '/visualizar.html?v=' + vw;
+      const groupMessage = '⚽ Racha do Loló: jogo em ' + labelBR(date) +
+        '!\nProgramação, escala e ranking: ' + groupLink +
+        '\nConfirme sua presença pelo seu link individual (enviado no privado).';
+      if (reminders.length < MAX_REMINDERS) {
+        reminders.push({
+          vw, gameId, date, when,
+          playerId: '', group: true, direct: false,
+          url: 'https://wa.me/?text=' + encodeURIComponent(groupMessage)
+        });
+      }
+
       for (const [playerId, playerToken] of players) {
         if (reminders.length >= MAX_REMINDERS) break;
         const link = base + '/jogador.html?v=' + vw + '&p=' + playerToken;
