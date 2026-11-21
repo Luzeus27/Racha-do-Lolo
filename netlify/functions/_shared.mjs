@@ -8,6 +8,10 @@ const CORS = {
 };
 
 export function json(body, status = 200, extra = {}) {
+  /* Respostas 204 não podem ter corpo (usadas no preflight CORS). */
+  if (status === 204) {
+    return new Response(null, { status: 204, headers: { ...CORS, ...extra } });
+  }
   return new Response(JSON.stringify(body), {
     status,
     headers: {
