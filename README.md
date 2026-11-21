@@ -23,6 +23,7 @@ Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar
 - **Privacidade:** o token VW é secreto e o VP é individual. Telefone, e-mail, chave PIX, comprovantes, observações e despesas individuais **não** aparecem na visão pública — PIX aparece apenas na área do próprio jogador.
 - **Segurança:** publicar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
 - **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
+- **Conciliação:** `reconcile-licenses.mjs` roda às 03h e compara todas as assinaturas com o Mercado Pago, corrigindo o acesso se um webhook tiver sido perdido. Chamada manual: configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - Sem Netlify (GitHub Pages) esses recursos **não funcionam**: dependem de funções e Netlify Blobs. Use sempre o domínio principal.
 
 > status: código escrito e versionado; publicação depende da retoma dos deploys do Netlify.
@@ -210,6 +211,7 @@ No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment v
 | `SITE_URL` | `https://teal-griffin-a37fbe.netlify.app` |
 | `ALLOWED_ORIGINS` | Opcional. Outras origens autorizadas a chamar as funções, separadas por vírgula |
 | `LICENSE_GRACE_DAYS` | Opcional. Dias de tolerância após o vencimento (padrão: `3`) |
+| `RECONCILE_SECRET` | Opcional. Segredo para disparar `reconcile-licenses` manualmente pelo header `x-reconcile-secret` |
 
 Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para as variáveis valerem.
 
@@ -236,4 +238,6 @@ Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para a
 - **CORS restrito:** as funções só refletem origens permitidas (site principal, espelho do GitHub Pages, `localhost` para testes e o que estiver em `ALLOWED_ORIGINS`). O cabeçalho `Vary: Origin` evita cache indevido.
 - **Webhook à prova de falha:** sem `MP_WEBHOOK_SECRET`, o endpoint responde `503` e não aceita nenhuma notificação. A assinatura HMAC é sempre verificada com `timingSafeEqual` e janela de 10 minutos.
 - **Estorno e chargeback:** revogam o acesso imediatamente. Reassinar depois de cancelar limpa o pedido antigo e libera a licença no novo período.
+- **Limite de requisições:** checkout, consulta de licença, respostas do grupo e publicação do retrato têm limite por IP (com `429` e `Retry-After`), evitando abuso sem atrapalhar o uso normal.
+- **Reconciliação diária:** `reconcile-licenses.mjs` consulta o Mercado Pago às 03h e corrige o status das assinaturas caso algum webhook não tenha chegado. Para disparar manualmente, configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - **Headers de segurança:** CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` e HSTS são aplicados pelo `netlify.toml` a todas as páginas.
