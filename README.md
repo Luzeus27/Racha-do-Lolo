@@ -206,6 +206,8 @@ No projeto **teal-griffin-a37fbe**, abra **Project configuration > Environment v
 | `MP_PRICE_MONTHLY` | Preço mensal em reais (padrão: `9`) |
 | `MP_PRICE_YEARLY` | Preço anual em reais (padrão: `90`) |
 | `SITE_URL` | `https://teal-griffin-a37fbe.netlify.app` |
+| `ALLOWED_ORIGINS` | Opcional. Outras origens autorizadas a chamar as funções, separadas por vírgula |
+| `LICENSE_GRACE_DAYS` | Opcional. Dias de tolerância após o vencimento (padrão: `3`) |
 
 Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para as variáveis valerem.
 
@@ -225,3 +227,11 @@ Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para a
 - **O bloqueio real fica no servidor.** Como o repositório é público, alguém pode copiar o código, mas sem uma chave de licença válida (confirmada pelo webhook) não consegue liberar a edição no site publicado.
 - **Nunca coloque o Access Token dentro do `app.js`.** Ele fica apenas nas variáveis de ambiente do Netlify.
 - **Conta master (vitalícia):** `netlify/functions/create-master.mjs` cria uma licença sem cobrança para o administrador. O endpoint exige o segredo `MASTER_SETUP_SECRET` (ou, enquanto não definido, a chave secreta do webhook). Ela nunca aparece no checkout dos clientes.
+
+### Segurança do backend
+
+- **URLs de pagamento fixas:** `back_url` e `notification_url` saem sempre de `SITE_URL`/`URL` (variáveis do servidor). O header `Origin` enviado pelo navegador nunca é usado, então um visitante não consegue redirecionar o retorno do checkout.
+- **CORS restrito:** as funções só refletem origens permitidas (site principal, espelho do GitHub Pages, `localhost` para testes e o que estiver em `ALLOWED_ORIGINS`). O cabeçalho `Vary: Origin` evita cache indevido.
+- **Webhook à prova de falha:** sem `MP_WEBHOOK_SECRET`, o endpoint responde `503` e não aceita nenhuma notificação. A assinatura HMAC é sempre verificada com `timingSafeEqual` e janela de 10 minutos.
+- **Estorno e chargeback:** revogam o acesso imediatamente. Reassinar depois de cancelar limpa o pedido antigo e libera a licença no novo período.
+- **Headers de segurança:** CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` e HSTS são aplicados pelo `netlify.toml` a todas as páginas.

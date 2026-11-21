@@ -15,6 +15,17 @@
   [headers.values]
     Cache-Control = "no-store"
 
+# Cabeçalhos de segurança para todas as páginas do app.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(), microphone=(), payment=()"
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+
 # Lembretes 24h/2h antes dos jogos (agendado; REMINDER_SECRET é opcional).
 [functions."send-reminders"]
   schedule = "0 12 * * *"
