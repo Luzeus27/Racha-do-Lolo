@@ -6,6 +6,7 @@ import { getStore } from '@netlify/blobs';
 import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil } from './_shared.mjs';
 
 const MAX_BYTES = 3 * 1024 * 1024;
+const MAX_BODY_BYTES = 5 * 1024 * 1024;
 const PHOTO_MAX = 160000;
 
 function cleanKey(value) {
@@ -13,8 +14,16 @@ function cleanKey(value) {
 }
 
 function pick(source, keys) {
-  const obj = source && typeof source === 'object' ? source : {};
+  const obj = isObject(source) ? source : {};
   return Object.fromEntries(keys.map((k) => [k, obj[k]]));
+}
+
+function isObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function dict() {
+  return Object.create(null);
 }
 
 function text(value, max = 120) {
@@ -30,98 +39,186 @@ function ids(list, limit = 30) {
   return (Array.isArray(list) ? list : []).slice(0, limit).map((v) => text(v, 60));
 }
 
-/* Lista branca: nada de telefone, e-mail, chave PIX, comprovantes ou observações. */
-function sanitize(raw) {
-  const src = raw && typeof raw === 'object' ? raw : {};
-  const settings = pick(src.settings, [
+function newViewToken() {
+  return 'VW-' + randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase();
+}
+
+function newPlayerToken() {
+  return 'VP-' + randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase();
+}
+
+function validPlayerToken(value) {
+  return /^VP-[A-F0-9]{16}$/.test(String(value || ''));
+}
+
+async function readJson(req, maxBytes) {
+  const header = req.headers && typeof req.headers.get === 'function' ? req.headers.get('content-length') : null;
+  const declared = Number(header);
+  if (Number.isFinite(declared) && declared > maxBytes) return { body: {}, tooLarge: true };
+  let raw = '';
+  try { raw = await req.text(); } catch (e) { return { body: {}, tooLarge: false }; }
+  if (Buffer.byteLength(raw, 'utf8') > maxBytes) return { body: {}, tooLarge: true };
+  try { return { body: raw ? JSON.parse(raw) : {}, tooLarge: false }; }
+  catch (e) { return { body: {}, tooLarge: false }; }
+}
+
+/* Mensalidades: nada de telefone, e-mail ou dados pessoais além do necessário.
+   O PIX só entra quando é um BR Code (`000201...`). */
+function sanitizeDues(raw) {
+  const src = isObject(raw) ? raw : {};
+  const out = dict();
+  let players = 0;
+  Object.keys(src).slice(0, 200).forEach((key) => {
+    if (players >= 200) return;
+    const playerId = text(key, 60);
+    if (!playerId) return;
+    players += 1;
+    out[playerId] = (Array.isArray(src[key]) ? src[key] : []).slice(0, 36).map((item) => {
+      const row = isObject(item) ? item : {};
+      const pix = typeof row.pix === 'string' && row.pix.startsWith('000201')
+        ? row.pix.slice(0, 800)
+        : '';
+      return {
+        month: number(row.month),
+        year: number(row.year),
+        amount: number(row.amount),
+        paid: row.paid === true,
+        pix,
+        txid: text(row.txid, 80),
+        receiptId: text(row.receiptId, 80)
+      };
+    });
+  });
+  return out;
+}
+
+function sanitizeSettings(raw) {
+  const settings = pick(raw, [
     'year', 'monthlyFee', 'dayFee', 'goalkeepers', 'gamesPerMonth',
     'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard',
-    'plannedMembers'
+    'plannedMembers', 'maxPlayers'
   ]);
+  const max = Number(settings.maxPlayers);
+  settings.maxPlayers = Number.isFinite(max) && max > 0 ? Math.min(1000, Math.floor(max)) : 0;
+  return settings;
+}
 
-  const players = (Array.isArray(src.players) ? src.players : []).slice(0, 200).map((p) => ({
-    id: text(p.id, 60),
-    name: text(p.name, 90),
-    type: text(p.type, 30),
-    position: text(p.position, 30),
-    active: p.active !== false,
-    age: number(p.age),
-    height: number(p.height),
-    weight: number(p.weight),
-    strength: number(p.strength),
-    speed: number(p.speed),
-    photo: typeof p.photo === 'string' && /^data:image\/(png|jpeg|webp);base64,/i.test(p.photo)
-      ? p.photo.slice(0, PHOTO_MAX)
-      : ''
-  }));
+/* Lista branca: nada de telefone, e-mail, chave PIX, comprovantes ou observações. */
+function sanitize(raw) {
+  const src = isObject(raw) ? raw : {};
 
-  const games = (Array.isArray(src.games) ? src.games : []).slice(0, 500).map((g) => ({
-    id: text(g.id, 60),
-    date: text(g.date, 20),
-    month: number(g.month),
-    year: number(g.year),
-    done: g.done === true
-  }));
+  const players = (Array.isArray(src.players) ? src.players : []).slice(0, 200).map((value) => {
+    const p = isObject(value) ? value : {};
+    return {
+      id: text(p.id, 60),
+      name: text(p.name, 90),
+      type: text(p.type, 30),
+      position: text(p.position, 30),
+      active: p.active !== false,
+      age: number(p.age),
+      height: number(p.height),
+      weight: number(p.weight),
+      strength: number(p.strength),
+      speed: number(p.speed),
+      photo: typeof p.photo === 'string' && /^data:image\/(png|jpeg|webp);base64,/i.test(p.photo)
+        ? p.photo.slice(0, PHOTO_MAX)
+        : ''
+    };
+  });
 
-  const confirmations = {};
-  const conf = src.confirmations && typeof src.confirmations === 'object' ? src.confirmations : {};
+  const games = (Array.isArray(src.games) ? src.games : []).slice(0, 500).map((value) => {
+    const g = isObject(value) ? value : {};
+    return {
+      id: text(g.id, 60),
+      date: text(g.date, 20),
+      month: number(g.month),
+      year: number(g.year),
+      done: g.done === true
+    };
+  });
+
+  const confirmations = dict();
+  const conf = isObject(src.confirmations) ? src.confirmations : {};
   Object.keys(conf).slice(0, 200).forEach((key) => {
     confirmations[text(key, 60)] = ids(conf[key], 200);
   });
 
-  const drawHistory = (Array.isArray(src.drawHistory) ? src.drawHistory : []).slice(0, 20).map((h) => ({
-    id: text(h.id, 60),
-    createdAt: text(h.createdAt, 40),
-    gameKey: text(h.gameKey, 60),
-    gameLabel: text(h.gameLabel, 60),
-    mode: text(h.mode, 20),
-    teamSize: number(h.teamSize),
-    teams: (Array.isArray(h.teams) ? h.teams : []).slice(0, 20).map((t) => ids(t, 30))
-  }));
+  const scores = (Array.isArray(src.scores) ? src.scores : []).slice(0, 800).map((value) => {
+    const s = isObject(value) ? value : {};
+    return {
+      id: text(s.id, 60),
+      playerId: text(s.playerId, 60),
+      month: number(s.month),
+      year: number(s.year),
+      goals: number(s.goals),
+      assists: number(s.assists),
+      presence: number(s.presence),
+      fairPlay: number(s.fairPlay),
+      punctual: number(s.punctual),
+      cards: number(s.cards)
+    };
+  });
 
-  const scores = (Array.isArray(src.scores) ? src.scores : []).slice(0, 800).map((s) => ({
-    id: text(s.id, 60),
-    playerId: text(s.playerId, 60),
-    month: number(s.month),
-    year: number(s.year),
-    goals: number(s.goals),
-    assists: number(s.assists),
-    presence: number(s.presence),
-    fairPlay: number(s.fairPlay),
-    punctual: number(s.punctual),
-    cards: number(s.cards)
-  }));
-
-  const financeRaw = src.finance && typeof src.finance === 'object' ? src.finance : {};
+  const financeRaw = isObject(src.finance) ? src.finance : {};
   const finance = {
     paid: number(financeRaw.paid),
     open: number(financeRaw.open),
-    byMonth: (Array.isArray(financeRaw.byMonth) ? financeRaw.byMonth : []).slice(0, 36).map((m) => ({
-      month: number(m.month),
-      year: number(m.year),
-      paid: number(m.paid),
-      open: number(m.open)
-    }))
+    byMonth: (Array.isArray(financeRaw.byMonth) ? financeRaw.byMonth : []).slice(0, 36).map((value) => {
+      const m = isObject(value) ? value : {};
+      return {
+        month: number(m.month),
+        year: number(m.year),
+        paid: number(m.paid),
+        open: number(m.open)
+      };
+    })
   };
 
   return {
     publishedAt: text(src.publishedAt, 40),
-    settings,
+    settings: sanitizeSettings(src.settings),
     players,
     games,
     confirmations,
-    drawHistory,
+    drawHistory: (Array.isArray(src.drawHistory) ? src.drawHistory : []).slice(0, 20).map((value) => {
+      const h = isObject(value) ? value : {};
+      return {
+        id: text(h.id, 60),
+        createdAt: text(h.createdAt, 40),
+        gameKey: text(h.gameKey, 60),
+        gameLabel: text(h.gameLabel, 60),
+        mode: text(h.mode, 20),
+        teamSize: number(h.teamSize),
+        teams: (Array.isArray(h.teams) ? h.teams : []).slice(0, 20).map((t) => ids(t, 30))
+      };
+    }),
     scores,
-    finance
+    finance,
+    dues: sanitizeDues(src.dues)
   };
+}
+
+/* Tokens VP estáveis: os já existentes e válidos são mantidos; jogadores
+   removidos perdem o token e jogadores novos ganham um token novo. */
+function syncPlayerTokens(players, previous) {
+  const out = dict();
+  const source = isObject(previous) ? previous : {};
+  const seen = new Set();
+  players.forEach((p) => {
+    const id = text(p.id, 60);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out[id] = validPlayerToken(source[id]) ? source[id] : newPlayerToken();
+  });
+  return out;
 }
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 
-  let body = {};
-  try { body = await req.json(); } catch (e) { body = {}; }
+  const { body, tooLarge } = await readJson(req, MAX_BODY_BYTES);
+  if (tooLarge) return json({ error: 'Retrato muito grande (fotos). Reduza as imagens.' }, 413);
 
   const key = cleanKey(body.licenseKey);
   const device = cleanDevice(body.deviceId);
@@ -152,25 +249,41 @@ export default async (req) => {
   const wantsReuse = /^VW-[A-F0-9]{16}$/.test(requested);
   const store = getStore({ name: 'racha-visualizacoes', consistency: 'strong' });
 
-  let token = wantsReuse ? requested : 'VW-' + randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase();
-  if (wantsReuse) {
-    const existing = await store.get(token, { type: 'json', consistency: 'strong' });
-    if (existing && existing.ownerKey !== key) token = 'VW-' + randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase();
+  let token = wantsReuse ? requested : newViewToken();
+  let previous = await store.get(token, { type: 'json', consistency: 'strong' });
+  if (wantsReuse && previous && previous.ownerKey !== key) {
+    token = newViewToken();
+    previous = null;
   }
 
   const now = new Date().toISOString();
+  const playerTokens = syncPlayerTokens(snapshot.players, previous?.playerTokens);
+  const base = siteUrl(req);
+  const playerLinks = dict();
+  Object.keys(playerTokens).forEach((id) => {
+    playerLinks[id] = base + '/jogador.html?v=' + token + '&p=' + playerTokens[id];
+  });
+
   await store.setJSON(token, {
     token,
     ownerKey: key,
-    createdAt: (await store.get(token, { type: 'json', consistency: 'strong' }))?.createdAt || now,
+    createdAt: previous?.createdAt || now,
     updatedAt: now,
-    snapshot: { ...snapshot, publishedAt: now }
+    snapshot: { ...snapshot, publishedAt: now },
+    /* Respostas, fila, notas e ao vivo pertencem ao link e sobrevivem a
+       republicações do retrato. */
+    playerTokens,
+    responses: isObject(previous?.responses) ? previous.responses : dict(),
+    waitlist: isObject(previous?.waitlist) ? previous.waitlist : dict(),
+    ratings: isObject(previous?.ratings) ? previous.ratings : dict(),
+    live: previous?.live ?? null
   }, { metadata: { owner: 'license' } });
 
   return json({
     ok: true,
     token,
-    url: siteUrl(req) + '/visualizar.html?v=' + encodeURIComponent(token),
-    publishedAt: now
+    url: base + '/visualizar.html?v=' + encodeURIComponent(token),
+    publishedAt: now,
+    playerLinks
   });
 };
