@@ -935,6 +935,10 @@ function reminderLinks() {
     const hours = (new Date(g.date + 'T12:00:00').getTime() - now) / 3600000;
     const when = hours >= 23 && hours <= 25 ? '24h' : hours >= 1 && hours <= 3 ? '2h' : '';
     if (!when) return;
+    if (viewToken) {
+      const groupText = `⚽ Racha do Loló: jogo em ${fmtDate(g.date)}!\nProgramação, escala e ranking: ${viewUrl(viewToken)}\nConfirme sua presença pelo seu link individual (enviado no privado).`;
+      out.push({ when, name: 'Grupo do racha', group: true, url: waLink(groupText), direct: false });
+    }
     entries.forEach(([pid, url]) => {
       const p = playerById(pid);
       if (!p || !url) return;
@@ -948,8 +952,8 @@ function reminderLinks() {
 function modalReminders() {
   const list = reminderLinks();
   openModal('Lembretes para o grupo', 'Jogos nas janelas de 24h e 2h', list.length ? `
-    <p class="small muted">Toque em cada linha para abrir o chat do jogador com a mensagem pronta. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. A função agendada do servidor gera os mesmos lembretes.</p>
-    <div class="stack mt">${list.map(r => `<a class="btn btn-ghost" href="${esc(r.url)}" target="_blank" rel="noopener">🔔 ${esc(r.when)} · ${esc(r.name)}</a>`).join('')}</div>` : `
+    <p class="small muted"><strong>📢 Grupo</strong> avisa todo mundo com o link da visão do grupo (sem links individuais, telefones ou valores). <strong>🔔</strong> abre o chat privado de cada jogador. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. A função agendada do servidor gera os mesmos lembretes.</p>
+    <div class="stack mt">${list.map(r => `<a class="btn ${r.group ? 'btn-primary' : 'btn-ghost'}" href="${esc(r.url)}" target="_blank" rel="noopener">${r.group ? '📢 Grupo' : '🔔 ' + esc(r.name)} · ${esc(r.when)}</a>`).join('')}</div>` : `
     <p class="small muted">Nenhum jogo cai nas janelas de 24h ou 2h agora. Volte mais perto da partida.</p>`);
 }
 

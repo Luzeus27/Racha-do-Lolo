@@ -24,7 +24,7 @@ Qualquer **assinante com acesso ativo** (mensal, anual ou vitalício) pode gerar
 - **Segurança:** publicar, revogar e comandar o placar exigem licença ativa e aparelho vinculado. A leitura pública usa `get-view.mjs`; as ações do jogador usam `view-respond.mjs` e `view-rating.mjs`.
 - **Validade e revogação:** em **Configurações → Link para o grupo** você pode definir uma data de expiração e revogar o link. Links revogados ou vencidos param de responder (aviso `410`) e não aceitam confirmações, notas nem lances ao vivo. Ao publicar novamente, um novo token `VW-` é gerado e os links individuais `VP-` são atualizados.
 - **Envio dos links individuais:** em **Configurações → Links individuais dos jogadores**, o botão **📤 WhatsApp** abre o chat do jogador com o link dele já escrito — basta confirmar o envio. O mesmo botão existe na ficha individual. Se o jogador não tiver telefone cadastrado, o app abre o WhatsApp para escolher o contato, e **📋 Copiar** continua disponível. Cada link vai somente ao seu dono.
-- **Lembretes:** `send-reminders.mjs` gera links `wa.me` nas janelas de 24 h e 2 h antes do jogo, abrindo o chat direto de cada jogador quando há telefone cadastrado. Os telefones ficam em `contacts` no registro do servidor, **fora** do snapshot público — `get-view.mjs` e `get-player-view.mjs` nunca os devolvem. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel também oferece os mesmos links em Configurações → Lembretes automáticos.
+- **Lembretes:** `send-reminders.mjs` gera dois tipos de link `wa.me` nas janelas de 24 h e 2 h antes do jogo: **📢 grupo** (um aviso único com o link `VW-` da visão pública) e **🔔 jogador** (chat direto quando há telefone cadastrado). O aviso do grupo traz só data, link do grupo e a orientação para usar o link individual no privado — nunca tokens `VP-`, telefones, mensalidades ou PIX. Os telefones ficam em `contacts` no registro do servidor, **fora** do snapshot público — `get-view.mjs` e `get-player-view.mjs` nunca os devolvem. O agendamento diário em `netlify.toml` chama a função automaticamente; para chamadas manuais, configure `REMINDER_SECRET` e envie o header `x-reminder-secret`. O painel oferece os mesmos links em Configurações → Lembretes automáticos.
 - **Conciliação:** `reconcile-licenses.mjs` roda às 03h e compara todas as assinaturas com o Mercado Pago, corrigindo o acesso se um webhook tiver sido perdido. Chamada manual: configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - Sem Netlify (GitHub Pages) esses recursos **não funcionam**: dependem de funções e Netlify Blobs. Use sempre o domínio principal.
 
@@ -249,3 +249,13 @@ Depois de salvar, faça um novo deploy (ou dispare um **Trigger deploy**) para a
 - **Limite de requisições:** checkout, consulta de licença, respostas do grupo e publicação do retrato têm limite por IP (com `429` e `Retry-After`), evitando abuso sem atrapalhar o uso normal.
 - **Reconciliação diária:** `reconcile-licenses.mjs` consulta o Mercado Pago às 03h e corrige o status das assinaturas caso algum webhook não tenha chegado. Para disparar manualmente, configure `RECONCILE_SECRET` e envie `x-reconcile-secret`.
 - **Headers de segurança:** CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` e HSTS são aplicados pelo `netlify.toml` a todas as páginas.
+
+### Lembretes 100% automáticos no grupo (opcional — não implementado)
+
+O link `wa.me` abre o WhatsApp, mas sempre exige o toque final de envio. Para disparar sem intervenção é preciso da **WhatsApp Business Cloud API** com a **Groups API** da Meta (`recipient_type: group` e um `group_id`). Isso exige:
+
+- conta **Meta Business verificada** e número de telefone **dedicado** — não pode ser o WhatsApp pessoal do administrador;
+- token com permissão de mensagens e o grupo criado/gerenciado por esse número (o grupo atual precisaria ser migrado);
+- templates aprovados e cobrança por mensagem/conversa. A proposta em `docs/proposta-chatbot-whatsapp.md` estima **R$ 0–300/mês**.
+
+Até lá, o aviso **📢 Grupo** do painel resolve com um toque. **Não use bots de WhatsApp Web** (Evolution, wa-automation e similares): violam os termos do WhatsApp e podem banir o número.
