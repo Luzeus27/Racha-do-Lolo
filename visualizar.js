@@ -1,9 +1,14 @@
-/* Visão somente leitura do racha, alimentada por /.netlify/functions/get-view */
+/* Visão do grupo: aba Jogadores (check-in/pagamento) + visão somente leitura. */
 (function () {
   'use strict';
 
   const $ = (s) => document.querySelector(s);
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const IDENTITY_ERROR = 'Não foi possível confirmar este perfil. Confira o nome e os últimos 4 dígitos do telefone.';
+  const safePlayerUrl = (url) => {
+    const value = String(url || '');
+    return value.startsWith(location.origin + '/jogador.html?') ? value : '';
+  };
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
   const money = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num(v));
   const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
@@ -18,8 +23,36 @@
   };
 
   const token = String(new URLSearchParams(location.search).get('v') || '').trim().toUpperCase();
+  const PROFILE_KEY = 'racha-perfil-' + token;
+  const REMEMBER_MS = 180 * 24 * 60 * 60 * 1000;
   let current = null;
   let publicData = null;
+  let activeTab = 'players';
+  let playerQuery = '';
+  let selectedPlayer = null;
+  let identityBusy = false;
+
+  /* Depois da primeira identificação, o link individual fica lembrado neste
+     aparelho por 180 dias. O botão "Trocar jogador" apaga quando não é você. */
+  function savedProfile() {
+    try {
+      const row = JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null');
+      if (!row || !row.id || typeof row.url !== 'string' || !row.url) return null;
+      if (row.at && Date.now() - Number(row.at) > REMEMBER_MS) {
+        localStorage.removeItem(PROFILE_KEY);
+        return null;
+      }
+      return row;
+    } catch (e) { return null; }
+  }
+
+  function saveProfile(id, url) {
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify({ id, url, at: Date.now() })); } catch (e) { /* ignore */ }
+  }
+
+  function clearProfile() {
+    try { localStorage.removeItem(PROFILE_KEY); } catch (e) { /* ignore */ }
+  }
 
   function card(title, sub, body) {
     return `<div class="card"><div class="card-head"><div><strong>${esc(title)}</strong><div class="sub">${esc(sub)}</div></div></div><div class="card-body stack">${body}</div></div>`;
@@ -118,7 +151,8 @@
     const st = s.settings || {};
     const pts = {
       goal: num(st.ptsGoal), assist: num(st.ptsAssist), presence: num(st.ptsPresence),
-      fairPlay: num(st.ptsFairPlay), punctual: num(st.ptsPunctual), card: num(st.ptsCard)
+      fairPlay: num(st.ptsFairPlay), punctual: num(st.ptsPunctual), farrapou: num(st.ptsFarrapou),
+      atrasado: num(st.ptsAtrasado), desarme: num(st.ptsDesarme), card: num(st.ptsCard)
     };
     const totals = {};
     (s.scores || []).forEach((sc) => {
@@ -127,7 +161,8 @@
       t.goals += num(sc.goals);
       t.assists += num(sc.assists);
       t.points += num(sc.goals) * pts.goal + num(sc.assists) * pts.assist + num(sc.presence) * pts.presence +
-        num(sc.fairPlay) * pts.fairPlay + num(sc.punctual) * pts.punctual + num(sc.cards) * pts.card;
+        num(sc.fairPlay) * pts.fairPlay + num(sc.punctual) * pts.punctual - num(sc.farrapou) * pts.farrapou -
+        num(sc.atrasado) * pts.atrasado + num(sc.desarmes) * pts.destrarme + num(sc.cards) * pts.card;
     });
     const top = Object.keys(totals)
       .map((id) => ({ ...totals[id], player: byId[id] }))
@@ -135,20 +170,7 @@
       .sort((a, b) => b.points - a.points)
       .slice(0, 10);
     if (!top.length) return card('Ranking', 'Campeonato interno', '<p class="small muted">Ainda não há pontuação lançada.</p>');
-    const rated = {};
-    Object.values(publicData?.ratings || {}).forEach((byPlayer) => {
-      Object.entries(byPlayer || {}).forEach(([id, r]) => {
-        const n = num(r);
-        if (n < 1 || n > 5) return;
-        const row = rated[id] || (rated[id] = { sum: 0, n: 0 });
-        row.sum += n; row.n++;
-      });
-    });
-    const mvp = Object.keys(rated).map((id) => ({ id, avg: rated[id].sum / rated[id].n, n: rated[id].n }))
-      .sort((a, b) => b.avg - a.avg || b.n - a.n)[0];
-    const mvpLine = mvp && byId[mvp.id]
-      ? `<div class="person" style="border-bottom:1px solid var(--border-soft);padding-bottom:10px;margin-bottom:6px"><span>⭐</span><span style="flex:1"><strong>MVP do grupo</strong><div class="tiny muted">${esc(byId[mvp.id].name)} · ${mvp.n} avaliação(ões)</div></span><strong style="color:var(--accent)">${mvp.avg.toFixed(1)} / 5</strong></div>` : '';
-    return card('Ranking', 'Campeonato interno · pontos', mvpLine + top.map((x, i) => `
+    return card('Ranking', 'Campeonato interno · pontos', top.map((x, i) => `
       <div class="rank-row">
         <span class="rank-num">${i + 1}º</span>
         ${person(x.player, `<span class="tiny muted" style="text-align:right">${x.goals} gols · ${x.assists} assist.</span>`)}
@@ -168,19 +190,180 @@
       </div>${monthly ? `<div style="margin-top:12px">${monthly}</div>` : ''}`);
   }
 
+  function renderDonation(s) {
+    const p = s.settings || {};
+    if (p.donationEnabled === false) return '';
+    const code = String(p.donationPix || '');
+    if (!code.startsWith('000201')) return '';
+    const msg = p.donationText || 'Ajude a manter o racha: qualquer quantia é bem-vinda!';
+    return card('💚 Doação voluntária', esc(msg),
+      `<p class="small muted" style="margin:0">Se quiser ajudar com o aluguel, os brindes ou o churrasco, faça um PIX de qualquer valor. Não é obrigatório e não troca mensalidade nem diária.</p>
+       <textarea id="donation-code" readonly rows="3" style="width:100%;font-size:11px;resize:vertical;margin-top:10px">${esc(code)}</textarea>
+       <button type="button" class="btn btn-ghost btn-sm" data-act="copy-donation" style="margin-top:8px">📋 Copiar código PIX</button>
+       <div class="tiny muted" style="margin-top:6px">Abra o app do banco, escolha PIX copia e cola, cole o código e digite o valor que quiser doar.</div>`);
+  }
+
+  function renderProfile(s) {
+    const p = s.settings || {};
+    const name = p.rachaName || 'Racha do Loló';
+    const hasProfile = p.rachaLogo || p.rachaFounded || p.rachaLocation || p.rachaTime ||
+      p.rachaDuration || p.rachaRules || (p.rachaName && p.rachaName !== 'Racha do Loló');
+    if (!hasProfile) return '';
+    const logo = typeof p.rachaLogo === 'string' && p.rachaLogo.startsWith('data:image/')
+      ? `<img src="${esc(p.rachaLogo)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px">`
+      : `<span class="avatar-fallback" style="width:56px;height:56px;display:grid;place-items:center;border-radius:14px">${esc(initials(name))}</span>`;
+    const facts = [];
+    if (p.rachaFounded) facts.push('Desde ' + fmtDate(p.rachaFounded));
+    if (p.rachaLocation) facts.push(String(p.rachaLocation));
+    if (p.rachaTime) facts.push(String(p.rachaTime));
+    if (p.rachaDuration) facts.push(String(p.rachaDuration));
+    const rules = p.rachaRules ? `<details style="margin-top:10px"><summary class="small" style="cursor:pointer">📜 Regras do racha (estatuto)</summary><div class="small muted" style="white-space:pre-wrap;margin-top:8px">${esc(p.rachaRules)}</div></details>` : '';
+    return `<div class="card"><div class="card-body stack">
+      <div class="person">${logo}<span style="flex:1"><strong>${esc(name)}</strong>${facts.length ? `<div class="tiny muted">${facts.map(esc).join(' · ')}</div>` : ''}</span></div>
+      ${rules}
+    </div></div>`;
+  }
+
+  /* ---- Aba Jogadores: ponto de entrada para check-in e pagamento ---- */
+
+  function renderPlayers(s, byId) {
+    const list = (s.players || [])
+      .filter((p) => p && p.id && p.name && p.active !== false)
+      .slice()
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'));
+    let saved = savedProfile();
+    if (saved && !list.some((p) => p.id === saved.id)) { clearProfile(); saved = null; }
+    const rows = list.map((p) => {
+      const type = String(p.type || '').toLowerCase() === 'diarista' ? 'Diarista' : 'Mensalista';
+      const remembered = saved && saved.id === p.id
+        ? '<span class="pill" style="margin-left:6px">✅ Salvo aqui</span>' : '';
+      const action = saved && saved.id === p.id ? 'Abrir meu perfil →' : 'Acessar meu perfil →';
+      return `<div class="person player-row" data-name="${esc(String(p.name).toLocaleLowerCase('pt-BR'))}">
+        ${avatar(p)}
+        <span style="flex:1;min-width:0"><strong>${esc(p.name)}</strong>${remembered}${p.position ? `<span class="tiny muted"> · ${esc(p.position)}</span>` : ''}<div class="tiny muted">${type}</div></span>
+        <button type="button" class="btn btn-primary btn-sm" data-act="select-player" data-id="${esc(p.id)}">${action}</button>
+      </div>`;
+    }).join('');
+    const intro = saved
+      ? `<p class="small muted" style="margin:0 0 10px">Este aparelho já reconhece <strong>${esc((list.find((p) => p.id === saved.id) || {}).name || 'seu perfil')}</strong>. Toque em <strong>Abrir meu perfil</strong> para entrar direto.</p>
+         <div style="margin-bottom:12px"><button type="button" class="btn btn-ghost btn-sm" data-act="clear-profile">🔄 Não é você? Trocar jogador</button></div>`
+      : `<p class="small muted" style="margin:0 0 12px">
+        Encontre seu nome, clique em <strong>Acessar meu perfil</strong> e informe os <strong>últimos 4 números do seu telefone</strong> cadastrado.
+        Na sua área você faz o check-in e paga a mensalidade ou a diária, se estiver pendente. Depois disso, este aparelho lembra de você.
+      </p>`;
+    const body = `${intro}
+      <label class="field" style="margin-bottom:6px">
+        <input id="player-search" type="search" placeholder="🔎 Digite seu nome para encontrar..." value="${esc(playerQuery)}" autocomplete="off" />
+      </label>
+      <div id="player-list" class="stack">${rows || '<p class="small muted">Nenhum jogador cadastrado neste link.</p>'}</div>
+      <p id="player-empty" class="small muted" hidden>Nenhum jogador com esse nome.</p>
+      <p class="tiny muted" style="margin:12px 0 0">O telefone serve só para confirmar que o perfil é seu. Ele não aparece na lista e não é enviado ao grupo. Seus dados só podem ser alterados pelo administrador no app principal.</p>`;
+    return card('Jogadores', 'Check-in e pagamento · encontre seu perfil', body);
+  }
+
+  function renderTabs() {
+    return `<div class="view-tabs" role="tablist" aria-label="Seções do racha">
+      <button type="button" role="tab" aria-selected="${activeTab === 'players'}" class="view-tab ${activeTab === 'players' ? 'on' : ''}" data-act="tab" data-tab="players">👥 Jogadores</button>
+      <button type="button" role="tab" aria-selected="${activeTab === 'overview'}" class="view-tab ${activeTab === 'overview' ? 'on' : ''}" data-act="tab" data-tab="overview">📊 Visão geral</button>
+    </div>`;
+  }
+
+  function overviewHtml(s, byId) {
+    return [
+      renderProfile(s), renderLive(), renderNextGames(s, byId), renderConfirmations(s, byId),
+      renderDraw(s, byId), renderRanking(s, byId), renderFinance(s), renderDonation(s)
+    ].join('');
+  }
+
+  function applyPlayerFilter() {
+    const q = playerQuery.trim().toLocaleLowerCase('pt-BR');
+    const rows = Array.from(document.querySelectorAll('#player-list .player-row'));
+    let visible = 0;
+    rows.forEach((row) => {
+      const show = !q || String(row.dataset.name || '').indexOf(q) >= 0;
+      row.hidden = !show;
+      if (show) visible++;
+    });
+    const empty = $('#player-empty');
+    if (empty) empty.hidden = visible > 0;
+  }
+
   function render(updatedAt) {
     const s = current || {};
     const byId = {};
     (s.players || []).forEach((p) => { if (p && p.id) byId[p.id] = p; });
     $('#view-status').textContent = 'Atualizado em ' + fmtTime(updatedAt || s.publishedAt) + ' · atualização automática';
-    $('#view-root').innerHTML = [
-      renderLive(),
-      renderNextGames(s, byId),
-      renderConfirmations(s, byId),
-      renderDraw(s, byId),
-      renderRanking(s, byId),
-      renderFinance(s)
-    ].join('');
+    const content = activeTab === 'players' ? renderPlayers(s, byId) : overviewHtml(s, byId);
+    $('#view-root').innerHTML = renderTabs() + `<div class="mt">${content}</div>`;
+    applyPlayerFilter();
+  }
+
+  /* ---- Identificação do jogador ---- */
+
+  function openPlayerModal(p) {
+    selectedPlayer = p;
+    identityBusy = false;
+    const box = $('#view-modal');
+    box.innerHTML = `
+      <div class="view-modal-backdrop" data-act="close-player-modal"></div>
+      <div class="view-modal-card" role="dialog" aria-modal="true" aria-label="Acessar meu perfil">
+        <div class="view-modal-head">
+          <div class="person">${avatar(p)}<span style="flex:1"><strong>${esc(p.name)}</strong><div class="tiny muted">Confirme que este perfil é seu</div></span></div>
+          <button type="button" class="icon-btn" data-act="close-player-modal" aria-label="Fechar">✕</button>
+        </div>
+        <p class="small muted" style="margin:0 0 12px">Digite os <strong>últimos 4 números do telefone</strong> que você cadastrou no racha. Se preferir, digite o telefone inteiro.</p>
+        <label class="field">Últimos 4 dígitos
+          <input id="player-identity" type="text" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="Ex.: 4321" />
+        </label>
+        <p id="player-identity-error" class="tiny" style="color:var(--red);min-height:16px;margin:6px 0 0"></p>
+        <div class="row" style="gap:8px;justify-content:flex-end;margin-top:8px">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="close-player-modal">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-sm" data-act="confirm-player">Abrir meu perfil →</button>
+        </div>
+      </div>`;
+    box.hidden = false;
+    setTimeout(() => { const el = $('#player-identity'); if (el) el.focus(); }, 0);
+  }
+
+  function closePlayerModal() {
+    const box = $('#view-modal');
+    if (box) { box.hidden = true; box.innerHTML = ''; }
+    selectedPlayer = null;
+    identityBusy = false;
+  }
+
+  async function confirmPlayer() {
+    if (identityBusy || !selectedPlayer) return;
+    const input = $('#player-identity');
+    const err = $('#player-identity-error');
+    const value = String(input?.value || '').trim();
+    if (value.replace(/\D/g, '').length < 4) {
+      if (err) err.textContent = 'Digite pelo menos os últimos 4 números.';
+      return;
+    }
+    identityBusy = true;
+    const btn = $('[data-act="confirm-player"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Abrindo…'; }
+    if (err) err.textContent = '';
+    try {
+      const res = await fetch('/.netlify/functions/find-player', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ v: token, id: selectedPlayer.id, input: value })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok || !data.url) throw new Error(data.error || 'Não foi possível abrir seu perfil.');
+      const target = safePlayerUrl(data.url);
+      if (!target) throw new Error('Link de perfil inválido. Peça um novo link ao administrador.');
+      saveProfile(selectedPlayer.id, target);
+      window.location.href = target;
+    } catch (e) {
+      const raw = String(e && e.message || 'Não foi possível abrir seu perfil.');
+      const message = /jogador não encontrado|número incorreto/i.test(raw) ? IDENTITY_ERROR : raw;
+      if (err) err.textContent = message;
+      identityBusy = false;
+      if (btn) { btn.disabled = false; btn.textContent = 'Abrir meu perfil →'; }
+    }
   }
 
   async function load() {
@@ -188,6 +371,8 @@
       showError('Link incompleto. Peça o link novo ao administrador.');
       return;
     }
+    const searchFocused = document.activeElement && document.activeElement.id === 'player-search';
+    const cursor = searchFocused ? document.activeElement.selectionStart : null;
     try {
       const res = await fetch('/.netlify/functions/get-view?v=' + encodeURIComponent(token), { cache: 'no-store' });
       const data = await res.json().catch(() => ({}));
@@ -195,10 +380,75 @@
       current = data.snapshot || {};
       publicData = data;
       render(data.updatedAt);
+      if (searchFocused) {
+        const el = $('#player-search');
+        if (el) { el.focus(); try { el.setSelectionRange(cursor, cursor); } catch (e) { /* ignore */ } }
+      }
     } catch (e) {
       showError('Sem conexão. Tente recarregar em instantes.');
     }
   }
+
+  document.addEventListener('click', async (e) => {
+    const tab = e.target.closest('[data-act="tab"]');
+    if (tab) {
+      activeTab = tab.dataset.tab === 'overview' ? 'overview' : 'players';
+      render();
+      return;
+    }
+    if (e.target.closest('[data-act="clear-profile"]')) {
+      clearProfile();
+      render();
+      return;
+    }
+    const select = e.target.closest('[data-act="select-player"]');
+    if (select) {
+      const p = (current?.players || []).find((x) => x && x.id === select.dataset.id);
+      if (p) {
+        const saved = savedProfile();
+        if (saved && saved.id === p.id) {
+          const target = safePlayerUrl(saved.url);
+          if (target) { window.location.href = target; }
+          return;
+        }
+        openPlayerModal(p);
+      }
+      return;
+    }
+    if (e.target.closest('[data-act="close-player-modal"]')) { closePlayerModal(); return; }
+    if (e.target.closest('[data-act="confirm-player"]')) { await confirmPlayer(); return; }
+
+    const btn = e.target.closest('[data-act="copy-donation"]');
+    if (!btn) return;
+    const code = $('#donation-code');
+    if (!code || !code.value) return;
+    let ok = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(code.value); ok = true; }
+    } catch (err) { ok = false; }
+    if (!ok) {
+      const ta = $('#donation-code');
+      ta.select();
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    }
+    btn.textContent = ok ? '✅ Código copiado!' : '⚠️ Selecione e copie o código';
+    setTimeout(() => { btn.textContent = '📋 Copiar código PIX'; }, 2500);
+  });
+
+  document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'player-search') {
+      playerQuery = e.target.value || '';
+      applyPlayerFilter();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#view-modal').hidden) { closePlayerModal(); return; }
+    if (e.key === 'Enter' && e.target && e.target.id === 'player-identity') {
+      e.preventDefault();
+      confirmPlayer();
+    }
+  });
 
   load();
   setInterval(load, 15000);

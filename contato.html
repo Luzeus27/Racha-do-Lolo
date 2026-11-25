@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#35d07f" />
+  <title>Falar com o Administrador — Racha do Loló</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="dark">
+  <script>
+    try { document.body.dataset.theme = localStorage.getItem('racha-theme') || 'dark'; } catch (e) {}
+  </script>
+  <div class="legal-page">
+    <a class="legal-back" href="index.html">← Voltar ao aplicativo</a>
+    <div class="legal-card">
+      <h1>Falar com o Administrador</h1>
+      <p class="legal-updated">Escreva sua mensagem. Se precisar, anexe uma foto.</p>
+
+      <div class="legal-note">
+        <strong>Como funciona:</strong> preencha o texto, escolha uma imagem de até 7 MB e toque em <strong>Enviar mensagem</strong>. Texto e foto chegam ao e-mail do administrador. Se o envio pelo site não funcionar, use o link de e-mail no fim desta página e anexe a foto manualmente.
+      </div>
+
+      <form id="form-contato" name="contato-admin" method="POST" enctype="multipart/form-data" data-netlify="true" data-netlify-honeypot="bot-field" class="stack">
+        <input type="hidden" name="form-name" value="contato-admin" />
+        <p hidden><label>Não preencha este campo: <input name="bot-field" /></label></p>
+        <label>
+          Seu nome (opcional)
+          <input name="nome" type="text" maxlength="80" autocomplete="name" placeholder="Como devemos te chamar?" />
+        </label>
+        <label>
+          E-mail para resposta (opcional)
+          <input name="email" type="email" maxlength="120" autocomplete="email" placeholder="voce@exemplo.com" />
+        </label>
+        <label>
+          Mensagem
+          <textarea name="mensagem" required maxlength="3000" rows="7" placeholder="Conte o que aconteceu. Se for sobre a licença, informe a chave RL- e o e-mail da assinatura."></textarea>
+        </label>
+        <label>
+          Foto (opcional)
+          <input id="foto" name="foto" type="file" accept="image/*" />
+        </label>
+        <p id="arquivo-info" class="tiny muted">Nenhuma foto escolhida. Limite: 7 MB.</p>
+        <button class="btn btn-primary btn-block" type="submit">📨 Enviar mensagem</button>
+      </form>
+
+      <p id="status-contato" class="legal-note" role="status" aria-live="polite" hidden></p>
+
+      <p class="tiny muted">
+        Prefere escrever no seu próprio e-mail? <a id="mailto-contato" href="mailto:rachadololo@gmail.com?subject=Contato%20%E2%80%94%20Racha%20do%20Lol%C3%B3">Abra o e-mail</a>.
+        Nesse caso o navegador não consegue anexar a foto: escolha o arquivo no seu aplicativo de e-mail.
+      </p>
+      <p class="tiny muted"><a href="privacidade.html">Política de Privacidade</a> · <a href="termos.html">Termos de Uso</a></p>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const form = document.getElementById('form-contato');
+      const file = document.getElementById('foto');
+      const info = document.getElementById('arquivo-info');
+      const status = document.getElementById('status-contato');
+      const mailto = document.getElementById('mailto-contato');
+      const LIMITE = 7 * 1024 * 1024;
+      const EMAIL = 'rachadololo@gmail.com';
+
+      file.addEventListener('change', () => {
+        const escolhida = file.files && file.files[0];
+        if (!escolhida) {
+          info.textContent = 'Nenhuma foto escolhida. Limite: 7 MB.';
+          file.value = '';
+          return;
+        }
+        if (!/^image\//.test(escolhida.type)) {
+          info.textContent = 'Escolha uma imagem (JPG, PNG, etc.).';
+          file.value = '';
+          return;
+        }
+        if (escolhida.size > LIMITE) {
+          info.textContent = 'Essa foto passa de 7 MB. Escolha uma menor.';
+          file.value = '';
+          return;
+        }
+        info.textContent = 'Foto: ' + escolhida.name + ' (' + Math.ceil(escolhida.size / 1024) + ' KB)';
+      });
+
+      function atualizarMailto() {
+        const dados = new FormData(form);
+        const nome = String(dados.get('nome') || '').trim();
+        const email = String(dados.get('email') || '').trim();
+        const msg = String(dados.get('mensagem') || '').trim();
+        const corpo = [msg, nome ? '\n\nNome: ' + nome : '', email ? 'E-mail: ' + email : ''].join('\n').trim();
+        mailto.href = 'mailto:' + EMAIL
+          + '?subject=' + encodeURIComponent('Contato — Racha do Loló')
+          + '&body=' + encodeURIComponent(corpo);
+      }
+      form.addEventListener('input', atualizarMailto);
+      atualizarMailto();
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        status.hidden = true;
+        const mensagem = form.elements.mensagem.value.trim();
+        if (!mensagem) {
+          status.textContent = 'Escreva sua mensagem antes de enviar.';
+          status.hidden = false;
+          return;
+        }
+        if (!navigator.onLine) {
+          status.textContent = 'Sem internet agora. Abra o link de e-mail abaixo para enviar depois.';
+          status.hidden = false;
+          return;
+        }
+
+        const teveFoto = !!(file.files && file.files[0]);
+        const botao = form.querySelector('button[type="submit"]');
+        botao.disabled = true;
+        botao.textContent = 'Enviando...';
+        try {
+          /* Netlify Forms aceita arquivos quando o FormData é enviado sem
+             cabeçalho Content-Type: o navegador coloca a borda do multipart. */
+          const res = await fetch('/', { method: 'POST', body: new FormData(form) });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          form.reset();
+          info.textContent = 'Nenhuma foto escolhida. Limite: 7 MB.';
+          atualizarMailto();
+          status.textContent = 'Mensagem enviada! O administrador recebeu o seu texto'
+            + (teveFoto ? ' e a foto.' : '.');
+          status.hidden = false;
+        } catch (err) {
+          status.textContent = 'Não foi possível enviar pelo site. Use o link de e-mail abaixo e anexe a foto manualmente.';
+          status.hidden = false;
+        } finally {
+          botao.disabled = false;
+          botao.textContent = '📨 Enviar mensagem';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

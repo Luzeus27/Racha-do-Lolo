@@ -11,6 +11,23 @@ window.RachaLicense = (function () {
   const GRACE_MS = 3 * 24 * 60 * 60 * 1000;
   const CHECK_MS = 60 * 60 * 1000;
 
+  const DEFAULT_PLANS = {
+    monthly: { amount: 9.9, label: 'Básico mensal', tier: 'basic', cycle: 'monthly' },
+    yearly: { amount: 99, label: 'Básico anual', tier: 'basic', cycle: 'yearly' },
+    intermediate_monthly: { amount: 19.9, label: 'PRO mensal', tier: 'intermediate', cycle: 'monthly' },
+    intermediate_yearly: { amount: 199, label: 'PRO anual', tier: 'intermediate', cycle: 'yearly' }
+  };
+  const PLAN_TIERS = {
+    monthly: 'basic', yearly: 'basic',
+    intermediate_monthly: 'intermediate', intermediate_yearly: 'intermediate',
+    lifetime: 'intermediate'
+  };
+  const PLAN_LABELS = {
+    monthly: 'Básico mensal', yearly: 'Básico anual',
+    intermediate_monthly: 'PRO mensal', intermediate_yearly: 'PRO anual',
+    lifetime: 'Acesso vitalício'
+  };
+
   let listeners = [];
   let checking = false;
   let lastError = '';
@@ -92,13 +109,14 @@ window.RachaLicense = (function () {
       return { kind: 'active', label: 'Acesso vitalício', detail: 'Conta master — sem cobranças' };
     }
     if (known && known.valid && checkedRecently) {
-      return { kind: 'active', label: 'Assinatura ativa', detail: known.plan === 'yearly' ? 'Plano anual' : 'Plano mensal' };
+      return { kind: 'active', label: 'Assinatura ativa', detail: PLAN_LABELS[known.plan] || 'Plano mensal' };
     }
     if (known && known.valid && state.lastCheck && (now - state.lastCheck) < GRACE_MS) {
       return { kind: 'grace', label: 'Assinatura ativa', detail: 'Confirmando online...' };
     }
     if (now < trialEnd) {
-      return { kind: 'trial', label: 'Período gratuito', detail: daysLeft() + ' dia(s) restante(s)', daysLeft: daysLeft() };
+      const left = daysLeft();
+      return { kind: 'trial', label: 'Período gratuito', detail: `${left} ${left === 1 ? 'dia restante' : 'dias restantes'}`, daysLeft: left };
     }
     if (known && known.state === 'pending') {
       return { kind: 'pending', label: 'Pagamento em andamento', detail: 'Aguarde a confirmação do Mercado Pago' };
@@ -115,10 +133,36 @@ window.RachaLicense = (function () {
   }
 
   function plans() {
-    return state.plans || {
-      monthly: { amount: 9, label: 'Mensal' },
-      yearly: { amount: 90, label: 'Anual' }
-    };
+    const saved = state.plans && typeof state.plans === 'object' ? state.plans : {};
+    const out = {};
+    Object.entries(DEFAULT_PLANS).forEach(([id, def]) => {
+      const p = saved[id];
+      const amount = Number(p && p.amount);
+      out[id] = {
+        amount: Number.isFinite(amount) && amount > 0 ? amount : def.amount,
+        label: String((p && p.label) || def.label),
+        tier: (p && p.tier) || def.tier,
+        cycle: (p && p.cycle) || def.cycle
+      };
+    });
+    return out;
+  }
+
+  /* Nível de acesso. O teste grátis vê tudo; a conta master vitalícia do
+     proprietário equivale ao PRO (antigo Intermediário), sem cobrança. */
+  function tier() {
+    const s = status();
+    if (s.kind === 'trial') return 'intermediate';
+    const known = state.lastKnown;
+    if (!known || !known.valid) return 'basic';
+    return PLAN_TIERS[known.plan] || 'basic';
+  }
+
+  function can(feature) {
+    if (feature === 'intermediate') return tier() === 'intermediate';
+    /* O plano PRO é o antigo Intermediário; mantemos o alias para compatibilidade. */
+    if (feature === 'pro') return tier() === 'intermediate';
+    return true;
   }
 
   function price(value) {
@@ -254,6 +298,41 @@ window.RachaLicense = (function () {
     return await refresh();
   }
 
+  /* Upgrade Básico → PRO na mesma assinatura. Não cria outra chave e não
+     deixa duas cobranças ativas. Só aceita o mesmo ciclo (mensal/anual). */
+  async function changePlan(plan) {
+    if (!canUseServer() || !state.key) {
+      return { ok: false, error: 'Upgrade disponível apenas no site principal.' };
+    }
+    try {
+      const res = await fetch(endpoint('change-plan'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: state.key, deviceId: deviceId(), plan: String(plan || '') })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        return { ok: false, error: data.error || 'Não foi possível fazer o upgrade.' };
+      }
+      if (data.plan) {
+        state.lastKnown = {
+          ...(state.lastKnown || {}),
+          valid: true,
+          state: 'active',
+          plan: data.plan,
+          amount: data.amount || undefined
+        };
+        state.lastCheck = Date.now();
+        save();
+        emit();
+      }
+      await refresh();
+      return data;
+    } catch (err) {
+      return { ok: false, error: 'Sem conexão com o servidor. Tente novamente.' };
+    }
+  }
+
   /* Cancela a recorrência no Mercado Pago. O acesso segue até o fim do período pago. */
   async function cancel() {
     if (!canUseServer() || !state.key) {
@@ -321,8 +400,8 @@ window.RachaLicense = (function () {
   }
 
   return {
-    init, onChange, status, isLocked, refresh, loadPlans, beginCheckout, activate, cancel,
-    transfer, renderBanner, plans, price, daysLeft, deviceId,
+    init, onChange, status, isLocked, tier, can, refresh, loadPlans, beginCheckout, activate, changePlan, cancel,
+    transfer, renderBanner, plans, price, daysLeft, deviceId, PLAN_LABELS,
     get key() { return state.key; },
     get configured() { return state.configured; },
     get lastKnown() { return state.lastKnown; },

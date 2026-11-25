@@ -9,8 +9,21 @@ const VIEW_KEY = 'racha-view-token';
 const PLAYER_LINKS_KEY = 'racha-player-links';
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const MONTH_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-const EXPENSE_CATS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros'];
+const EXPENSE_CATS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Brindes', 'Outros'];
 const CASH_ROWS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros', 'Brindes', 'Benefícios'];
+/* Premiações: sempre 1º, 2º e 3º lugares, com brinde/custo por colocação. */
+const AWARD_PLACES = [
+  { place: 1, label: '1º lugar', ico: '🥇', weight: 0.5 },
+  { place: 2, label: '2º lugar', ico: '🥈', weight: 0.3 },
+  { place: 3, label: '3º lugar', ico: '🥉', weight: 0.2 }
+];
+
+/* Texto padrão do convite enviado ao grupo. O administrador pode editar em
+   Configurações → Link para o grupo. {racha} vira o nome cadastrado em
+   Perfil do racha; {link} marca onde o endereço aparece. */
+const GROUP_ACCESS_MESSAGE = '🏽 {racha}\nCheck-in Liberado! Acesse o link, procure o seu perfil e escolha a forma de pagamento para garantir a sua vaga.\n{link}';
+/* Quem já tinha salvo o texto antigo recebe o novo padrão automaticamente. */
+const LEGACY_GROUP_ACCESS_MESSAGE = '🏽 Racha do Loló\nCheck-in Liberado! Acesse o link, procure o seu perfil e escolha a forma de pagamento para garantir a sua vaga.\n{link}';
 
 const PAGES = {
   dashboard:  { title: 'Visão geral',      sub: 'Acompanhe o caixa, os jogos e o desempenho do racha', ico: '🏠' },
@@ -45,8 +58,9 @@ const WRITE_ACTS = new Set([
   'pay-all', 'clear-month', 'generate-games', 'delete-day', 'quick-expense',
   'delete-expense', 'edit-benefit', 'delete-benefit', 'apply-sim',
   'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv',
-  'toggle-confirm', 'confirm-all', 'confirm-none', 'do-draw', 'clear-draw-history',
+  'toggle-confirm', 'confirm-all', 'confirm-none', 'remove-arrival', 'undo-arrival', 'clear-arrivals', 'move-arrival', 'do-draw', 'clear-draw-history',
   'apply-group-confirmations', 'save-manual-draw',
+  'connect-mp',
   'live-start', 'live-goal', 'live-assist', 'live-card', 'live-undo', 'live-stop'
 ]);
 
@@ -58,7 +72,7 @@ function licenseLocked() {
    e o site principal (o espelho do GitHub não tem as funções). */
 function viewBlockReason() {
   const L = window.RachaLicense;
-  if (!L || !L.canUseServer()) return 'Disponível no site principal: o espelho do GitHub não publica links.';
+  if (!L || !L.canUseServer()) return 'Disponível apenas no site principal. Aqui no teste local (ou no espelho do GitHub) não é possível gerar links.';
   if (!L.key) return 'Disponível para assinantes: assine para criar o link do grupo.';
   if (L.status().kind === 'pending') return 'Aguardando a confirmação do pagamento para liberar o link.';
   if (licenseLocked()) return 'Renove a assinatura para voltar a atualizar o link.';
@@ -71,6 +85,18 @@ function warnLocked() {
   navigate('subscription');
 }
 
+/* Porta de entrada para os recursos do PRO (antigo Intermediário). O teste
+   grátis e a conta de administrador também passam aqui; o Básico cai na
+   tela de assinatura. */
+function licenseTier() { return window.RachaLicense?.tier() || 'basic'; }
+function hasIntermediate() { return !!(window.RachaLicense?.can('intermediate')); }
+function requireIntermediate(feature) {
+  if (hasIntermediate()) return true;
+  toast('Esse recurso é do Plano PRO: ' + (feature || 'assine para liberar.'), 'err');
+  navigate('subscription');
+  return false;
+}
+
 /* ------------------------------------------------------------
    Utilitários
    ------------------------------------------------------------ */
@@ -78,8 +104,23 @@ const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const safeImageUrl = (v) => {
+  if (typeof v !== 'string') return '';
+  if (/^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+$/i.test(v)) return v;
+  if (/^https?:\/\/[^\s<>"'()\\]+$/i.test(v)) return v;
+  return '';
+};
 const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 const money = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(num(v));
+/* O cartão cobra do jogador o valor líquido + taxa. O caixa do racha usa só o
+   líquido: se alguém copiar o valor bruto da tela do jogador, o excesso não
+   entra como receita. Descontos (valor menor) continuam valendo. */
+const cashNet = (amount, expected) => {
+  const wanted = num(expected);
+  const typed = num(amount);
+  return wanted > 0 && typed > wanted + 0.01 ? wanted : typed;
+};
+const isMpFeeDescription = (text) => /mercado\s*pago|taxa|tarifa/i.test(String(text || ''));
 const compactMoney = (v) => { const n = num(v); return (n < 0 ? '-' : '') + 'R$ ' + Math.abs(n).toLocaleString('pt-BR', { maximumFractionDigits: 0 }); };
 const monthName = (m) => MONTH_FULL[num(m) - 1] || '—';
 const shortMonth = (m) => MONTHS[num(m) - 1] || '—';
@@ -90,6 +131,14 @@ const fmtDate = (iso) => {
   return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
 };
 const todayISO = () => { const d = new Date(); return isoDate(d.getFullYear(), d.getMonth() + 1, d.getDate()); };
+/* Data sugerida nos lançamentos: sempre dentro do ano que o app está controlando. */
+const controlDateISO = () => {
+  const d = new Date();
+  const y = year();
+  const m = Math.min(12, Math.max(1, currentMonth() || d.getMonth() + 1));
+  const lastDay = new Date(y, m, 0).getDate();
+  return isoDate(y, m, Math.min(d.getDate(), lastDay));
+};
 const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase();
 const sum = (arr, fn) => arr.reduce((a, x) => a + num(fn(x)), 0);
 
@@ -117,8 +166,9 @@ async function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
   } catch (e) { /* fallback abaixo */ }
   const ta = document.createElement('textarea');
-  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-  document.body.appendChild(ta); ta.select();
+  ta.value = text; ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
   let ok = false;
   try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
   ta.remove();
@@ -180,9 +230,9 @@ function crc16(str) {
   }
   return crc;
 }
-function pixCode(amount, txid) {
-  const s = settings();
-  const key = String(s.pixKey || '').trim();
+/* BR Code genérico. Sem `amount`, o banco deixa o valor livre (doação). */
+function brPixCode(key, name, city, txid, amount) {
+  key = String(key || '').trim();
   if (!key) return '';
   const norm = (v, max) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, max);
   const payload =
@@ -190,14 +240,31 @@ function pixCode(amount, txid) {
     emvField('26', emvField('00', 'BR.GOV.BCB.PIX') + emvField('01', key)) +
     emvField('52', '0000') +
     emvField('53', '986') +
-    emvField('54', Number(amount).toFixed(2)) +
+    (amount === undefined || amount === null ? '' : emvField('54', Number(amount).toFixed(2))) +
     emvField('58', 'BR') +
-    emvField('59', norm(s.pixMerchant || 'RACHA DO LOLO', 25)) +
-    emvField('60', norm(s.pixCity || 'SAO PAULO', 15)) +
+    emvField('59', norm(name || 'RACHA DO LOLO', 25)) +
+    emvField('60', norm(city || 'SAO PAULO', 15)) +
     emvField('62', emvField('05', String(txid || 'RL').slice(0, 25))) +
     '6304';
-  const crc = crc16(payload).toString(16).toUpperCase().padStart(4, '0');
-  return payload + crc;
+  return payload + crc16(payload).toString(16).toUpperCase().padStart(4, '0');
+}
+
+/* Doação para o racha: chave configurada pelo administrador. */
+function donationPixCode() {
+  const s = settings();
+  return brPixCode(s.pixKey, s.pixMerchant, s.pixCity, 'DOACAO');
+}
+
+/* Doação para o desenvolvedor: chave fixa, igual para todas as instalações. */
+function developerDonationPixCode() {
+  const d = window.RachaDevDonation || {};
+  if (d.enabled === false) return '';
+  return brPixCode(d.key, d.name || 'DESENVOLVEDOR', d.city || 'SAO PAULO', 'DEVDOACAO');
+}
+
+function pixCode(amount, txid) {
+  const s = settings();
+  return brPixCode(s.pixKey, s.pixMerchant, s.pixCity, txid || 'RL', amount);
 }
 function txidFor(playerId, month) { return 'RL' + year() + String(month).padStart(2, '0') + String(playerId).slice(-4).toUpperCase(); }
 function paymentLink(playerId, month, amount) {
@@ -460,10 +527,16 @@ function defaultSettings() {
     goalkeepers: 2, goalkeeperFee: 30, gamesPerMonth: 4,
     bbqEnabled: true, bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
+    ptsFarrapou: 3, ptsDesarme: 1, ptsAtrasado: 2,
     dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
-    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: '',
-    reminderGroup: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
-    reminderPlayer: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
+    pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: '', paymentMode: 'manual',
+    donationEnabled: true, donationText: 'Ajude a manter o racha: qualquer quantia é bem-vinda!',
+    rachaName: 'Racha do Loló', rachaFounded: '', rachaLocation: '', rachaTime: '',
+    rachaDuration: '', rachaRules: '',
+    dailyPaymentEnabled: true,
+    groupAccessMessage: GROUP_ACCESS_MESSAGE,
+    reminderGroup: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
+    reminderPlayer: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}'
   };
 }
 
@@ -472,35 +545,59 @@ function emptyState() {
     version: 1,
     settings: defaultSettings(),
     players: [], payments: [], dayEntries: [], expenses: [], games: [],
-    benefits: [], scores: [], awards: [], confirmations: {}, drawHistory: [], audit: [], goals: [], bank: []
+    benefits: [], scores: [], awards: [], confirmations: {}, arrivals: {}, drawHistory: [], audit: [], goals: [], bank: []
   };
 }
 
 function makeDemoState() {
   const s = emptyState();
   const p = (id, name, type, position, phone, note, attrs = {}) => ({ id, name, type, position, phone, note, active: true, demo: true, ...attrs });
-  s.players = [
-    p('p1', 'Rafael Souza', 'Mensalista', 'Linha', '11999990001', 'Capitão', { age: 34, height: 178, weight: 78, strength: 80, speed: 82 }),
-    p('p2', 'Diego Alves', 'Mensalista', 'Meia', '11999990002', '', { age: 27, height: 172, weight: 70, strength: 72, speed: 88 }),
-    p('p3', 'Bruno Lima', 'Mensalista', 'Zaga', '11999990003', '', { age: 31, height: 185, weight: 88, strength: 86, speed: 65 }),
-    p('p4', 'Lucas Prado', 'Mensalista', 'Ataque', '11999990004', '', { age: 24, height: 176, weight: 72, strength: 74, speed: 92 }),
-    p('p5', 'Thiago Nunes', 'Mensalista', 'Linha', '11999990005', '', { age: 29, height: 174, weight: 74, strength: 70, speed: 76 }),
-    p('p6', 'Marcos Gomes', 'Mensalista', 'Goleiro', '11999990006', 'Titular', { age: 38, height: 188, weight: 90, strength: 78, speed: 60 }),
-    p('p7', 'Felipe Rocha', 'Mensalista', 'Linha', '11999990007', '', { age: 33, height: 180, weight: 82, strength: 76, speed: 70 }),
-    p('p8', 'Gustavo Melo', 'Mensalista', 'Meia', '11999990008', '', { age: 26, height: 170, weight: 68, strength: 68, speed: 84 }),
-    p('p9', 'Pedro Santos', 'Diarista', 'Ataque', '11988880001', '', { age: 22, height: 177, weight: 71, strength: 76, speed: 90 }),
-    p('p10', 'João Pereira', 'Diarista', 'Linha', '11988880002', '', { age: 30, height: 175, weight: 76, strength: 72, speed: 74 }),
-    p('p11', 'Neto Costa', 'Diarista', 'Zaga', '11988880003', '', { age: 35, height: 183, weight: 86, strength: 84, speed: 62 }),
-    p('p12', 'Caio Ribeiro', 'Diarista', 'Meia', '11988880004', '', { age: 25, height: 171, weight: 69, strength: 70, speed: 86 }),
-    p('p13', 'Beto Martins', 'Diarista', 'Linha', '11988880005', '', { age: 41, height: 179, weight: 84, strength: 74, speed: 58 }),
-    p('p14', 'Igor Freitas', 'Diarista', 'Goleiro', '11988880006', '', { age: 28, height: 190, weight: 92, strength: 80, speed: 64 })
+  /* 18 mensalistas (meta) + 4 diaristas, todos os meses de 2027 quitados. */
+  const memberData = [
+    ['Rafael Souza', 'Linha', 'Capitão', 34, 178, 78, 80, 82],
+    ['Diego Alves', 'Meia', '', 27, 172, 70, 72, 88],
+    ['Bruno Lima', 'Zaga', '', 31, 185, 88, 86, 65],
+    ['Lucas Prado', 'Ataque', '', 24, 176, 72, 74, 92],
+    ['Thiago Nunes', 'Linha', '', 29, 174, 74, 70, 76],
+    ['Marcos Gomes', 'Goleiro', 'Titular', 38, 188, 90, 78, 60],
+    ['Felipe Rocha', 'Linha', '', 33, 180, 82, 76, 70],
+    ['Gustavo Melo', 'Meia', '', 26, 170, 68, 68, 84],
+    ['André Costa', 'Zaga', '', 30, 182, 80, 82, 68],
+    ['Vinícius Barros', 'Ataque', '', 25, 175, 71, 73, 89],
+    ['Rodrigo Pinto', 'Linha', '', 28, 179, 77, 75, 74],
+    ['Leandro Dias', 'Meia', '', 32, 173, 73, 71, 80],
+    ['Fernando Luz', 'Zaga', '', 36, 184, 85, 84, 62],
+    ['Otávio Reis', 'Linha', '', 23, 177, 70, 69, 87],
+    ['Samuel Braga', 'Goleiro', 'Reserva', 29, 187, 86, 77, 63],
+    ['Tiago Moraes', 'Ataque', '', 27, 174, 72, 75, 90],
+    ['Wesley Andrade', 'Meia', '', 26, 171, 69, 70, 85],
+    ['Douglas Vieira', 'Zaga', '', 35, 183, 84, 83, 64]
   ];
+  const dailyData = [
+    ['Pedro Santos', 'Ataque', 22, 177, 71, 76, 90],
+    ['João Pereira', 'Linha', 30, 175, 76, 72, 74],
+    ['Neto Costa', 'Zaga', 35, 183, 86, 84, 62],
+    ['Caio Ribeiro', 'Meia', 25, 171, 69, 70, 86],
+    /* Beto e Igor completam os 6 diaristas do financeiro; os 4 abaixo são só perfil. */
+    ['Beto Martins', 'Linha', 41, 179, 84, 74, 58],
+    ['Igor Freitas', 'Goleiro', 28, 190, 92, 80, 64],
+    ['Rafael Nogueira', 'Ataque', 29, 178, 75, 77, 86, true],
+    ['Daniel Prado', 'Meia', 27, 172, 70, 71, 83, true],
+    ['Eduardo Lima', 'Zaga', 33, 181, 82, 81, 66, true],
+    ['Murilo Alves', 'Linha', 24, 176, 73, 72, 88, true]
+  ];
+  s.players = memberData.map((r, i) => p('p' + (i + 1), r[0], 'Mensalista', r[1],
+    '1199999' + String(i + 1).padStart(4, '0'), r[2],
+    { age: r[3], height: r[4], weight: r[5], strength: r[6], speed: r[7] }))
+    .concat(dailyData.map((r, i) => p('p' + (19 + i), r[0], 'Diarista', r[1],
+      '1198888' + String(i + 1).padStart(4, '0'), '',
+      { age: r[2], height: r[3], weight: r[4], strength: r[5], speed: r[6], noFinance: !!r[7] })));
   const members = s.players.filter(x => x.type === 'Mensalista');
-  const dailies = s.players.filter(x => x.type === 'Diarista');
+  const dailies = s.players.filter(x => x.type === 'Diarista' && !x.noFinance);
 
-  for (let m = 1; m <= 3; m++) {
-    members.forEach((pl, i) => {
-      if ((i + m) % 5 !== 0) s.payments.push({ id: uid(), playerId: pl.id, month: m, year: 2027, amount: 60, paid: true, demo: true });
+  for (let m = 1; m <= 12; m++) {
+    members.forEach((pl) => {
+      s.payments.push({ id: uid(), playerId: pl.id, month: m, year: 2027, amount: s.settings.monthlyFee, paid: true, demo: true });
     });
     const days = [];
     let d = 1 + ((4 - new Date(2027, m - 1, 1).getDay() + 7) % 7);
@@ -509,13 +606,12 @@ function makeDemoState() {
       const date = isoDate(2027, m, day);
       const gid = 'g' + m + '-' + day;
       s.games.push({ id: gid, date, month: m, year: 2027, done: true, demo: true });
-      dailies.forEach((dp, i) => {
-        s.dayEntries.push({ id: uid(), gameId: gid, date, month: m, year: 2027, playerId: dp.id, amount: 20, demo: true });
+      dailies.forEach((dp) => {
+        s.dayEntries.push({ id: uid(), gameId: gid, date, month: m, year: 2027, playerId: dp.id, amount: s.settings.dayFee, demo: true });
       });
     });
-    s.expenses.push({ id: uid(), date: isoDate(2027, m, 5), month: m, year: 2027, category: 'Quadra', description: `Aluguel de ${monthName(m)}`, amount: 825, demo: true });
-    s.expenses.push({ id: uid(), date: isoDate(2027, m, 28), month: m, year: 2027, category: 'Goleiros', description: '2 goleiros × 4 jogos', amount: 240, demo: true });
-    s.awards.push({ id: uid(), month: m, year: 2027, gift: m === 3 ? 'Churrasco de encerramento' : 'Brinde do mês', cost: 100, delivered: m < 3, demo: true });
+    s.expenses.push({ id: uid(), date: isoDate(2027, m, 5), month: m, year: 2027, category: 'Quadra', description: `Aluguel de ${monthName(m)}`, amount: s.settings.fieldRent, fixed: 'fieldRent', demo: true });
+    s.expenses.push({ id: uid(), date: isoDate(2027, m, 28), month: m, year: 2027, category: 'Goleiros', description: `2 goleiros × ${days.length} jogos`, amount: 240, fixed: 'goalkeepers', demo: true });
     s.players.forEach((pl, i) => {
       s.scores.push({
         id: uid(), month: m, year: 2027, playerId: pl.id,
@@ -525,8 +621,25 @@ function makeDemoState() {
       });
     });
   }
+  for (let m = 1; m <= 12; m++) {
+    const tops = rankScores(s.scores.filter(sc => sc.year === 2027 && sc.month === m), s.settings).slice(0, 3);
+    const baseGift = m === 12 ? 'Churrasco de encerramento' : (m % 3 === 0 ? 'Churrasco do trimestre' : 'Brinde do mês');
+    s.awards.push({
+      id: uid(), month: m, year: 2027, demo: true, fixed: 'giftsReserve',
+      places: AWARD_PLACES.map((meta, i) => ({
+        place: meta.place,
+        playerId: tops[i]?.playerId || '',
+        points: num(tops[i]?.points),
+        gift: i === 0 ? baseGift : `Brinde ${meta.label}`,
+        cost: Math.round(num(s.settings.giftsReserve) * meta.weight * 100) / 100,
+        delivered: m < 12
+      }))
+    });
+  }
   s.expenses.push({ id: uid(), date: '2027-02-16', month: 2, year: 2027, category: 'Material', description: 'Bola e coletes', amount: 120, demo: true });
-  s.expenses.push({ id: uid(), date: '2027-03-20', month: 3, year: 2027, category: 'Churrasco', description: 'Churrasco do trimestre', amount: 720, demo: true });
+  [3, 6, 12].forEach(m => {
+    s.expenses.push({ id: uid(), date: isoDate(2027, m, 20), month: m, year: 2027, category: 'Churrasco', description: `Churrasco do racha — ${monthName(m)}`, amount: s.settings.bbqCostPerPerson * s.settings.bbqPeople, demo: true });
+  });
   s.benefits.push({ id: uid(), date: '2027-01-14', month: 1, year: 2027, playerId: 'p1', type: 'Camisa/colete', amount: 45, fromCash: true, note: 'Primeiro uniforme', demo: true });
   return s;
 }
@@ -544,16 +657,142 @@ function normalizeState() {
   if (!state.settings) state.settings = defaultSettings();
   const defaults = defaultSettings();
   Object.keys(defaults).forEach(k => { if (state.settings[k] === undefined || state.settings[k] === null || state.settings[k] === '') state.settings[k] = defaults[k]; });
+  if (state.settings.groupAccessMessage === LEGACY_GROUP_ACCESS_MESSAGE) state.settings.groupAccessMessage = GROUP_ACCESS_MESSAGE;
   ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
+  if (!state.arrivals || typeof state.arrivals !== 'object' || Array.isArray(state.arrivals)) state.arrivals = {};
+  Object.keys(state.arrivals).forEach(k => {
+    if (!Array.isArray(state.arrivals[k])) { delete state.arrivals[k]; return; }
+    state.arrivals[k] = state.arrivals[k].map(x => typeof x === 'string' ? { id: x, at: '' } : x)
+      .filter(x => x && x.id)
+      .map(x => ({ id: String(x.id), at: String(x.at || '') }));
+  });
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
   if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
   if (typeof state.settings.bbqEnabled !== 'boolean') state.settings.bbqEnabled = true;
   if (!Array.isArray(state.audit)) state.audit = [];
   if (!Array.isArray(state.goals)) state.goals = [];
   if (!Array.isArray(state.bank)) state.bank = [];
+
+  /* Migra premiações antigas (brinde único) para 1º/2º/3º lugar. */
+  state.awards.forEach(a => {
+    if (Array.isArray(a.places)) return;
+    const tops = topWinners(num(a.month), num(a.year) || year());
+    a.places = AWARD_PLACES.map((meta, i) => ({
+      place: meta.place,
+      playerId: tops[i]?.playerId || '',
+      points: num(tops[i]?.points),
+      gift: i === 0 ? String(a.gift || '') : '',
+      cost: i === 0 ? num(a.cost) : 0,
+      delivered: i === 0 ? !!a.delivered : false
+    }));
+    delete a.gift; delete a.cost; delete a.delivered;
+  });
+}
+
+/* Despesas fixas controladas pelas premissas.
+   Ao abrir o app ou salvar Configurações, realinha lançamentos e metas. */
+function syncFixedExpenses() {
+  const s = settings();
+  const y = year();
+  const games = Math.max(0, num(s.gamesPerMonth));
+  const rent = num(s.fieldRent);
+  const keepers = num(s.goalkeepers) * num(s.goalkeeperFee) * games;
+  const referee = num(s.refereeFee) * games;
+  const bbqUnit = num(s.bbqCostPerPerson) * num(s.bbqPeople);
+  const bbqCount = Math.min(12, Math.max(0, Math.round(num(s.bbqPerYear))));
+  const bbqPool = [3, 6, 12, 9, 2, 5, 8, 11, 1, 4, 7, 10];
+  const bbqMonths = bbqPool.slice(0, bbqCount);
+
+  state.expenses.forEach((e) => {
+    if (!e || typeof e !== 'object') return;
+    const desc = String(e.description || '');
+    if (e.category === 'Quadra' && (e.fixed === 'fieldRent' || e.demo || /^Aluguel de /i.test(desc))) {
+      e.amount = rent;
+      e.fixed = 'fieldRent';
+      e.description = `Aluguel de ${monthName(e.month)}`;
+    }
+    if (e.category === 'Goleiros' && (e.fixed === 'goalkeepers' || e.demo || /goleiros/i.test(desc))) {
+      e.amount = keepers;
+      e.fixed = 'goalkeepers';
+      e.description = `${num(s.goalkeepers)} goleiros × ${games} jogos`;
+    }
+  });
+
+  /* Cria/atualiza uma série mensal sem mexer em lançamentos manuais. */
+  function syncSeries(category, key, amount, makeDescription, months, enabled) {
+    let rows = state.expenses.filter(e => e.category === category && e.fixed === key);
+    if (!rows.length) {
+      const adopt = state.expenses.filter(e => e.category === category && (e.demo || e.seriesId));
+      if (adopt.length && adopt.length <= months.length) rows = adopt;
+      else if (!adopt.length && enabled && amount > 0) {
+        rows = months.map(mo => {
+          const row = { id: uid(), date: isoDate(y, mo, 20), month: mo, year: y, category, amount: 0, description: '' };
+          state.expenses.push(row);
+          return row;
+        });
+      }
+    }
+    if (!rows.length) return;
+    if (!enabled || amount <= 0) {
+      state.expenses = state.expenses.filter(e => e.fixed !== key);
+      return;
+    }
+    /* Se a premissa pedir mais churrascos do que os lançamentos atuais,
+       completa a série com os meses ainda não usados. */
+    if (rows.length < months.length) {
+      const used = new Set(rows.map(e => num(e.month)));
+      for (const mo of months) {
+        if (rows.length >= months.length) break;
+        const m = num(mo);
+        if (used.has(m)) continue;
+        const row = { id: uid(), date: isoDate(y, m, 20), month: m, year: y, category, amount: 0, description: '' };
+        state.expenses.push(row);
+        rows.push(row);
+        used.add(m);
+      }
+    }
+    rows.forEach((e, i) => {
+      const mo = num(months[i % months.length]) || num(e.month) || 1;
+      e.fixed = key;
+      e.year = y;
+      e.month = mo;
+      e.date = isoDate(y, mo, 20);
+      e.amount = amount;
+      e.description = makeDescription(mo);
+    });
+    if (rows.length > months.length) {
+      const keep = new Set(rows.slice(0, months.length).map(e => e.id));
+      state.expenses = state.expenses.filter(e => e.fixed !== key || keep.has(e.id));
+    }
+  }
+
+  syncSeries('Arbitragem', 'refereeFee', referee,
+    () => `${games} jogos × ${money(s.refereeFee)} de arbitragem`,
+    Array.from({ length: 12 }, (_, i) => i + 1), num(s.refereeFee) > 0);
+  syncSeries('Churrasco', 'bbq', bbqUnit,
+    (mo) => `Churrasco do racha — ${monthName(mo)}`,
+    bbqMonths, bbqCount > 0 && bbqUnit > 0);
+
+  state.awards.forEach(a => {
+    if (!a || num(a.year) !== y) return;
+    if (a.fixed === 'giftsReserve' || a.demo) {
+      const tops = topWinners(num(a.month), y);
+      const old = awardPlaces(a);
+      a.places = AWARD_PLACES.map((meta, i) => ({
+        place: meta.place,
+        playerId: tops[i]?.playerId || '',
+        points: num(tops[i]?.points),
+        gift: old[i].gift,
+        cost: Math.round(num(s.giftsReserve) * meta.weight * 100) / 100,
+        delivered: old[i].delivered
+      }));
+      a.fixed = 'giftsReserve';
+    }
+  });
 }
 normalizeState();
+syncFixedExpenses();
 
 /* ------------------------------------------------------------------
    Fotos em IndexedDB + cópias automáticas + trilha de auditoria.
@@ -562,6 +801,7 @@ normalizeState();
    ------------------------------------------------------------------ */
 const PHOTO_DB = 'racha-fotos';
 const PHOTO_STORE = 'fotos';
+const RACHA_LOGO_ID = '__racha_logo__';
 const BACKUP_KEY = 'racha-backups';
 const BACKUP_MAX = 5;
 const BACKUP_INTERVAL = 10 * 60 * 1000;
@@ -629,8 +869,11 @@ function photoGetAll() {
 /* Estado gravado no localStorage: sem fotos quando o IDB está disponível. */
 function persistedState() {
   if (!photoSupported) return state;
+  const settings = { ...state.settings };
+  delete settings.rachaLogo;
   return {
     ...state,
+    settings,
     players: (state.players || []).map((p) => {
       const copy = { ...p };
       delete copy.photo;
@@ -645,9 +888,35 @@ async function storePhoto(id, data) {
   return ok !== null;
 }
 
+/* Reduz a logo antes de guardar: evita estourar o limite do link público. */
+function readLogoImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\/(png|jpeg|webp)$/i.test(file.type)) { reject(new Error('Escolha uma imagem JPG, PNG ou WebP.')); return; }
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('Não consegui ler a imagem.'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Imagem inválida.'));
+      img.onload = () => {
+        const scale = Math.min(1, 512 / Math.max(img.width, img.height) || 1);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        let out = canvas.toDataURL('image/jpeg', 0.8);
+        if (out.length > 150000) out = canvas.toDataURL('image/jpeg', 0.6);
+        resolve(out);
+      };
+      img.src = String(fr.result);
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
 async function persistPhotosFromState() {
   if (!photoSupported) return;
   const ids = new Set((state.players || []).map(p => p.id));
+  ids.add(RACHA_LOGO_ID);
   const stored = await photoGetAll();
   Object.keys(stored).forEach(id => { if (!ids.has(id)) photoDel(id); });
   for (const p of (state.players || [])) {
@@ -656,6 +925,11 @@ async function persistPhotosFromState() {
     } else if (!stored[p.id]) {
       delete p.photo;
     }
+  }
+  if (typeof state.settings?.rachaLogo === 'string' && state.settings.rachaLogo.length > 32) {
+    await storePhoto(RACHA_LOGO_ID, state.settings.rachaLogo);
+  } else if (!stored[RACHA_LOGO_ID]) {
+    delete state.settings.rachaLogo;
   }
 }
 
@@ -671,7 +945,9 @@ async function hydratePhotos() {
       if (await storePhoto(p.id, p.photo)) migrated = true;
     }
   }
+  if (stored[RACHA_LOGO_ID]) state.settings.rachaLogo = stored[RACHA_LOGO_ID];
   const ids = new Set((state.players || []).map(p => p.id));
+  ids.add(RACHA_LOGO_ID);
   Object.keys(stored).forEach(id => { if (!ids.has(id)) photoDel(id); });
   if (migrated) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState())); } catch (e) { /* ignore */ }
@@ -727,6 +1003,8 @@ let liveSignature = '';
 let viewData = null;
 let viewTimer = null;
 let viewPublishing = false;
+let dailySummary = null;
+let mpStatus = { loading: true, connected: false, configured: false };
 
 /* Publicação automática: cada alteração salva agenda um envio do retrato ao grupo. */
 function scheduleViewPublish() {
@@ -778,7 +1056,24 @@ function publicSnapshot() {
       goalkeepers: num(settings().goalkeepers), gamesPerMonth: num(settings().gamesPerMonth),
       ptsGoal: num(settings().ptsGoal), ptsAssist: num(settings().ptsAssist), ptsPresence: num(settings().ptsPresence),
       ptsFairPlay: num(settings().ptsFairPlay), ptsPunctual: num(settings().ptsPunctual), ptsCard: num(settings().ptsCard),
-      plannedMembers: num(settings().plannedMembers), maxPlayers: num(settings().maxPlayers)
+      ptsFarrapou: num(settings().ptsFarrapou), ptsDesarme: num(settings().ptsDesarme),
+      ptsAtrasado: num(settings().ptsAtrasado),
+      plannedMembers: num(settings().plannedMembers), maxPlayers: num(settings().maxPlayers),
+      dailyPaymentEnabled: settings().dailyPaymentEnabled !== false,
+      paymentMode: settings().paymentMode === 'mp' ? 'mp' : 'manual',
+      donationEnabled: settings().donationEnabled !== false,
+      donationText: String(settings().donationText || '').slice(0, 160),
+      donationPix: donationPixCode(),
+      pixKey: String(settings().pixKey || '').slice(0, 200),
+      pixMerchant: String(settings().pixMerchant || '').slice(0, 25),
+      pixCity: String(settings().pixCity || '').slice(0, 15),
+      rachaName: String(settings().rachaName || '').slice(0, 90),
+      rachaFounded: String(settings().rachaFounded || '').slice(0, 20),
+      rachaLocation: String(settings().rachaLocation || '').slice(0, 120),
+      rachaTime: String(settings().rachaTime || '').slice(0, 10),
+      rachaDuration: String(settings().rachaDuration || '').slice(0, 40),
+      rachaRules: String(settings().rachaRules || '').slice(0, 4000),
+      rachaLogo: typeof settings().rachaLogo === 'string' && /^data:image\/(png|jpeg|webp);base64,/i.test(settings().rachaLogo) ? settings().rachaLogo.slice(0, 160000) : ''
     },
     players: (state.players || []).map((p) => ({
       id: p.id, name: p.name, type: p.type, position: p.position, active: p.active !== false,
@@ -794,7 +1089,8 @@ function publicSnapshot() {
     scores: (state.scores || []).map((s) => ({
       id: s.id, playerId: s.playerId, month: num(s.month), year: num(s.year),
       goals: num(s.goals), assists: num(s.assists), presence: num(s.presence),
-      fairPlay: num(s.fairPlay), punctual: num(s.punctual), cards: num(s.cards)
+      fairPlay: num(s.fairPlay), punctual: num(s.punctual), farrapou: num(s.farrapou),
+      desarmes: num(s.desarmes), atrasado: num(s.atrasado), cards: num(s.cards)
     })),
     finance: { paid, open, byMonth: Object.values(paidByMonth) },
     /* dues NÃO vai no retrato público: o get-view remove antes de servir.
@@ -810,7 +1106,8 @@ async function publishView(silent) {
     if (!silent) toast(blocked, 'err');
     return { ok: false, error: blocked };
   }
-  if (!viewToken && !silent) toast('Criando link…');
+  const first = !viewToken;
+  if (first && !silent) toast('Criando link…');
   viewPublishing = true;
   try {
     const res = await fetch('/.netlify/functions/publish-view', {
@@ -822,6 +1119,11 @@ async function publishView(silent) {
         token: viewToken || undefined,
         expiresAt: settings().viewExpiresAt || null,
         reminderTexts: { group: settings().reminderGroup, player: settings().reminderPlayer },
+        /* Telefones NÃO entram no retrato público: vão separados, só para o
+           servidor confirmar o perfil do jogador e abrir o chat do lembrete. */
+        playerPhones: Object.fromEntries((state.players || [])
+          .filter(p => p && p.id && p.phone)
+          .map(p => [p.id, String(p.phone)])),
         snapshot: publicSnapshot()
       })
     });
@@ -836,7 +1138,8 @@ async function publishView(silent) {
       try { localStorage.setItem(PLAYER_LINKS_KEY, JSON.stringify(playerLinks)); } catch (e) { /* ignore */ }
     }
     await fetchViewData(true);
-    if (!silent) toast('Link do grupo atualizado!', 'ok');
+    await fetchDailySummary(true);
+    if (!silent) toast(first ? 'Link do grupo gerado! Já pode enviar ao grupo.' : 'Link do grupo atualizado!', 'ok');
     return { ok: true, url: data.url || viewUrl(viewToken) };
   } catch (err) {
     if (!silent) toast(err.message || 'Não foi possível publicar.', 'err');
@@ -860,7 +1163,7 @@ async function revokeView() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível revogar.');
-    viewToken = ''; playerLinks = {};
+    viewToken = ''; playerLinks = {}; dailySummary = null;
     try { localStorage.removeItem(VIEW_KEY); localStorage.removeItem(PLAYER_LINKS_KEY); } catch (e) { /* ignore */ }
     viewData = null;
     save('revogou link do grupo', data.token || '');
@@ -886,6 +1189,166 @@ async function fetchViewData(silent) {
   } catch (e) { if (!silent) toast('Sem conexão com o link do grupo.', 'err'); return null; }
 }
 
+/* Resumo das diárias pagas no servidor (somente contagens, sem dados pessoais). */
+async function fetchDailySummary(silent) {
+  if (!viewToken || !navigator.onLine || !window.RachaLicense?.canUseServer()) return null;
+  try {
+    const res = await fetch('/.netlify/functions/manage-daily-payments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key,
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken,
+        action: 'summary'
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível consultar as diárias.');
+    dailySummary = data;
+    return data;
+  } catch (err) {
+    if (!silent) toast(err.message || 'Não foi possível consultar as diárias.', 'err');
+    return null;
+  }
+}
+
+async function cancelDailyPaidGame(gameId, policy) {
+  if (!gameId || !viewToken || !window.RachaLicense?.canUseServer()) {
+    toast('Atualize o link do grupo antes de cancelar.', 'err');
+    return;
+  }
+  toast('Aplicando cancelamento…');
+  try {
+    const res = await fetch('/.netlify/functions/manage-daily-payments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key,
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken,
+        action: 'cancel',
+        gameId,
+        policy
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível cancelar.');
+    toast(data.message || 'Cancelamento aplicado.', data.failed ? 'err' : 'ok');
+    await fetchDailySummary(true);
+    render();
+  } catch (err) {
+    toast(err.message || 'Não foi possível cancelar.', 'err');
+  }
+}
+
+/* Limpa os avisos enviados pelos jogadores no plano Básico. */
+async function ackPaymentNotices() {
+  if (!viewToken || !window.RachaLicense?.canUseServer()) {
+    toast('Atualize o link do grupo antes de marcar os avisos.', 'err');
+    return;
+  }
+  try {
+    const res = await fetch('/.netlify/functions/manage-daily-payments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key,
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken,
+        action: 'ack-notices'
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível marcar os avisos.');
+    toast(data.message || 'Avisos marcados como vistos.', 'ok');
+    await fetchDailySummary(true);
+    render();
+  } catch (err) {
+    toast(err.message || 'Não foi possível marcar os avisos.', 'err');
+  }
+}
+
+/* Vínculo da conta Mercado Pago do administrador. Tokens nunca vêm para o
+   navegador: aqui só consultamos um status e abrimos a URL de autorização. */
+async function loadMpStatus(force) {
+  const L = window.RachaLicense;
+  if (!L || !L.key || !L.canUseServer()) {
+    mpStatus = { loading: false, connected: false, configured: false, unavailable: true };
+    return;
+  }
+  if (!force && !mpStatus.loading && Date.now() - num(mpStatus.checkedAt) < 60000) return;
+  const before = JSON.stringify(mpStatus);
+  mpStatus = { ...mpStatus, loading: true };
+  try {
+    const res = await fetch('/.netlify/functions/mp-connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'status', licenseKey: L.key, deviceId: L.deviceId() })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível consultar o vínculo.');
+    mpStatus = { ...data, loading: false, checkedAt: Date.now() };
+  } catch (err) {
+    mpStatus = { loading: false, connected: false, configured: false, checkedAt: Date.now(), error: err.message };
+  }
+  if (ui.page === 'settings' && JSON.stringify(mpStatus) !== before) render();
+}
+
+async function startMpConnect() {
+  const L = window.RachaLicense;
+  if (!L || !L.key || !L.canUseServer()) {
+    toast('Use o site principal com a assinatura ativa para conectar.', 'err');
+    return;
+  }
+  toast('Abrindo o Mercado Pago…');
+  try {
+    const res = await fetch('/.netlify/functions/mp-connect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'start', licenseKey: L.key, deviceId: L.deviceId() })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.authorizationUrl) {
+      throw new Error(data.error || 'Não foi possível iniciar a conexão.');
+    }
+    window.location.href = data.authorizationUrl;
+  } catch (err) {
+    toast(err.message || 'Não foi possível conectar. Tente novamente.', 'err');
+  }
+}
+
+/* Marca presença e/ou pagamento direto no link privado, sem depender do PIX. */
+async function applyManualConfirm(playerId, gameId, presence, payment) {
+  if (!viewToken || !window.RachaLicense?.canUseServer()) {
+    toast('Atualize o link do grupo antes de confirmar.', 'err');
+    return;
+  }
+  toast('Aplicando confirmação manual…');
+  try {
+    const res = await fetch('/.netlify/functions/admin-confirm', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        licenseKey: window.RachaLicense.key,
+        deviceId: window.RachaLicense.deviceId(),
+        token: viewToken,
+        playerId,
+        gameId,
+        presence,
+        payment
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Não foi possível confirmar.');
+    toast(data.message || 'Confirmação manual aplicada.', 'ok');
+    await Promise.all([fetchViewData(true), fetchDailySummary(true)]);
+    render();
+  } catch (err) {
+    toast(err.message || 'Não foi possível confirmar.', 'err');
+  }
+}
+
 function liveUrl() {
   const base = location.origin && location.origin !== 'null' ? location.origin : location.href.split('/').slice(0, 3).join('/');
   return base + '/ao-vivo.html?v=' + encodeURIComponent(viewToken);
@@ -909,17 +1372,16 @@ function waDirect(phone, message) {
 }
 
 function shareMessage(kind) {
-  if (kind === 'view') return `🏽 Racha do Loló — acompanhe jogos, escalas e ranking em tempo real (somente leitura): ${viewUrl()}`;
+  /* Texto único para os botões 📤 Enviar ao grupo e 📋 Copiar p/ grupo.
+     Editável em Configurações; se não houver {link}, ele é acrescentado no fim. */
+  if (kind === 'view') return renderReminderText(settings().groupAccessMessage || GROUP_ACCESS_MESSAGE, { link: viewUrl() });
   if (kind === 'team') {
     const last = state.drawHistory[0];
     if (!last) return '';
     const lines = (last.teams || []).map((t, i) => `Time ${i + 1}: ${t.map(id => playerName(id)).join(', ')}`);
     return `🎲 Times do racha (${last.gameLabel || 'jogo'})\n${lines.join('\n')}`;
   }
-  const today = todayISO();
-  const games = state.games.filter(g => g.date >= today).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5);
-  if (!games.length) return '';
-  return `📅 Próximos jogos do Racha do Loló\n${games.map(g => `• ${fmtDate(g.date)}`).join('\n')}\nConfirme sua presença no grupo!`;
+  return '';
 }
 
 async function shareWhatsApp(kind) {
@@ -929,10 +1391,24 @@ async function shareWhatsApp(kind) {
   toast('Mensagem pronta no WhatsApp!');
 }
 
+/* Para navegadores antigos onde o WhatsApp Web pede atualização: copia o
+   mesmo link para o usuário colar no Chrome/Edge e abrir o app por lá. */
+async function copyWhatsApp(kind) {
+  const text = shareMessage(kind);
+  if (!text) { toast('Ainda não há nada para compartilhar.', 'err'); return; }
+  const url = waLink(text);
+  if (await copyText(url)) { toast('Link do WhatsApp copiado! Cole no Chrome/Edge para abrir o app.'); return; }
+  openModal('Copiar link do WhatsApp', 'Cole no Chrome/Edge para abrir o app', `
+    <label class="field">Link<input id="wa-copy-input" readonly value="${esc(url)}" /></label>
+    <p class="tiny muted mt">O texto já está marcado. Pressione <strong>Ctrl+C</strong> (ou ⌘+C) e cole na barra do Chrome/Edge.</p>`);
+  const input = $('#wa-copy-input');
+  if (input) { input.focus(); input.select(); input.setSelectionRange(0, input.value.length); }
+}
+
 /* Lembretes manuais: usam os links individuais já publicados.
    Em produção, a função agendada send-reminders faz o mesmo automaticamente. */
-/* Frases editáveis dos lembretes. Placeholders: {jogo}, {data}, {horario},
-   {link} e {jogador}. Sem {link}, o destino é acrescentado no fim. */
+/* Frases editáveis. Placeholders: {racha} (nome do cliente), {jogo}, {data},
+   {horario}, {link} e {jogador}. Sem {link}, o destino é acrescentado no fim. */
 function gameNameForReminder(g) {
   return String(g?.name || '').trim().slice(0, 90) || 'Racha do Loló';
 }
@@ -943,6 +1419,7 @@ function renderReminderText(template, ctx) {
   const raw = String(template || '').replace(/\r\n?/g, '\n').slice(0, 700);
   const hasLink = /\{link\}/i.test(raw);
   const out = raw
+    .replace(/\{racha\}/gi, String(ctx.rachaName || settings().rachaName || 'Racha do Loló').slice(0, 90))
     .replace(/\{jogo\}/gi, String(ctx.gameName || 'Racha do Loló').slice(0, 90))
     .replace(/\{data\}/gi, String(ctx.date || '').slice(0, 30))
     .replace(/\{horario\}/gi, String(ctx.time || 'horário a definir').slice(0, 20))
@@ -1093,7 +1570,8 @@ function expenses(m) {
     byCat[displayExpenseCat(cat)] += num(e.amount);
   });
   byCat['Benefícios'] = sum(state.benefits.filter(b => b.year === y && b.month === m && b.fromCash), b => b.amount);
-  byCat['Brindes'] = sum(state.awards.filter(a => a.year === y && a.month === m), a => a.cost);
+  byCat['Brindes'] = sum(state.awards.filter(a => a.year === y && a.month === m), awardTotal)
+    + sum(state.expenses.filter(e => e.year === y && e.month === m && e.category === 'Brindes'), e => e.amount);
   const total = visibleCashRows().reduce((a, c) => a + byCat[c], 0);
   return { byCat, total };
 }
@@ -1130,11 +1608,38 @@ function currentMonth() {
   return candidates.length ? Math.max(...candidates) : (new Date().getMonth() + 1);
 }
 
-function scorePoints(sc) {
-  const s = settings();
-  return num(sc.goals) * num(s.ptsGoal) + num(sc.assists) * num(s.ptsAssist) + num(sc.presence) * num(s.ptsPresence)
-    + (sc.fairPlay ? num(s.ptsFairPlay) : 0) + (sc.punctual ? num(s.ptsPunctual) : 0) + num(sc.cards) * num(s.ptsCard);
+function scorePointsWith(sc, cfg) {
+  return num(sc.goals) * num(cfg.ptsGoal) + num(sc.assists) * num(cfg.ptsAssist) + num(sc.presence) * num(cfg.ptsPresence)
+    + num(sc.fairPlay) * num(cfg.ptsFairPlay) + num(sc.punctual) * num(cfg.ptsPunctual)
+    - num(sc.farrapou) * num(cfg.ptsFarrapou) - num(sc.atrasado) * num(cfg.ptsAtrasado)
+    + num(sc.desarmes) * num(cfg.ptsDesarme) + num(sc.cards) * num(cfg.ptsCard);
 }
+function scorePoints(sc) { return scorePointsWith(sc, settings()); }
+
+/* Ranking do mês: maiores pontuadores primeiro. */
+function rankScores(list, cfg) {
+  return list.slice().sort((a, b) =>
+    scorePointsWith(b, cfg) - scorePointsWith(a, cfg)
+    || num(b.goals) - num(a.goals)
+    || String(a.playerId || '').localeCompare(String(b.playerId || ''))
+  ).map((sc, i) => ({ ...sc, points: scorePointsWith(sc, cfg), pos: i + 1 }));
+}
+function topWinners(m, y = year()) {
+  return rankScores((state.scores || []).filter(sc => num(sc.year) === y && num(sc.month) === m), settings()).slice(0, 3);
+}
+
+function awardPlaces(a) {
+  const old = Array.isArray(a?.places) ? a.places : [];
+  return AWARD_PLACES.map((meta, i) => {
+    const p = old[i] || {};
+    return {
+      place: meta.place, playerId: String(p.playerId || ''), points: num(p.points),
+      gift: String(p.gift || ''), cost: num(p.cost), delivered: !!p.delivered
+    };
+  });
+}
+function awardTotal(a) { return sum(awardPlaces(a), p => p.cost); }
+function awardDelivered(a) { const ps = awardPlaces(a); return ps.filter(p => p.delivered).length; }
 
 function rankingFor(filter) {
   const map = new Map();
@@ -1145,30 +1650,6 @@ function rankingFor(filter) {
     r.points += scorePoints(sc); r.games += 1;
   });
   return [...map.values()].sort((a, b) => b.points - a.points || b.goals - a.goals).map((r, i) => ({ ...r, pos: i + 1, player: playerById(r.playerId) }));
-}
-
-function autoWinners(m) {
-  const list = state.scores.filter(sc => sc.year === year() && sc.month === m);
-  const best = (fn) => list.slice().sort((a, b) => fn(b) - fn(a) || a.playerId.localeCompare(b.playerId))[0]?.playerId || '';
-  return { goals: best(x => num(x.goals)), assists: best(x => num(x.assists)), points: best(x => scorePoints(x)) };
-}
-
-/* Notas de 1 a 5 enviadas pelos jogadores no link individual. */
-function groupRatings() {
-  const all = viewData?.ratings || {};
-  const map = {};
-  Object.values(all).forEach(byPlayer => {
-    if (!byPlayer || typeof byPlayer !== 'object') return;
-    Object.entries(byPlayer).forEach(([id, r]) => {
-      const n = num(r);
-      if (n < 1 || n > 5) return;
-      const row = map[id] || (map[id] = { sum: 0, n: 0 });
-      row.sum += n; row.n++;
-    });
-  });
-  return Object.entries(map).map(([id, x]) => ({
-    playerId: id, avg: x.sum / x.n, n: x.n, player: playerById(id)
-  })).filter(x => x.player).sort((a, b) => b.avg - a.avg || b.n - a.n);
 }
 
 function simulate(members, fee, dayPerGame, dayFee, games) {
@@ -1186,9 +1667,10 @@ function breakEvenMembers(fee, dayPerGame, dayFee, games) {
    ------------------------------------------------------------ */
 const badge = (text, kind = '') => `<span class="badge ${kind}">${esc(text)}</span>`;
 const avatarHTML = (p, small = false) => {
-  const cls = 'avatar' + (small ? ' sm' : '') + (p?.photo ? ' photo' : '');
-  return p?.photo
-    ? `<span class="${cls}" style="background-image:url('${p.photo}')"></span>`
+  const photo = safeImageUrl(p?.photo);
+  const cls = 'avatar' + (small ? ' sm' : '') + (photo ? ' photo' : '');
+  return photo
+    ? `<span class="${cls}" style="background-image:url('${esc(photo)}')"></span>`
     : `<span class="${cls}">${esc(initials(p?.name))}</span>`;
 };
 const playerCell = (p, sub) => p
@@ -1247,6 +1729,30 @@ function svgLine(rows) {
 /* ------------------------------------------------------------
    Páginas
    ------------------------------------------------------------ */
+/* Atalho da Visão geral: criar ou enviar o link do grupo sem precisar abrir
+   Configurações. Os botões usam as mesmas ações já testadas da tela de config. */
+function dashboardGroupLinkCard() {
+  const reason = viewBlockReason();
+  const nota = reason || 'O link abre na aba 👥 Jogadores. Envie somente ao grupo — ele é secreto. A mensagem pode ser editada em Configurações.';
+  return `
+    <div class="card" style="margin-bottom:16px">
+      ${section('Link do grupo', 'Check-in e pagamento sem senha', `<button class="btn btn-sm btn-ghost" data-act="nav" data-page="settings">Configurações</button>`)}
+      <div class="card-body stack" style="gap:10px">
+        ${viewToken ? `
+          <div class="row">
+            <button class="btn btn-primary" type="button" data-act="share-whatsapp" data-kind="view">📤 Enviar ao grupo</button>
+            <button class="btn btn-ghost" type="button" data-act="copy-whatsapp" data-kind="view">📋 Copiar p/ grupo</button>
+          </div>
+        ` : `
+          <div class="row">
+            <button class="btn btn-primary" type="button" data-act="create-view-link">🔗 Gerar Acesso</button>
+          </div>
+        `}
+        <p class="tiny ${reason ? '' : 'muted'}" ${reason ? 'style="color:var(--amber)"' : ''}>${esc(nota)}</p>
+      </div>
+    </div>`;
+}
+
 function pageDashboard() {
   const rows = cashRows(), m = currentMonth(), r = rows[m - 1], mm = meta();
   const membersPaid = state.payments.filter(p => p.year === year() && p.month === m && p.paid !== false).length;
@@ -1265,6 +1771,7 @@ function pageDashboard() {
 
   return `
     ${hasDemo() ? `<div class="banner">🎯 <span>Você está vendo <strong>dados de demonstração</strong>. Apague-os quando quiser começar de verdade.</span><button class="btn btn-sm" data-act="clear-demo">Limpar demonstração</button></div>` : ''}
+    ${dashboardGroupLinkCard()}
     <div class="grid grid-4">
       <div class="card kpi ${r.acc < 0 ? 'red' : ''}"><div class="label">Saldo acumulado</div><div class="value ${r.acc < 0 ? 'negative' : 'positive'} mono">${money(r.acc)}</div><div class="foot">inclui saldo inicial de ${money(settings().initialCash)}</div></div>
       <div class="card kpi blue"><div class="label">Receita · ${shortMonth(m)}</div><div class="value mono">${money(r.rev.total)}</div><div class="foot">${money(r.rev.mens)} mensalidades · ${money(r.rev.dias)} diárias</div></div>
@@ -1314,7 +1821,7 @@ function pageDashboard() {
       <div class="card">
         ${section('Mensalidades pendentes', shortMonth(m) + '/' + year(), `<button class="btn btn-sm btn-ghost" data-act="nav" data-page="payments">Ver todas</button>`)}
         <div class="table-wrap">${pending.length ? `<table><thead><tr><th>Jogador</th><th>Contato</th><th class="right">Ação</th></tr></thead><tbody>${pending.map(p => `
-          <tr><td>${playerCell(p, p.position)}</td><td class="tiny muted">${esc(p.phone || '—')}</td><td class="right"><button class="btn btn-sm ${p.phone ? '' : 'btn-ghost'}" data-act="cobrar" data-id="${p.id}" ${p.phone ? '' : 'disabled title="Sem telefone cadastrado"'}>📲 Cobrar</button></td></tr>`).join('')}</tbody></table>` : empty('Tudo em dia!', 'Nenhuma mensalidade pendente neste mês.')}</div>
+          <tr><td>${playerCell(p, p.position)}</td><td class="tiny muted">${esc(p.phone || '—')}</td><td class="right"><button class="btn btn-sm ${p.phone ? '' : 'btn-ghost'}" data-act="cobrar" data-id="${esc(p.id)}" ${p.phone ? '' : 'disabled title="Sem telefone cadastrado"'}>📲 Cobrar</button></td></tr>`).join('')}</tbody></table>` : empty('Tudo em dia!', 'Nenhuma mensalidade pendente neste mês.')}</div>
       </div>
       <div class="card">
         ${section('Atividade recente', 'Últimos lançamentos')}
@@ -1350,11 +1857,11 @@ function pagePlayers() {
             <td class="tiny muted">${esc(p.phone || '—')}</td>
             <td class="right mono"><strong>${r ? r.points : 0}</strong></td>
             <td class="right">
-              <button class="icon-btn" data-act="photo" data-id="${p.id}" title="Foto">📷</button>
-              <button class="icon-btn" data-act="cobranca" data-id="${p.id}" title="Link de cobrança">🔗</button>
-              <button class="icon-btn" data-act="profile" data-id="${p.id}" title="Perfil">👤</button>
-              <button class="icon-btn" data-act="edit-player" data-id="${p.id}" title="Editar">✏️</button>
-              <button class="icon-btn danger" data-act="delete-player" data-id="${p.id}" title="Excluir">🗑️</button>
+              <button class="icon-btn" data-act="photo" data-id="${esc(p.id)}" title="Foto">📷</button>
+              <button class="icon-btn" data-act="cobranca" data-id="${esc(p.id)}" title="Link de cobrança">🔗</button>
+              <button class="icon-btn" data-act="profile" data-id="${esc(p.id)}" title="Perfil">👤</button>
+              <button class="icon-btn" data-act="edit-player" data-id="${esc(p.id)}" title="Editar">✏️</button>
+              <button class="icon-btn danger" data-act="delete-player" data-id="${esc(p.id)}" title="Excluir">🗑️</button>
             </td></tr>`; }).join('')}
         </tbody></table>` : empty('Nenhum jogador encontrado', 'Cadastre jogadores ou ajuste o filtro.', `<button class="btn btn-primary" data-act="open-modal" data-modal="player">＋ Cadastrar jogador</button>`)}
       </div>
@@ -1406,6 +1913,22 @@ function drawGameLabel(key) {
   if (key === '__manual__') return 'Avulso';
   const g = state.games.find(x => x.id === key);
   return g ? fmtDate(g.date) : 'Avulso';
+}
+
+/* Chamada: ordem em que cada jogador chegou, salva por jogo. */
+function arrivalList(key) {
+  const raw = state.arrivals && state.arrivals[key];
+  return Array.isArray(raw) ? raw.filter(x => x && x.id) : [];
+}
+function setArrivalList(key, list) {
+  if (!state.arrivals || typeof state.arrivals !== 'object') state.arrivals = {};
+  state.arrivals[key] = list;
+}
+function sortByArrival(players, key) {
+  const order = new Map(arrivalList(key).map((x, i) => [x.id, i]));
+  return players.slice().map((p, i) => ({ p, i, at: order.has(p.id) ? order.get(p.id) : Infinity }))
+    .sort((a, b) => a.at - b.at || a.i - b.i)
+    .map(x => x.p);
 }
 
 function drawTeamsRandom(players, teamsCount) {
@@ -1502,18 +2025,35 @@ function avgRating(team) {
   return team.length ? Math.round(sum(team, p => playerRating(p)) / team.length) : 0;
 }
 
-function drawTeamsForMode(players, teamsCount) {
+/* Ordem de chegada + Equilibrado: respeita quem chegou primeiro e, dentro
+   disso, coloca cada jogador na equipe mais leve (menos jogadores e menor
+   soma de força/velocidade). Quem ainda não chegou fica no fim da fila. */
+function drawTeamsArrivalBalanced(players, teamsCount, key) {
+  const ordered = sortByArrival(players, key);
+  const teams = Array.from({ length: teamsCount }, () => []);
+  ordered.forEach(p => {
+    const minSize = Math.min(...teams.map(t => t.length));
+    const candidates = teams.map((_, i) => i).filter(i => teams[i].length === minSize)
+      .sort((a, b) => sum(teams[a], playerRating) - sum(teams[b], playerRating) || a - b);
+    teams[candidates[0]].push(p);
+  });
+  balanceGoalkeepers(teams);
+  return teams;
+}
+
+function drawTeamsForMode(players, teamsCount, key) {
   switch (ui.drawMode) {
     case 'random': return drawTeamsRandom(players, teamsCount);
     case 'position': return drawTeamsByPosition(players, teamsCount);
     case 'rating': return drawTeamsByRating(players, teamsCount);
     case 'avoid': return drawTeamsAvoid(players, teamsCount);
+    case 'arrival': return drawTeamsArrivalBalanced(players, teamsCount, key);
     default: return drawTeamsBalanced(players, teamsCount);
   }
 }
 
 function drawModeLabel(mode) {
-  return ({ balanced: 'Equilibrado', random: 'Aleatório', position: 'Por posição', rating: 'Por nota', avoid: 'Sem repetir duplas', manual: 'Manual' })[mode] || 'Equilibrado';
+  return ({ balanced: 'Equilibrado', random: 'Aleatório', position: 'Por posição', rating: 'Por nota', avoid: 'Sem repetir duplas', arrival: 'Ordem de chegada + Equilibrado', manual: 'Manual' })[mode] || 'Equilibrado';
 }
 
 function doDraw() {
@@ -1531,7 +2071,7 @@ function doDraw() {
 
   let best = null, bestRepeats = Infinity;
   for (let attempt = 0; attempt < 150; attempt++) {
-    const teams = drawTeamsForMode(players, teamsCount);
+    const teams = drawTeamsForMode(players, teamsCount, key);
     const teamSigs = teams.map(t => t.map(p => p.id).sort().join('+'));
     const repeats = teamSigs.filter(s => usedTeamSigs.has(s)).length;
     if (repeats < bestRepeats) { bestRepeats = repeats; best = { teams, teamSigs }; }
@@ -1545,6 +2085,7 @@ function doDraw() {
     gameLabel: drawGameLabel(key),
     mode: ui.drawMode,
     teamSize: size,
+    arrivals: arrivalList(key).map(x => x.id),
     teams: best.teams.map(t => t.map(p => p.id)),
     teamSigs: best.teamSigs
   };
@@ -1559,7 +2100,7 @@ function doDraw() {
 function renderDrawResult(entry) {
   const teams = (entry.teams || []).map(t => t.map(playerById).filter(Boolean));
   return `<div class="card mt">
-    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), drawModeLabel(entry.mode) + ' · ' + teams.length + ' equipes', `<button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="team">📤 WhatsApp</button> <span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
+    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), drawModeLabel(entry.mode) + ' · ' + teams.length + ' equipes', `<button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="team">📤 WhatsApp</button> <button class="btn btn-sm btn-ghost" data-act="copy-whatsapp" data-kind="team">📋 Copiar p/ WhatsApp</button> <span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
     <div class="card-body">
       <div class="grid grid-3">
         ${teams.map((t, i) => `
@@ -1571,6 +2112,7 @@ function renderDrawResult(entry) {
             </ul>
           </div>`).join('')}
       </div>
+      ${entry.mode === 'arrival' && (entry.arrivals || []).length ? `<p class="tiny muted mt">Ordem de chegada: ${entry.arrivals.map((pid, i) => `${i + 1}º ${playerName(pid)}`).join(' · ')}</p>` : ''}
     </div>
   </div>`;
 }
@@ -1625,6 +2167,30 @@ function renderManualDrawForm(players, teamsCount) {
   </div>`;
 }
 
+function renderArrivalOrder(key) {
+  const arrived = arrivalList(key).filter(x => playerById(x.id));
+  const itens = arrived.map((x, i) => {
+    const p = playerById(x.id);
+    const time = x.at ? new Date(x.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid var(--border-soft);border-radius:999px;padding:3px 8px">
+      <span class="badge green">${i + 1}º</span><strong>${esc(p.name)}</strong>
+      <button type="button" class="btn btn-sm btn-ghost" style="padding:0 4px" data-act="move-arrival" data-id="${esc(p.id)}" data-dir="-1" title="Mover para trás" ${i === 0 ? 'disabled' : ''}>←</button>
+      <button type="button" class="btn btn-sm btn-ghost" style="padding:0 4px" data-act="move-arrival" data-id="${esc(p.id)}" data-dir="1" title="Mover para frente" ${i === arrived.length - 1 ? 'disabled' : ''}>→</button>
+      <button type="button" class="btn btn-sm btn-ghost" style="padding:0 4px" data-act="remove-arrival" data-id="${esc(p.id)}" title="${esc(time || 'Sem horário')} · tirar da chamada">✕</button>
+    </span>`;
+  }).join('');
+  return `<div style="margin-bottom:12px">
+    <div class="spread" style="gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <span class="tiny muted"><strong>Ordem de chegada</strong> ${arrived.length ? '· use ← → para ajustar' : '· toque nos nomes abaixo para registrar'}</span>
+      <span class="row" style="gap:6px">
+        <button class="btn btn-sm btn-ghost" data-act="undo-arrival" ${arrived.length ? '' : 'disabled'}>↩ Desfazer</button>
+        <button class="btn btn-sm btn-ghost" data-act="clear-arrivals" ${arrived.length ? '' : 'disabled'}>🧹 Limpar</button>
+      </span>
+    </div>
+    <div style="display:flex;gap:8px;overflow-x:auto;padding:2px 2px 8px">${itens || '<span class="tiny muted">Ninguém registrado ainda.</span>'}</div>
+  </div>`;
+}
+
 function pageSorteador() {
   const games = drawGameOptions();
   if (ui.drawGame && ui.drawGame !== '__manual__' && !games.some(g => g.id === ui.drawGame)) ui.drawGame = null;
@@ -1640,43 +2206,50 @@ function pageSorteador() {
   const modes = [
     ['balanced', 'Equilibrado (força + velocidade)'], ['random', 'Aleatório'],
     ['position', 'Por posição (goleiro em cada time)'], ['rating', 'Por nota (maior primeiro)'],
-    ['avoid', 'Evitar repetir duplas'], ['manual', 'Manual (eu monto as equipes)']
+    ['avoid', 'Evitar repetir duplas'], ['arrival', 'Ordem de chegada + Equilibrado'], ['manual', 'Manual (eu monto as equipes)']
   ];
   const manual = ui.drawMode === 'manual';
+  const drawControls = `
+    <div style="border-top:1px solid var(--border-soft);padding-top:12px;margin-bottom:14px">
+      <div class="spread" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <strong class="small">🎲 Montagem das equipes</strong>
+        <span class="tiny muted">formato e sorteio antes da lista de nomes</span>
+      </div>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap">
+        <label class="field" style="max-width:170px">Jogadores por equipe<input id="draw-size" type="number" min="2" max="20" value="${num(ui.drawSize) || 6}" /></label>
+        <label class="field" style="max-width:300px">Modo do sorteio<select id="draw-mode">
+          ${modes.map(([k, l]) => `<option value="${k}" ${ui.drawMode === k ? 'selected' : ''}>${l}</option>`).join('')}
+        </select></label>
+        ${manual ? '' : `<button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button>`}
+      </div>
+      <p class="tiny muted mt">Equilibrado usa força e velocidade; por posição garante um goleiro por time; evitar duplas consulta o histórico; ordem de chegada + equilibrado respeita a fila compacta acima e ainda distribui a força; manual você define na tela. Todo sorteio tenta não repetir equipes anteriores.</p>
+    </div>`;
 
   return `
     <div class="card">
-      ${section('Jogadores confirmados', 'Marque quem confirmou presença no racha', `
+      ${section('Jogadores confirmados', 'Toque no nome para confirmar e registrar a chegada, nesta ordem', `
         <select id="draw-game" style="width:200px">${gameOptions}</select>
         <button class="btn btn-sm btn-ghost" data-act="confirm-all">Marcar todos</button>
-        <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>
-        <button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="games">📤 WhatsApp</button>`)}
+        <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>`)}
       <div class="card-body">
-        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. A nota é a média de força e velocidade.</p>
+        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. O número no selo é a ordem de chegada. A nota é a média de força e velocidade.</p>
+        ${renderArrivalOrder(key)}
+        ${drawControls}
         ${players.length ? `<div class="chip-grid">
-          ${players.map(p => `<button class="chip ${ids.has(p.id) ? 'on' : ''}" data-act="toggle-confirm" data-id="${p.id}" type="button">
-            ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-rating">${playerRating(p)}</span></button>`).join('')}
+          ${(() => { const ordem = new Map(arrivalList(key).map((x, i) => [x.id, i + 1])); return players.map(p => {
+            const at = ordem.get(p.id);
+            return `<button class="chip ${ids.has(p.id) ? 'on' : ''}" data-act="toggle-confirm" data-id="${esc(p.id)}" type="button">
+              ${at ? `<span class="badge green">${at}º</span>` : ''}
+              ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-rating">${playerRating(p)}</span></button>`;
+          }).join(''); })()}
         </div>` : empty('Sem jogadores', 'Cadastre jogadores para poder sortear as equipes.')}
-      </div>
-    </div>
-
-    ${renderGroupResponses(key)}
-
-    <div class="card mt">
-      ${section('Montagem das equipes', 'Escolha o formato e sorteie')}
-      <div class="card-body">
-        <div class="row" style="align-items:flex-end">
-          <label class="field" style="max-width:170px">Jogadores por equipe<input id="draw-size" type="number" min="2" max="20" value="${num(ui.drawSize) || 6}" /></label>
-          <label class="field" style="max-width:300px">Modo do sorteio<select id="draw-mode">
-            ${modes.map(([k, l]) => `<option value="${k}" ${ui.drawMode === k ? 'selected' : ''}>${l}</option>`).join('')}
-          </select></label>
-          ${manual ? '' : `<button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button>`}
-        </div>
-        <p class="tiny muted mt">Equilibrado usa força e velocidade; por posição garante um goleiro por time; evitar duplas consulta o histórico; manual você define na tela. Todo sorteio tenta não repetir equipes anteriores.</p>
+        ${!manual && confirmed.length >= 2 ? `<div class="row mt" style="justify-content:flex-end"><button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button></div>` : ''}
       </div>
     </div>
 
     ${manual && confirmed.length >= 4 ? renderManualDrawForm(confirmed, Math.max(2, Math.round(confirmed.length / (num(ui.drawSize) || 6)))) : ''}
+
+    ${renderGroupResponses(key)}
 
     ${last ? renderDrawResult(last) : `<div class="card mt">${empty('Nenhum sorteio ainda', 'Confirme os jogadores e toque em “Sortear equipes”.')}</div>`}
     ${state.drawHistory.length > 1 ? renderDrawHistory() : ''}`;
@@ -1815,9 +2388,12 @@ function pageExpenses() {
   const all = state.expenses.filter(e => e.year === y).sort((a, b) => b.date.localeCompare(a.date));
   const byCat = {};
   all.forEach(e => { const c = displayExpenseCat(e.category); byCat[c] = (byCat[c] || 0) + num(e.amount); });
+  /* Quadra e Goleiros ficam sempre; qualquer outra categoria com lançamento
+     ganha seu próprio cartão "total no ano", na mesma ordem do fluxo de caixa. */
+  const cardCats = visibleCashRows().filter(c => ['Quadra', 'Goleiros'].includes(c) || num(byCat[c]) > 0);
   return `
     <div class="grid grid-4">
-      ${visibleCashRows().filter(c => ['Quadra', 'Goleiros', 'Material', 'Churrasco'].includes(c)).map((c, i) => `
+      ${cardCats.map((c, i) => `
         <div class="card kpi ${i % 2 ? 'blue' : ''}"><div class="label">${esc(c)}</div><div class="value mono">${money(byCat[c] || 0)}</div><div class="foot">total no ano</div></div>`).join('')}
     </div>
     <div class="card mt">
@@ -1826,7 +2402,7 @@ function pageExpenses() {
         <button class="btn btn-sm btn-ghost" data-act="quick-expense" data-cat="Goleiros">＋ Goleiros</button>
         <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="expense">＋ Despesa</button>`)}
       <div class="table-wrap">${all.length ? `<table><thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th>Mês</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
-        ${all.map(e => `<tr><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}">🗑️</button></td></tr>`).join('')}
+        ${all.map(e => `<tr><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}${e.fixed ? '<span class="tiny muted"> · fixo</span>' : ''}${e.seriesId ? '<span class="tiny muted"> · repetição</span>' : ''}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}" title="Excluir este lançamento">🗑️</button>${e.seriesId ? ` <button class="icon-btn danger" data-act="delete-expense-series" data-series="${esc(e.seriesId)}" title="Excluir toda esta repetição">🧹</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : empty('Sem despesas', 'Lance o aluguel da quadra e os goleiros para começar.')}</div>
     </div>`;
 }
@@ -1851,12 +2427,15 @@ function pageBenefits() {
 
 function pageCash() {
   const rows = cashRows(), m = meta();
+  const cashCats = visibleCashRows().filter(c => ['Quadra', 'Goleiros'].includes(c) || rows.some(r => num(r.exp.byCat[c]) > 0));
   const total = rows[11];
+  const annualRevenue = rows.reduce((a, r) => a + r.rev.total, 0);
+  const annualExpenses = rows.reduce((a, r) => a + r.exp.total, 0);
   const annualTarget = rows.reduce((a, r) => a + r.metaTarget, 0);
   return `
     <div class="grid grid-4">
-      <div class="card kpi blue"><div class="label">Receitas do ano</div><div class="value mono">${money(total.rev.total)}</div><div class="foot">mensalidades + diárias</div></div>
-      <div class="card kpi amber"><div class="label">Despesas do ano</div><div class="value mono">${money(total.exp.total)}</div><div class="foot">inclui brindes e benefícios</div></div>
+      <div class="card kpi blue"><div class="label">Receitas do ano</div><div class="value mono">${money(annualRevenue)}</div><div class="foot">mensalidades + diárias</div></div>
+      <div class="card kpi amber"><div class="label">Despesas do ano</div><div class="value mono">${money(annualExpenses)}</div><div class="foot">inclui brindes e benefícios</div></div>
       <div class="card kpi ${total.acc < 0 ? 'red' : ''}"><div class="label">Saldo final previsto</div><div class="value mono ${total.acc < 0 ? 'negative' : 'positive'}">${money(total.acc)}</div><div class="foot">com saldo inicial</div></div>
       <div class="card kpi"><div class="label">Meta anual</div><div class="value mono">${money(annualTarget)}</div><div class="foot">média ${money(annualTarget / 12)} / mês</div></div>
     </div>
@@ -1893,7 +2472,7 @@ function pageCash() {
           <tr><td>Diárias</td>${rows.map(r => `<td class="right mono">${money(r.rev.dias)}</td>`).join('')}<td class="right mono">${money(total.rev.dias)}</td></tr>
           <tr class="total-row"><td>Total de receitas</td>${rows.map(r => `<td class="right mono">${money(r.rev.total)}</td>`).join('')}<td class="right mono">${money(total.rev.total)}</td></tr>
           <tr class="section-row"><td colspan="14">DESPESAS</td></tr>
-          ${visibleCashRows().map(c => `<tr><td>${c}</td>${rows.map(r => `<td class="right mono">${money(r.exp.byCat[c])}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.exp.byCat[c], 0))}</td></tr>`).join('')}
+          ${cashCats.map(c => `<tr><td>${c}</td>${rows.map(r => `<td class="right mono">${money(r.exp.byCat[c])}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.exp.byCat[c], 0))}</td></tr>`).join('')}
           <tr class="total-row"><td>Total de despesas</td>${rows.map(r => `<td class="right mono">${money(r.exp.total)}</td>`).join('')}<td class="right mono">${money(total.exp.total)}</td></tr>
           <tr class="total-row"><td>SALDO DO MÊS</td>${rows.map(r => `<td class="right mono ${r.balance < 0 ? 'negative' : 'positive'}">${money(r.balance)}</td>`).join('')}<td class="right mono ${total.balance < 0 ? 'negative' : 'positive'}">${money(total.balance)}</td></tr>
           <tr><td>Saldo acumulado</td>${rows.map(r => `<td class="right mono ${r.acc < 0 ? 'negative' : 'positive'}">${money(r.acc)}</td>`).join('')}<td class="right mono">${money(total.acc)}</td></tr>
@@ -1908,6 +2487,37 @@ function pageCash() {
           <tr><td>Acima / abaixo</td>${rows.map(r => `<td class="right mono ${r.metaDiff < 0 ? 'negative' : 'positive'}">${money(r.metaDiff)}</td>`).join('')}<td class="right mono">${money(rows.reduce((a, r) => a + r.metaDiff, 0))}</td></tr>
         </tbody>
       </table></div>
+    </div>${donationCardHtml()}`;
+}
+
+function developerDonationCardHtml() {
+  const d = window.RachaDevDonation || {};
+  const code = developerDonationPixCode();
+  if (!code) return '';
+  return `
+    <div class="card mt">
+      ${section('💚 Apoie o desenvolvedor', d.text || 'Gostou do app? Faça uma doação voluntária.')}
+      <div class="card-body stack">
+        <p class="small muted">Esta doação é para quem criou e mantém o aplicativo. Ela é totalmente opcional, funciona no período grátis e depois da assinatura, e não muda sua licença nem seus dados. O valor é escolhido por você no banco.</p>
+        <textarea id="dev-donate-code" readonly rows="3" style="width:100%;font-size:11px;resize:vertical">${esc(code)}</textarea>
+        <div><button class="btn btn-ghost btn-sm" type="button" data-act="copy-dev-donation">📋 Copiar PIX do desenvolvedor</button></div>
+      </div>
+    </div>`;
+}
+
+function donationCardHtml() {
+  const s = settings();
+  if (s.donationEnabled === false) return '';
+  const code = donationPixCode();
+  if (!code) return '';
+  return `
+    <div class="card mt">
+      ${section('💚 PIX de doação', s.donationText || 'Ajude a manter o racha: qualquer quantia é bem-vinda!')}
+      <div class="card-body stack">
+        <p class="small muted">Use a mesma chave PIX do racha, sem valor fixo. Quem quiser ajudar escolhe o valor no banco. Essa doação não conta como mensalidade nem diária e aparece também no link do grupo. Para esconder, desmarque a opção em Configurações.</p>
+        <textarea id="donate-code" readonly rows="3" style="width:100%;font-size:11px;resize:vertical">${esc(code)}</textarea>
+        <div><button class="btn btn-ghost btn-sm" type="button" data-act="copy-donation-app">📋 Copiar código PIX</button></div>
+      </div>
     </div>`;
 }
 
@@ -1981,16 +2591,14 @@ function pageScores() {
   const existing = new Map(state.scores.filter(s => s.year === y && s.month === m).map(s => [s.playerId, s]));
   return `
     <div class="card">
-      ${section('Pontuação · ' + shortMonth(m) + '/' + y, '1 = sim · 0 = não. Os pontos são calculados automaticamente.', selectMonths('score-month', m))}
-      <div class="table-wrap"><table><thead><tr><th>Jogador</th><th class="right">Gols</th><th class="right">Assist.</th><th class="right">Presenças</th><th class="center">Fair play</th><th class="center">Pontual</th><th class="right">Cartões</th><th class="right">Pontos</th></tr></thead><tbody>
+      ${section('Pontuação · ' + shortMonth(m) + '/' + y, 'Digite a quantidade de cada item. Farrapou/Faltou tira pontos. Os pontos são calculados automaticamente.', selectMonths('score-month', m))}
+      <div class="table-wrap"><table><thead><tr><th>Jogador</th><th class="right">Gols</th><th class="right">Assist.</th><th class="right">Presenças</th><th class="right">Desarmes</th><th class="right">Fair play</th><th class="right">Pontual</th><th class="right">Farrapou / Faltou</th><th class="right">Atrasado</th><th class="right">Cartões</th><th class="right">Pontos</th></tr></thead><tbody>
         ${players.map(p => {
-          const s = existing.get(p.id) || { goals: 0, assists: 0, presence: 0, fairPlay: 0, punctual: 0, cards: 0 };
+          const s = existing.get(p.id) || { goals: 0, assists: 0, presence: 0, desarmes: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
           const pts = scorePoints(s);
           return `<tr data-score-row="${p.id}">
             <td>${playerCell(p)}</td>
-            ${['goals', 'assists', 'presence', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${p.id}" style="width:66px;text-align:right" /></td>`).join('')}
-            <td class="center"><input type="checkbox" data-score="fairPlay" data-player="${p.id}" ${s.fairPlay ? 'checked' : ''} /></td>
-            <td class="center"><input type="checkbox" data-score="punctual" data-player="${p.id}" ${s.punctual ? 'checked' : ''} /></td>
+            ${['goals', 'assists', 'presence', 'desarmes', 'fairPlay', 'punctual', 'farrapou', 'atrasado', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${p.id}" style="width:66px;text-align:right" /></td>`).join('')}
             <td class="right mono"><strong id="pts-${p.id}">${pts}</strong></td>
           </tr>`;
         }).join('')}
@@ -2003,31 +2611,29 @@ function pageRanking() {
   const rank = rankingFor(ui.rankFilter);
   const top3 = rank.slice(0, 3);
   const label = ui.rankFilter === 'year' ? 'do ano de ' + year() : `do ${ui.rankFilter}º trimestre de ${year()}`;
-  const rated = groupRatings();
   const yearScores = state.scores.filter(s => s.year === year());
   const xerifao = yearScores.slice().sort((a, b) => num(b.cards) - num(a.cards))[0];
-  const mvpCard = rated.length ? `
+  const artilheiro = rankingFor('year')[0] || null;
+  const withAvatar = (p, name, foot) => `<div class="value" style="font-size:16px;display:flex;align-items:center;justify-content:center;gap:8px">${avatarHTML(p, true)}${esc(name || '—')}</div><div class="foot">${esc(foot)}</div>`;
+  const count = (n, one, many) => `${num(n)} ${num(n) === 1 ? one : many}`;
+  const highlights = `
     <div class="card" style="margin-bottom:16px">
-      ${section('Destaques do grupo', 'MVP e notas enviadas após as partidas', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
+      ${section('Destaques do grupo', 'Cartões e gols no ano')}
       <div class="card-body">
-        <div class="grid grid-3">
-          <div class="card kpi amber"><div class="label">⭐ MVP (nota do grupo)</div><div class="value" style="font-size:16px">${esc(rated[0].player?.name || '—')}</div><div class="foot">${rated[0].avg.toFixed(1)} / 5 · ${rated[0].n} avaliação(ões)</div></div>
-          <div class="card kpi red"><div class="label">🪓 Xerifão</div><div class="value" style="font-size:16px">${esc(playerName(xerifao?.playerId))}</div><div class="foot">${num(xerifao?.cards)} cartões no ano</div></div>
-          <div class="card kpi blue"><div class="label">⚽ Artilheiro</div><div class="value" style="font-size:16px">${esc(playerName(rankingFor('year')[0]?.playerId))}</div><div class="foot">${num(rankingFor('year')[0]?.goals)} gols no ano</div></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+          <div class="card kpi red"><div class="label">🪓 Xerifão</div>${withAvatar(playerById(xerifao?.playerId), playerName(xerifao?.playerId), count(xerifao?.cards, 'cartão', 'cartões') + ' no ano')}</div>
+          <div class="card kpi blue"><div class="label">⚽ Artilheiro</div>${withAvatar(artilheiro?.player, playerName(artilheiro?.playerId), count(artilheiro?.goals, 'gol', 'gols') + ' no ano')}</div>
         </div>
-        <div class="table-wrap mt"><table><thead><tr><th>Jogador</th><th class="right">Nota média</th><th class="right">Avaliações</th></tr></thead><tbody>
-          ${rated.slice(0, 10).map(r => `<tr><td>${playerCell(r.player)}</td><td class="right mono">${r.avg.toFixed(1)}</td><td class="right mono">${r.n}</td></tr>`).join('')}
-        </tbody></table></div>
       </div>
-    </div>` : '';
+    </div>`;
   return `
-    ${mvpCard}
+    ${highlights}
     <div class="card">
-      ${section('Ranking ' + label, 'Pontos = gols×' + settings().ptsGoal + ' + assistências×' + settings().ptsAssist + ' + presença×' + settings().ptsPresence + ' + bônus', 
+      ${section('Ranking ' + label, 'Pontos calculados na aba Pontuação.', 
         filters.map(([k, l]) => `<button class="btn btn-sm ${String(ui.rankFilter) === String(k) ? 'btn-primary' : 'btn-ghost'}" data-act="rank-filter" data-filter="${k}">${l}</button>`).join(''))}
       <div class="card-body">
         ${rank.length ? `<div class="podium">
-          ${[1, 0, 2].map(idx => { const r = top3[idx]; return r ? `<div class="podium-item ${idx === 0 ? 'first' : ''}"><div class="medal">${['🥇', '🥈', '🥉'][idx]}</div><div class="name">${esc(r.player?.name || '—')}</div><div class="pts">${r.points} pts</div><div class="tiny muted">${r.goals} gols · ${r.assists} assist.</div></div>` : ''; }).join('')}
+          ${[1, 0, 2].map(idx => { const r = top3[idx]; return r ? `<div class="podium-item ${idx === 0 ? 'first' : ''}"><div class="medal">${['🥇', '🥈', '🥉'][idx]}</div>${avatarHTML(r.player)}<div class="name">${esc(r.player?.name || '—')}</div><div class="pts">${r.points} pts</div><div class="tiny muted">${r.goals} gols · ${r.assists} assist.</div></div>` : ''; }).join('')}
         </div>` : ''}
         <div class="table-wrap">${rank.length ? `<table><thead><tr><th class="right">#</th><th>Jogador</th><th class="right">Gols</th><th class="right">Assist.</th><th class="right">Presenças</th><th class="right">Meses</th><th class="right">Pontos</th></tr></thead><tbody>
           ${rank.map(r => `<tr><td class="right"><strong>${r.pos}</strong></td><td>${playerCell(r.player, r.player?.position)}</td><td class="right mono">${r.goals}</td><td class="right mono">${r.assists}</td><td class="right mono">${r.presence}</td><td class="right mono">${r.games}</td><td class="right mono"><strong class="positive">${r.points}</strong></td></tr>`).join('')}
@@ -2037,41 +2643,187 @@ function pageRanking() {
 }
 
 function pageAwards() {
-  const m = currentMonth(), auto = autoWinners(m);
-  const aw = state.awards.find(a => a.month === m && a.year === year()) || { month: m, year: year(), gift: '', cost: 0, delivered: false };
-  const history = state.awards.filter(a => a.year === year()).sort((a, b) => a.month - b.month);
-  const autoCard = (label, ico, id, extra) => `<div class="card kpi blue"><div class="label">${ico} ${label}</div><div class="value" style="font-size:16px">${esc(playerName(id))}</div><div class="foot">${extra}</div></div>`;
+  const m = currentMonth(), tops = topWinners(m);
+  const aw = state.awards.find(a => num(a.month) === m && num(a.year) === year()) || { month: m, year: year(), places: [] };
+  const places = awardPlaces(aw);
+  const history = state.awards.filter(a => num(a.year) === year()).sort((a, b) => num(a.month) - num(b.month));
+  const winner = (id) => id ? playerName(id) : '—';
+
+  const podium = AWARD_PLACES.map((meta, i) => {
+    const t = tops[i];
+    return `<div class="card kpi blue"><div class="label">${meta.ico} ${meta.label}</div><div class="value" style="font-size:16px">${esc(winner(t?.playerId))}</div><div class="foot">${t ? num(t.points) + ' pontos' : 'Sem pontuação no mês'}</div></div>`;
+  }).join('');
+
+  const placeFields = (i) => {
+    const meta = AWARD_PLACES[i], p = places[i], t = tops[i];
+    return `<div class="field" style="grid-column:1/-1;border-top:1px solid var(--border-soft);padding-top:10px">
+      <div class="row" style="justify-content:space-between;gap:8px"><strong>${meta.ico} ${meta.label}</strong><span class="small muted">${t ? esc(winner(t.playerId)) + ' · ' + num(t.points) + ' pontos' : 'Sem pontuação'}</span></div>
+      <div class="grid grid-3 mt">
+        <label class="field">Brinde<input name="g${i}" value="${esc(p.gift)}" placeholder="Ex.: camisa, bola..." /></label>
+        <label class="field">Custo (R$)<input name="c${i}" type="number" step="0.01" min="0" value="${num(p.cost)}" /></label>
+        <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="d${i}" type="checkbox" ${p.delivered ? 'checked' : ''} style="width:16px" /> Entregue?</span></label>
+      </div>
+    </div>`;
+  };
+
   return `
     <div class="row" style="margin-bottom:16px">${selectMonths('award-month', m)}</div>
-    <div class="grid grid-3">
-      ${autoCard('Artilheiro', '⚽', auto.goals, state.scores.filter(s => s.month === m && s.year === year() && s.playerId === auto.goals).reduce((a, s) => a + num(s.goals), 0) + ' gols')}
-      ${autoCard('Garçom', '🍽️', auto.assists, state.scores.filter(s => s.month === m && s.year === year() && s.playerId === auto.assists).reduce((a, s) => a + num(s.assists), 0) + ' assistências')}
-      ${autoCard('Líder em pontos', '⭐', auto.points, state.scores.filter(s => s.month === m && s.year === year() && s.playerId === auto.points).reduce((a, s) => a + scorePoints(s), 0) + ' pontos')}
-    </div>
+    <div class="grid grid-3">${podium}</div>
     <div class="grid grid-2 mt">
       <div class="card">
-        ${section('Premiação de ' + shortMonth(m), 'Os três primeiros vêm da aba Pontuação')}
+        ${section('Premiação de ' + shortMonth(m), 'Somente 1º, 2º e 3º lugares · vencedores automáticos pela pontuação do mês')}
         <div class="card-body">
-          <form data-form="award" class="form-grid">
-            <label class="field">Melhor goleiro<input name="bestGk" value="${esc(aw.bestGk || '')}" placeholder="Nome" /></label>
-            <label class="field">Paredão (defensor)<input name="defender" value="${esc(aw.defender || '')}" placeholder="Nome" /></label>
-            <label class="field">Fair play<input name="fairPlay" value="${esc(aw.fairPlay || '')}" placeholder="Nome" /></label>
-            <label class="field">Craque do mês<input name="crack" value="${esc(aw.crack || '')}" placeholder="Nome" /></label>
-            <label class="field">Presença VIP (qtd)<input name="vipCount" type="number" min="0" value="${num(aw.vipCount)}" /></label>
-            <label class="field">Brinde / prêmio<input name="gift" value="${esc(aw.gift || '')}" placeholder="Ex.: camisa, bola..." /></label>
-            <label class="field">Custo dos brindes (R$)<input name="cost" type="number" step="0.01" value="${num(aw.cost)}" /></label>
-            <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="delivered" type="checkbox" ${aw.delivered ? 'checked' : ''} style="width:16px" /> Entregue?</span></label>
+          <p class="tiny muted">Os vencedores são os maiores pontuadores de ${shortMonth(m)}/${year()}, calculados na aba Pontuação. Não é preciso digitar nomes — ajuste apenas brinde, custo e entrega de cada colocação.</p>
+          <form data-form="award" class="form-grid mt">
+            ${AWARD_PLACES.map((_, i) => placeFields(i)).join('')}
             <div class="form-actions" style="grid-column:1/-1"><button class="btn btn-primary" type="submit">Salvar premiação</button></div>
           </form>
         </div>
       </div>
       <div class="card">
-        ${section('Histórico de brindes', 'Custos entram no fluxo de caixa')}
-        <div class="table-wrap">${history.length ? `<table><thead><tr><th>Mês</th><th>Brinde</th><th class="right">Custo</th><th>Status</th></tr></thead><tbody>
-          ${history.map(a => `<tr><td>${shortMonth(a.month)}</td><td class="small">${esc(a.gift || '—')}</td><td class="right mono">${money(a.cost)}</td><td>${badge(a.delivered ? 'Entregue' : 'Pendente', a.delivered ? 'green' : 'amber')}</td></tr>`).join('')}
-        </tbody></table>` : empty('Sem premiações', 'Salve a premiacao do mês para aparecer aqui.')}</div>
+        ${section('Histórico de premiações', 'Custos entram no fluxo de caixa em Brindes')}
+        <div class="table-wrap">${history.length ? `<table><thead><tr><th>Mês</th><th>1º lugar</th><th>2º lugar</th><th>3º lugar</th><th class="right">Custo</th><th>Status</th></tr></thead><tbody>
+          ${history.map(a => {
+            const p = awardPlaces(a), entregues = awardDelivered(a);
+            return `<tr><td>${shortMonth(a.month)}</td><td class="small">${esc(winner(p[0].playerId))}</td><td class="small">${esc(winner(p[1].playerId))}</td><td class="small">${esc(winner(p[2].playerId))}</td><td class="right mono">${money(awardTotal(a))}</td><td>${badge(entregues === 3 ? 'Entregue' : `Pendente ${entregues}/3`, entregues === 3 ? 'green' : 'amber')}</td></tr>`;
+          }).join('')}
+        </tbody></table>` : empty('Sem premiações', 'Salve a premiação do mês para aparecer aqui.')}</div>
       </div>
     </div>`;
+}
+
+function paymentModeHtml() {
+  const mode = settings().paymentMode === 'mp' ? 'mp' : 'manual';
+  const status = mpStatus || {};
+  const can = !!viewToken && !viewBlockReason() && !!window.RachaLicense?.canUseServer();
+  let statusText = 'Disponível no site principal, com o link do grupo criado.';
+  if (can) {
+    if (status.loading) statusText = 'Consultando o vínculo…';
+    else if (!status.configured) statusText = 'O vínculo ainda não foi habilitado pelo administrador do app.';
+    else if (status.connected) {
+      statusText = status.expired
+        ? 'Conta conectada, mas o acesso ao Mercado Pago expirou. Toque em conectar novamente.'
+        : 'Conta conectada' + (status.email ? ' · ' + status.email : '') + '.';
+    } else statusText = 'Nenhuma conta do Mercado Pago conectada ainda.';
+  }
+  return `
+    <div class="stack">
+      <label class="field">Meio de pagamento dos jogadores<select name="paymentMode">
+        <option value="manual" ${mode === 'manual' ? 'selected' : ''}>PIX manual (padrão)</option>
+        <option value="mp" ${mode === 'mp' ? 'selected' : ''}>Mercado Pago (PIX, cartão e cobrança automática)</option>
+      </select></label>
+      <p class="tiny muted">O PIX da sua chave continua disponível como alternativa mesmo depois de escolher o Mercado Pago. Salve as premissas e atualize o link do grupo para publicar a escolha.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" type="button" data-act="connect-mp" ${can ? '' : 'disabled'}>🔗 Conectar com Mercado Pago</button>
+        <a class="btn btn-ghost" href="https://www.mercadopago.com.br/hub/registration/landing" target="_blank" rel="noopener">Criar conta no Mercado Pago</a>
+      </div>
+      <p class="tiny ${status.connected && !status.expired ? '' : 'muted'}">${esc(statusText)}</p>
+      <details>
+        <summary class="small">Passo a passo para conectar</summary>
+        <div class="stack" style="margin-top:8px">
+          <p class="tiny muted">1. Se ainda não tem conta, toque em <strong>Criar conta no Mercado Pago</strong>. Se já tem, pode pular.</p>
+          <p class="tiny muted">2. Entre no Mercado Pago com a conta que vai receber o dinheiro do racha (a mesma do e-mail da sua conta).</p>
+          <p class="tiny muted">3. Volte aqui e toque em <strong>Conectar com Mercado Pago</strong>. Você será levado ao Mercado Pago.</p>
+          <p class="tiny muted">4. Confira os dados e autorize. O app volta sozinho para esta página com a confirmação.</p>
+          <p class="tiny muted">5. Escolha <strong>Mercado Pago</strong> acima, salve as premissas e toque em <strong>Atualizar agora</strong> no link do grupo.</p>
+          <p class="tiny muted">Seus dados de acesso ficam salvos no servidor. Não é preciso copiar token, senha ou chave para cá.</p>
+        </div>
+      </details>
+    </div>`;
+}
+
+function dailyPaymentsHtml() {
+  const s = settings();
+  const enabled = s.dailyPaymentEnabled !== false;
+  const summary = dailySummary || { games: [], totalCredit: 0 };
+  const rows = Array.isArray(summary.games) ? summary.games.slice(0, 8) : [];
+  const map = Object.create(null);
+  rows.forEach((r) => { if (r && r.id) map[r.id] = r; });
+  const games = (state.games || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  const upcoming = games.filter((g) => !g.done).slice(0, 60);
+  const options = (upcoming.length ? upcoming : games.slice(-40)).map((g) => {
+    const r = map[g.id];
+    const info = r ? ` · ${r.paid} pago(s)${r.pending ? ` · ${r.pending} aguardando` : ''}` : '';
+    return `<option value="${esc(g.id)}">${esc(fmtDate(g.date))}${esc(info)}</option>`;
+  }).join('');
+  const canManage = !!viewToken && !viewBlockReason() && !!window.RachaLicense?.canUseServer();
+  const table = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Jogo</th><th>Pagos</th><th>Aguardando</th><th>Resolvidos</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr><td>${esc(r.label || fmtDate(r.date))}</td><td class="mono">${num(r.paid)} · ${money(r.paidAmount)}</td><td class="mono">${num(r.pending)}</td><td class="small">${num(r.credited)} crédito · ${num(r.refunded)} estorno</td></tr>`).join('')}
+  </tbody></table></div>` : '<p class="tiny muted">Ainda não há diárias pagas por este link.</p>';
+  return `
+    <p class="small muted">No link individual, mensalista paga a mensalidade e diarista paga a diária pelo <strong>PIX do administrador</strong>. ${settings().paymentMode === 'mp' && mpStatus.connected
+      ? 'Com sua conta conectada, o jogador também pode gerar PIX no Mercado Pago, pagar no cartão ou ativar a cobrança automática: o pagamento aprovado baixa sozinho e libera a presença.'
+      : hasIntermediate()
+        ? 'No PRO ADM, o jogador toca em <strong>“Vou jogar”</strong> para confirmar a presença, mas <strong>não baixa o pagamento</strong>: no PIX manual a baixa é sua, em Confirmação manual; no Mercado Pago é pelo webhook.'
+        : 'No Básico, o jogador toca em <strong>“Avisar que paguei”</strong> e você dá a baixa em <strong>Confirmação manual</strong>. Até lá a presença fica bloqueada.'}</p>
+    <p class="small ${enabled ? 'muted' : ''}" ${enabled ? '' : 'style="color:var(--amber)"'}>Pagamento antecipado da diária: <strong>${enabled ? 'ligado' : 'desligado'}</strong>. Para mudar, use o campo em Financeiro e salve as premissas. A mensalidade sempre precisa estar em dia.</p>
+    <p class="tiny muted">Mensalidades baixadas: <strong>${num(summary.monthly?.paid)} · ${money(summary.monthly?.paidAmount)}</strong> (${num(summary.monthly?.pending)} aguardando baixa). Se o mensalista estiver devendo, o botão “Vou jogar” fica bloqueado até você dar a baixa.</p>
+    <p class="tiny muted">Créditos disponíveis no grupo: <strong>${money(summary.totalCredit || 0)}</strong>. O crédito nasce quando você cancela um jogo e escolhe “virar crédito”.</p>
+    ${viewToken ? `
+      <div class="row" style="align-items:flex-end;gap:8px;flex-wrap:wrap">
+        <label class="field" style="flex:1;min-width:220px">Jogo para cancelar<select id="daily-cancel-game">${options || '<option value="">Sem jogos cadastrados</option>'}</select></label>
+        <button class="btn btn-ghost" type="button" data-act="refresh-daily-summary" ${canManage ? '' : 'disabled'}>🔄 Atualizar</button>
+      </div>
+      <div class="row games-actions" style="margin-top:8px">
+        <button class="btn btn-primary" type="button" data-act="cancel-daily-credit" ${canManage ? '' : 'disabled'}>💳 Cancelar e virar crédito</button>
+        <button class="btn btn-danger" type="button" data-act="cancel-daily-refund" ${canManage ? '' : 'disabled'}>↩️ Cancelar e estornar</button>
+      </div>
+      <p class="tiny muted">Escolha uma das duas opções antes de confirmar. “Crédito” fica para a próxima diária do mesmo jogador; “Estorno” é combinado com o jogador, fora do app. Diárias ainda não pagas são apenas canceladas.</p>
+      ${table}
+    ` : '<p class="tiny muted">Crie o link do grupo para liberar o pagamento da diária.</p>'}
+  `;
+}
+
+function manualConfirmHtml() {
+  const linked = (state.players || []).filter((p) => p && p.id && playerLinks[p.id]);
+  const players = linked.map((p) =>
+    `<option value="${esc(p.id)}">${esc(p.name || p.id)} · ${esc(p.type || '')}</option>`).join('');
+  const games = (state.games || []).slice()
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
+    .filter((g) => !g.done)
+    .map((g) => `<option value="${esc(g.id)}">${esc(fmtDate(g.date))}${g.name ? ' · ' + esc(g.name) : ''}</option>`).join('');
+  const can = !!viewToken && !viewBlockReason() && !!window.RachaLicense?.canUseServer() && linked.length > 0;
+  const summary = dailySummary || {};
+  const notices = Array.isArray(summary.notices) ? summary.notices : [];
+  const autoMode = typeof summary.autoCheckin === 'boolean' ? summary.autoCheckin : hasIntermediate();
+  const noticeRows = notices.slice(0, 8).map((n) => {
+    const when = fmtDateTime(n.at);
+    const what = n.kind === 'monthly' && num(n.month)
+      ? 'mensalidade ' + shortMonth(num(n.month)) + '/' + num(n.year)
+      : 'diária';
+    const state = n.status === 'done' ? 'presença confirmada' : 'aguardando baixa';
+    return `<div class="tiny muted">${esc(when)} · ${esc(n.playerName || n.playerId)} · ${esc(what)} · ${money(n.amount)} · ${esc(state)}</div>`;
+  }).join('');
+  return `
+    <p class="small muted">Modo do seu plano: <strong>${autoMode ? 'PRO ADM — presença confirmada pelo jogador' : 'Básico — aviso do jogador'}</strong>. ${autoMode
+      ? 'Ao tocar em “Vou jogar”, o jogador confirma a presença; a baixa do pagamento continua sendo sua aqui no PIX manual (ou do webhook no Mercado Pago). Cada ação fica registrada.'
+      : 'O jogador paga e avisa; a baixa e a presença continuam sendo dadas por você aqui.'}</p>
+    ${notices.length ? `
+      <div class="card" style="box-shadow:none;background:var(--surface-2)">
+        <div class="card-body stack">
+          <strong>Avisos dos jogadores (${notices.length})</strong>
+          ${noticeRows}
+          <div class="row" style="justify-content:flex-end;margin-top:6px">
+            <button class="btn btn-ghost btn-sm" type="button" data-act="ack-notices" ${can ? '' : 'disabled'}>✅ Marcar avisos como vistos</button>
+          </div>
+        </div>
+      </div>` : ''}
+    <p class="small muted">Aqui você dá baixa do PIX manual, do dinheiro ou de casos especiais: marca a presença e/ou o pagamento direto no link. Para o diarista que pagou a diária, marque os dois. Cada ação fica registrada no histórico do link.</p>
+    ${linked.length ? `
+      <div class="row" style="align-items:flex-end;gap:8px;flex-wrap:wrap">
+        <label class="field" style="flex:1;min-width:200px">Jogador<select id="manual-player">${players}</select></label>
+        <label class="field" style="flex:1;min-width:200px">Jogo<select id="manual-game">${games || '<option value="">Sem jogos futuros</option>'}</select></label>
+      </div>
+      <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:10px">
+        <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input id="manual-presence" type="checkbox" checked style="width:16px" /> Confirmar presença</label>
+        <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input id="manual-payment" type="checkbox" checked style="width:16px" /> Marcar pagamento como pago</label>
+      </div>
+      <div class="row games-actions" style="margin-top:10px">
+        <button class="btn btn-primary" type="button" data-act="manual-confirm" ${can ? '' : 'disabled'}>✅ Aplicar confirmação manual</button>
+      </div>
+      <p class="tiny muted">Mensalista: marca o mês pendente mais antigo. Diarista: marca a diária do jogo escolhido. Se marcar só a presença, o pagamento continua pendente no link dele.</p>
+    ` : '<p class="tiny muted">Crie o link do grupo e distribua os links individuais para liberar esta opção.</p>'}
+  `;
 }
 
 function pageSettings() {
@@ -2084,20 +2836,45 @@ function pageSettings() {
     <form data-form="settings">
       <div class="grid grid-2">
         <div class="card">
+          ${section('Perfil do racha', 'Dados e regras que aparecem no link do grupo')}
+          <div class="card-body form-grid">
+            <label class="field" style="grid-column:1/-1">Nome do racha<input name="rachaName" value="${esc(s.rachaName || '')}" placeholder="Racha do Loló" /></label>
+            <label class="field">Data de nascimento<input name="rachaFounded" type="date" value="${esc(String(s.rachaFounded || '').slice(0, 10))}" /></label>
+            <label class="field">Horário habitual<input name="rachaTime" type="time" value="${esc(s.rachaTime || '')}" /></label>
+            <label class="field">Local<input name="rachaLocation" value="${esc(s.rachaLocation || '')}" placeholder="Ex.: Quadra do clube, centro" /></label>
+            <label class="field">Duração<input name="rachaDuration" value="${esc(s.rachaDuration || '')}" placeholder="Ex.: 2 horas" /></label>
+            <label class="field" style="grid-column:1/-1;align-items:flex-start">Regras do racha (estatuto)<textarea name="rachaRules" rows="6" style="min-height:120px;resize:vertical" placeholder="Escreva aqui as regras do seu racha">${esc(s.rachaRules || '')}</textarea></label>
+            <div class="field" style="grid-column:1/-1;align-items:flex-start">
+              <span class="tiny muted">Logo do racha (JPG, PNG ou WebP — reduzida automaticamente)</span>
+              <div class="row" style="align-items:center;gap:12px;flex-wrap:wrap">
+                ${s.rachaLogo ? `<img src="${esc(s.rachaLogo)}" alt="Logo do racha" style="width:64px;height:64px;object-fit:cover;border-radius:14px;border:1px solid var(--border-soft)" />` : `<span style="width:64px;height:64px;display:grid;place-items:center;border-radius:14px;background:${esc(colors.accent)}22;font-weight:900;color:${esc(colors.accent)}">RL</span>`}
+                <input id="racha-logo-file" type="file" accept="image/png,image/jpeg,image/webp" />
+                ${s.rachaLogo ? `<button class="btn btn-sm btn-danger" type="button" data-act="remove-logo">Remover logo</button>` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
           ${section('Financeiro', 'Valores base usados nas simulações', `<button class="btn btn-sm btn-ghost" type="button" data-act="open-reconcile">Conciliar extrato</button>`)}
           <div class="card-body form-grid">
             ${f('year', 'Ano de controle', '1')}
             ${f('monthlyFee', 'Mensalidade (R$/mês)')}
             ${f('dayFee', 'Diária (R$/jogo)')}
+            <label class="field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px"><input name="dailyPaymentEnabled" type="checkbox" ${s.dailyPaymentEnabled !== false ? 'checked' : ''} style="width:16px" /> Exigir PIX antecipado dos diaristas no link individual</label>
             ${f('fieldRent', 'Aluguel mensal do campo (R$)')}
             ${f('goalkeepers', 'Nº de goleiros pagos', '1')}
             ${f('goalkeeperFee', 'Valor por goleiro por jogo (R$)')}
             ${f('refereeFee', 'Arbitragem por jogo (R$)')}
             ${f('gamesPerMonth', 'Jogos por mês', '1')}
+            <p class="tiny muted" style="grid-column:1/-1">Despesas fixas: ao salvar, Quadra, Goleiros e Arbitragem são recalculados com aluguel, goleiros, valor por goleiro, arbitragem por jogo e jogos por mês. Churrasco acompanha custo por pessoa, número de pessoas e quantidade por ano; Brindes divide a reserva mensal em 50% / 30% / 20% entre 1º, 2º e 3º lugares. Lançamentos e premiações salvos manualmente não são alterados.</p>
             ${f('initialCash', 'Saldo inicial do caixa (R$)')}
-            <label class="field" style="grid-column:1/-1">Chave PIX para cobranças<input name="pixKey" value="${esc(s.pixKey || '')}" placeholder="CPF, e-mail, telefone ou chave aleatória" /></label>
+            <label class="field" style="grid-column:1/-1">Chave PIX do administrador (PIX manual e doações)<input name="pixKey" value="${esc(s.pixKey || '')}" placeholder="CPF, e-mail, telefone ou chave aleatória" /></label>
             <label class="field">Nome do favorecido<input name="pixMerchant" value="${esc(s.pixMerchant || '')}" placeholder="RACHA DO LOLO" /></label>
             <label class="field">Cidade<input name="pixCity" value="${esc(s.pixCity || '')}" placeholder="SAO PAULO" /></label>
+            <label class="field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px"><input name="donationEnabled" type="checkbox" ${s.donationEnabled !== false ? 'checked' : ''} style="width:16px" /> Mostrar PIX de doação no link do grupo</label>
+            <label class="field" style="grid-column:1/-1">Mensagem da doação<input name="donationText" value="${esc(s.donationText || '')}" placeholder="Ajude a manter o racha: qualquer quantia é bem-vinda!" /></label>
+            <p class="tiny muted" style="grid-column:1/-1">A doação usa a mesma chave PIX acima, mas sem valor fixo: quem quiser doar escolhe o valor no próprio banco. Ela não cobra mensalidade nem diária e não precisa de Mercado Pago.</p>
+            <p class="tiny muted" style="grid-column:1/-1">A chave acima é o destino do <strong>PIX manual</strong> dos jogadores (mensalidade e diária). O app gera o código copia e cola. Se você escolher Mercado Pago em <strong>Pagamentos no link</strong>, o jogador também pode pagar por lá; esta chave continua valendo como alternativa.</p>
           </div>
         </div>
         <div class="card">
@@ -2138,8 +2915,11 @@ function pageSettings() {
             ${f('ptsGoal', 'Pontos por gol', '1')}
             ${f('ptsAssist', 'Pontos por assistência', '1')}
             ${f('ptsPresence', 'Pontos por presença', '1')}
-            ${f('ptsFairPlay', 'Prêmio de fair play no mês', '1')}
-            ${f('ptsPunctual', 'Pontualidade no mês', '1')}
+            ${f('ptsFairPlay', 'Pontos por fair play', '1')}
+            ${f('ptsPunctual', 'Pontos por pontualidade', '1')}
+            ${f('ptsFarrapou', 'Pontos perdidos por cada farrapada / falta', '1')}
+            ${f('ptsAtrasado', 'Pontos perdidos por cada atraso', '1')}
+            ${f('ptsDesarme', 'Por desarme / interceptação', '1')}
             ${f('ptsCard', 'Por cartão / entrada violenta', '1')}
           </div>
         </div>
@@ -2160,13 +2940,20 @@ function pageSettings() {
         <div class="card">
           ${section('Link para o grupo', 'Benefício para assinantes · somente leitura')}
           <div class="card-body stack">
-            <p class="small muted">Compartilhe um link para os membros acompanharem jogos, escalas, presença, ranking e o resumo financeiro. Eles não conseguem editar nada e não precisam assinar. O link é secreto — envie apenas ao grupo.</p>
+            <p class="small muted"><strong>Este é o link que vai ao grupo.</strong> Ele abre direto na aba <strong>👥 Jogadores</strong>: cada membro encontra o nome, informa os últimos 4 dígitos do telefone e já pode fazer check-in/pagamento. Depois o aparelho lembra o perfil por 180 dias. Eles não conseguem editar nada e não precisam assinar. O link é secreto — envie apenas ao grupo.</p>
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <strong class="small">Mensagem enviada ao grupo</strong>
+              <button class="btn btn-sm btn-ghost" type="button" data-act="reset-group-message">Restaurar padrão</button>
+            </div>
+            <label class="field" style="align-items:flex-start">Texto do convite<textarea name="groupAccessMessage" rows="4" style="min-height:104px;resize:vertical" placeholder="${esc(GROUP_ACCESS_MESSAGE)}">${esc(s.groupAccessMessage || GROUP_ACCESS_MESSAGE)}</textarea></label>
+            <p class="tiny muted"><code>{racha}</code> vira o nome cadastrado em Perfil do racha. Escreva <code>{link}</code> no lugar onde o endereço deve aparecer; se apagar essa marcação, o link vai no fim. Salve com <strong>Salvar premissas</strong> no final da página.</p>
             ${viewToken ? `
-              <label class="field">Link de visualização<input id="view-link" readonly value="${esc(viewUrl(viewToken))}" /></label>
+              <label class="field">Link do grupo<input id="view-link" readonly value="${esc(viewUrl(viewToken))}" /></label>
               <div class="row">
                 <button class="btn btn-primary" type="button" data-act="copy-view-link">📋 Copiar link</button>
                 <button class="btn btn-ghost" type="button" data-act="open-view-link">🔗 Abrir</button>
-                <button class="btn btn-ghost" type="button" data-act="share-whatsapp" data-kind="view">📤 WhatsApp</button>
+                <button class="btn btn-ghost" type="button" data-act="share-whatsapp" data-kind="view">📤 Enviar ao grupo</button>
+                <button class="btn btn-ghost" type="button" data-act="copy-whatsapp" data-kind="view">📋 Copiar p/ grupo</button>
                 <button class="btn btn-ghost" type="button" data-act="refresh-view-link" ${viewAllowed ? '' : 'disabled'}>🔄 Atualizar agora</button>
                 <button class="btn btn-danger" type="button" data-act="revoke-view" ${viewAllowed ? '' : 'disabled'}>🚫 Revogar link</button>
               </div>
@@ -2176,8 +2963,9 @@ function pageSettings() {
               </div>
               <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
             ` : `
-              <button class="btn btn-primary" type="button" data-act="create-view-link" ${viewAllowed ? '' : 'disabled'}>🔗 Criar link de visualização</button>
+              <button class="btn btn-primary" type="button" data-act="create-view-link">🔗 Gerar Acesso</button>
               <p class="tiny ${viewAllowed ? 'muted' : ''}" ${viewAllowed ? '' : 'style="color:var(--amber)"'}>${esc(viewNote)}</p>
+              <p class="tiny muted">Depois de gerar, aparecem os botões <strong>📤 Enviar ao grupo</strong> e <strong>📋 Copiar p/ grupo</strong>.</p>
             `}
           </div>
         </div>
@@ -2190,6 +2978,14 @@ function pageSettings() {
             </tbody></table></div>` : `<p class="tiny muted">Os links aparecem depois que o link do grupo for criado/atualizado.</p>`}
             <p class="tiny muted">Limite de vagas por jogo: <strong>${num(settings().maxPlayers) || 'sem limite'}</strong>. Quem entrar depois disso vai para a fila de espera.</p>
           </div>
+        </div>
+        <div class="card">
+          ${section('Pagamentos no link', 'Mensalidade em dia libera o mensalista · diarista paga antes', `<button class="btn btn-sm btn-ghost" type="button" data-act="refresh-daily-summary">🔄 Atualizar</button>`)}
+          <div class="card-body stack">${paymentModeHtml()}<hr />${dailyPaymentsHtml()}</div>
+        </div>
+        <div class="card">
+          ${section('Confirmação manual', 'Pagamento em dinheiro ou caso especial · sem esperar o PIX')}
+          <div class="card-body stack">${manualConfirmHtml()}</div>
         </div>
         <div class="card">
           ${section('Lembretes automáticos', '24h e 2h antes de cada jogo · frases editáveis', `<button class="btn btn-sm btn-ghost" type="button" data-act="reset-reminders">Restaurar padrão</button>`)}
@@ -2247,8 +3043,12 @@ function pageSubscription() {
   const badgeKind = st.kind === 'active' || st.kind === 'grace' ? 'green' : st.kind === 'trial' ? 'blue' : st.kind === 'pending' ? 'amber' : 'red';
   const canPay = L.canUseServer();
   const ready = canPay && L.configured;
+  const currentPlan = String(known?.plan || '');
+  const upgradePlan = currentPlan === 'yearly' ? 'intermediate_yearly' : 'intermediate_monthly';
+  const canUpgrade = ready && !!key && (st.kind === 'active' || st.kind === 'grace')
+    && L.tier() === 'basic' && ['monthly', 'yearly'].includes(currentPlan) && !known?.cancelRequestedAt;
   const note = !canPay
-    ? 'Este espelho é somente leitura para pagamentos. Para assinar, use o site principal: rachadololo.netlify.app.'
+    ? 'Aqui no teste local (ou no espelho do GitHub) não é possível assinar. Para assinar, use o site principal: rachadololo.netlify.app.'
     : !ready
       ? 'O checkout ainda está sendo configurado pelo administrador. Você pode continuar usando o período gratuito normalmente.'
       : '';
@@ -2259,7 +3059,7 @@ function pageSubscription() {
         <div class="row" style="align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
             <h2>${esc(st.label)}</h2>
-            <p>${esc(st.detail)}. Seus dados continuam salvos neste navegador, mesmo sem assinatura.</p>
+            <p>${esc(st.detail)}. Seus dados continuam salvos neste navegador, mesmo sem assinatura.${known?.plan === 'lifetime' ? ' Conta de administrador: todos os recursos liberados.' : ''}</p>
           </div>
           <div>${badge(st.label, badgeKind)}</div>
         </div>
@@ -2267,33 +3067,46 @@ function pageSubscription() {
       </div>
 
       <div class="card">
-        ${section('Escolha seu plano', 'Renovação automática. Cancele quando quiser.')}
+        ${section('Escolha seu plano', 'Básico ou PRO · mensal ou anual · renovação automática')}
         <div class="card-body">
           <div class="sub-plans">
             <div class="plan-card">
-              <span class="plan-tag">Mensal</span>
-              <div class="plan-name">Plano mensal</div>
+              <span class="plan-tag">Básico</span>
+              <div class="plan-name">Plano Básico</div>
               <div class="plan-price">${money(plans.monthly.amount)} <small>/ mês</small></div>
+              <p class="tiny muted" style="margin:6px 0 0">Ou ${money(plans.yearly.amount)}/ano — economize ${money(plans.monthly.amount * 12 - plans.yearly.amount)}.</p>
               <ul class="plan-list">
-                <li>Todos os 12 módulos do app</li>
-                <li>Link de visualização para o grupo (somente leitura)</li>
-                <li>Instalação como aplicativo no celular</li>
-                <li>Backup e comprovantes ilimitados</li>
+                <li>O app completo: jogos, presença, sorteio e pontuação</li>
+                <li>Ranking, premiações 1º/2º/3º, caixa e despesas</li>
+                <li>Link do grupo, área do jogador, PIX e placar ao vivo</li>
+                <li>Jogador avisa que pagou e você dá a baixa/check-in</li>
+                <li>PDF mensal, backup local, fotos e instalação no celular</li>
               </ul>
-              <button class="btn btn-primary btn-block" type="button" data-act="subscribe" data-plan="monthly" ${ready ? '' : 'disabled'}>Assinar mensal</button>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn btn-primary" type="button" data-act="subscribe" data-plan="monthly" ${ready ? '' : 'disabled'}>Mensal · ${money(plans.monthly.amount)}</button>
+                <button class="btn btn-ghost" type="button" data-act="subscribe" data-plan="yearly" ${ready ? '' : 'disabled'}>Anual · ${money(plans.yearly.amount)}</button>
+              </div>
             </div>
             <div class="plan-card featured">
-              <span class="plan-tag">Mais econômico</span>
-              <div class="plan-name">Plano anual</div>
-              <div class="plan-price">${money(plans.yearly.amount)} <small>/ ano</small></div>
+              <span class="plan-tag">ADM · Recomendado</span>
+              <div class="plan-name">Plano PRO ADM</div>
+              <div class="plan-price">${money(plans.intermediate_monthly.amount)} <small>/ mês</small></div>
+              <p class="tiny muted" style="margin:6px 0 0">Ou ${money(plans.intermediate_yearly.amount)}/ano — economize ${money(plans.intermediate_monthly.amount * 12 - plans.intermediate_yearly.amount)}.</p>
               <ul class="plan-list">
-                <li>Tudo do plano mensal</li>
-                <li>Cerca de 2 meses grátis por ano</li>
-                <li>Uma cobrança por ano</li>
+                <li>Tudo do Básico</li>
+                <li><strong>Presença confirmada pelo jogador (ADM):</strong> ele toca em “Vou jogar”; a baixa do pagamento continua com o administrador (ou com o webhook no Mercado Pago)</li>
+                <li>Cópia de segurança na nuvem e restauração em 1 clique</li>
+                <li>Link do grupo sem validade e renovação automática</li>
+                <li>Lembretes automáticos e relatório mensal guardado</li>
+                <li>Logo, nome e cores na área do jogador e histórico completo</li>
               </ul>
-              <button class="btn btn-primary btn-block" type="button" data-act="subscribe" data-plan="yearly" ${ready ? '' : 'disabled'}>Assinar anual</button>
+              <div class="row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn btn-primary" type="button" data-act="subscribe" data-plan="intermediate_monthly" ${ready ? '' : 'disabled'}>Mensal · ${money(plans.intermediate_monthly.amount)}</button>
+                <button class="btn btn-ghost" type="button" data-act="subscribe" data-plan="intermediate_yearly" ${ready ? '' : 'disabled'}>Anual · ${money(plans.intermediate_yearly.amount)}</button>
+              </div>
             </div>
           </div>
+          <p class="tiny muted" style="margin:14px 0 0">Durante os 14 dias grátis você testa todos os recursos, inclusive a confirmação de presença pelo jogador. Esse toque confirma a presença, não o pagamento; a baixa fica registrada para você conferir.</p>
         </div>
       </div>
 
@@ -2306,10 +3119,12 @@ function pageSubscription() {
               <div class="row">
                 <button class="btn btn-sm btn-ghost" type="button" data-act="copy-license">📋 Copiar chave</button>
                 <button class="btn btn-sm btn-ghost" type="button" data-act="refresh-license">🔄 Verificar agora</button>
+                ${canUpgrade ? `<button class="btn btn-sm btn-primary" type="button" data-act="upgrade" data-plan="${esc(upgradePlan)}">⚡ Fazer upgrade para o PRO</button>` : ''}
                 ${L.lastKnown?.state === 'active' && known?.plan !== 'lifetime' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
               </div>
-              ${known?.plan === 'lifetime' ? `<p class="tiny" style="color:var(--accent)">Acesso vitalício — sem cobranças e sem renovação.</p>` : ''}
-              <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Para usar em outro dispositivo, fale com o administrador.</p>
+              ${canUpgrade ? `<p class="tiny muted">Sua chave e sua data de cobrança continuam as mesmas: o valor da assinatura atual é alterado, sem nova assinatura e sem duas cobranças.</p>` : ''}
+              ${known?.plan === 'lifetime' ? `<p class="tiny" style="color:var(--accent)">Conta de administrador — sem cobranças e sem renovação.</p>` : ''}
+              <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Trocar de aparelho? Digite a chave aqui no aparelho novo e confirme o e-mail da assinatura. Você faz isso sozinho.</p>
               ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
               ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
               ${known?.cancelRequestedAt ? `<p class="tiny" style="color:var(--amber)">Cancelamento solicitado. O acesso segue até ${esc(String(known.nextPaymentAt || '').slice(0, 10))}.</p>` : ''}
@@ -2322,6 +3137,9 @@ function pageSubscription() {
               </form>
               <p class="tiny muted">Já assinou neste dispositivo? Digite a chave recebida no checkout.</p>
             `}
+            <div class="row" style="margin-top:12px">
+              <a class="btn btn-sm btn-ghost" href="contato.html" target="_blank" rel="noopener">✉️ Falar com o Administrador</a>
+            </div>
             ${L.lastKnown?.state === 'device_mismatch' ? `
               <form data-form="license-transfer" class="stack">
                 <input name="email" type="email" placeholder="E-mail usado no checkout" aria-label="E-mail da assinatura" />
@@ -2336,9 +3154,10 @@ function pageSubscription() {
           <div class="card-body">
             <div class="sub-steps">
               <div class="sub-step"><span>Use grátis por 14 dias e teste tudo, sem cartão.</span></div>
-              <div class="sub-step"><span>Escolha o plano e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
+              <div class="sub-step"><span>Escolha Básico ou PRO, mensal ou anual, e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
               <div class="sub-step"><span>Ao concluir o pagamento, a licença é confirmada automaticamente e o app volta a liberar a edição.</span></div>
-              <div class="sub-step"><span>Guarde a chave de licença: ela fica vinculada a este aparelho. Para usar em outro dispositivo, fale com o administrador.</span></div>
+              <div class="sub-step"><span>Guarde a chave de licença: ela fica vinculada a este aparelho. Para usar em outro dispositivo, abra <strong>Assinatura</strong> no aparelho novo, digite a chave e informe o e-mail usado na compra. O vínculo é transferido automaticamente, sem precisar de ajuda.</span></div>
+              <div class="sub-step"><span>Para subir do Básico ao PRO, use <strong>⚡ Fazer upgrade para o PRO</strong> na sua chave: o valor da assinatura atual muda, sem nova chave e sem duas cobranças. O botão aparece apenas para planos ativos no mesmo ciclo (mensal ou anual).</span></div>
               <div class="sub-step"><span>Para cancelar, use o botão na sua chave de licença. O acesso permanece até o fim do período já pago.</span></div>
             </div>
             <div class="legal-links" style="margin-top:18px">
@@ -2348,16 +3167,17 @@ function pageSubscription() {
           </div>
         </div>
       </div>
-    </div>`;
+    </div>${developerDonationCardHtml()}`;
 }
 
 function modalSubscribe(plan) {
   const L = window.RachaLicense;
   const p = L.plans()[plan] || L.plans().monthly;
+  const yearly = plan === 'yearly' || plan === 'intermediate_yearly';
   openModal('Assinar ' + p.label, 'Você será direcionado ao Mercado Pago para concluir o pagamento.', `
     <form data-form="checkout" data-plan="${esc(plan)}" class="stack">
       <div class="sim-result">
-        <div style="font-size:22px;font-weight:850">${money(p.amount)} <span class="tiny muted">/ ${plan === 'yearly' ? 'ano' : 'mês'}</span></div>
+        <div style="font-size:22px;font-weight:850">${money(p.amount)} <span class="tiny muted">/ ${yearly ? 'ano' : 'mês'}</span></div>
         <p class="small muted mt">Cobrança recorrente automática. Cancele quando quiser, sem multa.</p>
       </div>
       <label class="field">E-mail para a assinatura
@@ -2365,6 +3185,24 @@ function modalSubscribe(plan) {
       </label>
       <p class="tiny muted">Ao continuar, você concorda com os <a href="termos.html" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="privacidade.html" target="_blank" rel="noopener">Política de Privacidade</a>. Você tem 7 dias de arrependimento conforme o CDC.</p>
       <button class="btn btn-primary btn-block" type="submit">Ir para o pagamento →</button>
+    </form>`);
+}
+
+function modalUpgrade(plan) {
+  const L = window.RachaLicense;
+  const plans = L.plans();
+  const p = plans[plan] || plans.intermediate_monthly;
+  const atual = plans[L.lastKnown?.plan === 'yearly' ? 'yearly' : 'monthly'];
+  const periodo = p.cycle === 'yearly' ? 'ano' : 'mês';
+  openModal('Upgrade para o PRO', 'A mesma assinatura muda de valor — sem nova chave.', `
+    <form data-form="upgrade" data-plan="${esc(plan)}" class="stack">
+      <div class="sim-result">
+        <div style="font-size:22px;font-weight:850">${money(atual.amount)} → ${money(p.amount)} <span class="tiny muted">/ ${periodo}</span></div>
+        <p class="small muted mt">Você mantém a chave <strong>${esc(L.key || '')}</strong>, o aparelho vinculado e a data da próxima cobrança.</p>
+      </div>
+      <p class="small muted">O upgrade é feito no Mercado Pago sobre a assinatura atual. Não nasce uma segunda assinatura e não há cobrança dupla. Os recursos do PRO passam a valer assim que o servidor confirmar.</p>
+      <p class="tiny muted">Para trocar mensal por anual (ou o contrário), cancele a renovação e assine no novo ciclo — a frequência da assinatura atual não pode ser alterada.</p>
+      <button class="btn btn-primary btn-block" type="submit">Confirmar upgrade →</button>
     </form>`);
 }
 
@@ -2409,7 +3247,7 @@ function renderPaymentPage() {
             <div class="center tiny muted mt">Ou pague com o QR Code do seu banco usando o código acima.</div>
           ` : `<div class="banner" style="margin:0">Configure a chave PIX em Configurações para gerar o código de pagamento.</div>`}
           <label class="field mt">ID da transação (opcional)<input id="txid-input" placeholder="Ex.: E123456789202701011234" /></label>
-          <button class="btn btn-primary btn-block mt" data-act="confirm-payment-link" data-player="${pp.playerId}" data-month="${pp.month}" data-amount="${pp.amount}">✅ Já paguei — confirmar e dar baixa</button>
+          <button class="btn btn-primary btn-block mt" data-act="confirm-payment-link" data-player="${pp.playerId}" data-month="${pp.month}" data-amount="${pp.amount}">✅ Confirmar pagamento e dar baixa</button>
           <p class="tiny muted center mt">Ao confirmar, a mensalidade é marcada como paga automaticamente neste app.</p>
           <button class="btn btn-ghost btn-block mt" data-act="exit-payment">Voltar ao app</button>`}
       </div>
@@ -2417,6 +3255,21 @@ function renderPaymentPage() {
 }
 
 function handleHash() {
+  const hash = location.hash || '';
+  if (/^#config/.test(hash)) {
+    if (ui.page !== 'settings') navigate('settings'); else render();
+    if (hash.indexOf('mp=connected') >= 0) {
+      loadMpStatus(true);
+      toast('Conta conectada! Salve as premissas e atualize o link do grupo.', 'ok');
+    } else if (hash.indexOf('mp=error') >= 0) {
+      loadMpStatus(true);
+      toast('Não foi possível conectar o Mercado Pago. Tente novamente.', 'err');
+    }
+    if (hash.indexOf('mp=') >= 0) {
+      try { history.replaceState(null, '', location.pathname + location.search + '#config'); } catch (e) { /* ignora */ }
+    }
+    return;
+  }
   const m = location.hash.match(/^#cobranca\/([^/]+)\/(\d{1,2})(?:\/(\d+(?:\.\d+)?))?/);
   if (m) {
     ui.paymentPage = { playerId: decodeURIComponent(m[1]), month: num(m[2]), amount: m[3] ? num(m[3]) : num(settings().monthlyFee) };
@@ -2462,6 +3315,10 @@ function navigate(page) {
   ui.page = page;
   document.body.classList.remove('menu-open');
   render();
+  if (page === 'settings') {
+    loadMpStatus();
+    if (!dailySummary) fetchDailySummary(true).then(() => render());
+  }
 }
 
 /* ------------------------------------------------------------
@@ -2488,6 +3345,10 @@ function closeModal() {
 function confirmAction(message, fn) {
   pendingConfirm = fn;
   openModal('Confirmar ação', '', `<p class="small">${esc(message)}</p><div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Cancelar</button><button class="btn btn-danger" data-act="confirm-yes">Confirmar</button></div>`);
+}
+/* Ações irreversíveis pedem duas confirmações, uma após a outra. */
+function confirmActionTwice(message, finalMessage, fn) {
+  confirmAction(message, () => confirmAction(finalMessage, fn));
 }
 
 function modalPlayer(id) {
@@ -2523,6 +3384,7 @@ function modalPayment(playerId, month) {
       <label class="field">Mês<select disabled><option>${shortMonth(month)}/${y}</option></select></label>
       <label class="field">Valor pago (R$)<input name="amount" type="number" step="0.01" value="${rec ? num(rec.amount) : num(settings().monthlyFee)}" /></label>
       <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="paid" type="checkbox" ${!rec || rec.paid !== false ? 'checked' : ''} style="width:16px" /> Pagamento realizado</span></label>
+      <p class="tiny muted" style="grid-column:1/-1;margin:0">Use o valor que entrou no caixa do racha. A taxa do cartão do Mercado Pago fica entre o jogador e o Mercado Pago; se você colar o valor bruto, o app registra apenas o líquido.</p>
       <div class="form-actions" style="grid-column:1/-1">
         ${rec ? `<button class="btn btn-danger" type="button" data-act="delete-payment" data-id="${rec.id}">Remover</button>` : ''}
         ${rec?.paidAt ? `<button class="btn btn-ghost" type="button" data-act="view-receipt" data-id="${rec.id}">🧾 Comprovante</button>` : ''}
@@ -2535,7 +3397,7 @@ function modalPayment(playerId, month) {
 function modalGame() {
   openModal('Novo jogo', 'Informe a data; nome e horário são opcionais', `
     <form data-form="game" class="form-grid one">
-      <label class="field">Data<input name="date" type="date" value="${todayISO()}" required /></label>
+      <label class="field">Data<input name="date" type="date" value="${controlDateISO()}" required /></label>
       <label class="field">Nome do jogo (opcional)<input name="name" maxlength="90" placeholder="Ex.: Racha de sábado" /></label>
       <label class="field">Horário (opcional)<input name="time" type="time" /></label>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Criar jogo</button></div>
@@ -2567,7 +3429,7 @@ function modalCheckin(gameId) {
 function modalDay() {
   openModal('Nova diária', 'Lançamento individual', `
     <form data-form="day" class="form-grid one">
-      <label class="field">Data<input name="date" type="date" value="${todayISO()}" required /></label>
+      <label class="field">Data<input name="date" type="date" value="${controlDateISO()}" required /></label>
       <label class="field">Jogador<select name="playerId">${activePlayers().filter(p => p.type === 'Diarista').map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
       <label class="field">Valor (R$)<input name="amount" type="number" step="0.01" value="${num(settings().dayFee)}" /></label>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Salvar</button></div>
@@ -2575,12 +3437,19 @@ function modalDay() {
 }
 
 function modalExpense(cat) {
-  openModal('Nova despesa', 'Valor que sai do caixa', `
+  openModal('Nova despesa', 'Valor que sai do caixa · data dentro do ano de controle', `
     <form data-form="expense" class="form-grid one">
-      <label class="field">Data<input name="date" type="date" value="${todayISO()}" required /></label>
+      <label class="field">Data<input name="date" type="date" value="${controlDateISO()}" required /></label>
       <label class="field">Categoria<select name="category">${visibleExpenseCats().map(c => `<option ${c === cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-      <label class="field">Descrição<input name="description" placeholder="Ex.: aluguel de janeiro" /></label>
+      <label class="field">Descrição<input name="description" placeholder="Ex.: arbitragem, fita, premiação" /></label>
       <label class="field">Valor (R$)<input name="amount" type="number" step="0.01" required /></label>
+      <label class="field">Repetir<select name="repeat">
+        <option value="once">Não repetir — só esta data</option>
+        <option value="game">Por jogo — valor é por jogo</option>
+        <option value="month">Por mês — valor é por mês (janeiro a dezembro)</option>
+        <option value="year">Ano todo — valor é o total do ano</option>
+      </select></label>
+      <p class="tiny muted">“Por jogo” cria um lançamento para cada jogo do ano. “Por mês” cria 12 lançamentos, um em cada mês. “Ano todo” cria um único lançamento com o valor informado.</p>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Salvar</button></div>
     </form>`);
 }
@@ -2655,7 +3524,7 @@ function modalCobranca(playerId) {
 
 function modalBenefit(id) {
   const b = id ? state.benefits.find(x => x.id === id) : null;
-  const d = b || { date: todayISO(), playerId: activePlayers()[0]?.id || '', type: 'Camisa/colete', amount: 0, fromCash: true, note: '' };
+  const d = b || { date: controlDateISO(), playerId: activePlayers()[0]?.id || '', type: 'Camisa/colete', amount: 0, fromCash: true, note: '' };
   openModal(id ? 'Editar benefício' : 'Novo benefício', 'Descontos já refletidos na mensalidade devem marcar "Sai do caixa?" como Não', `
     <form data-form="benefit" data-id="${id || ''}" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${esc(d.date)}" required /></label>
@@ -2898,9 +3767,9 @@ function modalProfile(id) {
     </div>
     <div class="grid grid-2 mt">
       <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
-      <div class="card card-pad"><div class="label tiny muted">AVALIAÇÃO INTERNA</div><strong>${playerRating(p)}</strong><div class="tiny muted mt">média de força e velocidade · ${p.position || 'sem posição'}</div></div>
+      <div class="card card-pad"><div class="label tiny muted">NOTA GERAL</div><strong>${playerRating(p)}</strong><div class="tiny muted mt">média de força e velocidade · ${p.position || 'sem posição'}</div></div>
     </div>
-    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>🔗 Copiar link</button><button class="btn btn-primary" type="button" data-act="send-player-link" data-id="${id}" ${playerLinks[id] ? '' : 'disabled'}>📤 Enviar no WhatsApp</button><button class="btn btn-ghost" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
+    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}">🔗 Copiar link</button><button class="btn btn-primary" type="button" data-act="send-player-link" data-id="${id}">📤 Enviar no WhatsApp</button><button class="btn btn-ghost" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
 }
 
 /* ------------------------------------------------------------
@@ -2919,10 +3788,10 @@ function upsertScore(playerId, key, value) {
   const m = currentMonth(), y = year();
   let sc = state.scores.find(s => s.playerId === playerId && s.month === m && s.year === y);
   if (!sc) {
-    sc = { id: uid(), playerId, month: m, year: y, goals: 0, assists: 0, presence: 0, fairPlay: 0, punctual: 0, cards: 0 };
+    sc = { id: uid(), playerId, month: m, year: y, goals: 0, assists: 0, presence: 0, desarmes: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
     state.scores.push(sc);
   }
-  sc[key] = key === 'fairPlay' || key === 'punctual' ? (value ? 1 : 0) : num(value);
+  sc[key] = num(value);
   sc.demo = false;
   const cell = document.getElementById('pts-' + playerId);
   if (cell) cell.textContent = scorePoints(sc);
@@ -3103,6 +3972,7 @@ document.addEventListener('click', (e) => {
 
     case 'open-subscription': navigate('subscription'); break;
     case 'subscribe': modalSubscribe(el.dataset.plan); break;
+    case 'upgrade': modalUpgrade(el.dataset.plan); break;
     case 'copy-license':
       copyText(window.RachaLicense.key || '').then(ok => toast(ok ? 'Chave copiada!' : 'Não foi possível copiar.', ok ? 'ok' : 'err'));
       break;
@@ -3191,8 +4061,16 @@ document.addEventListener('click', (e) => {
       pendingPhoto = null; closeModal(); render(); toast('Foto removida.');
       break;
     }
+    case 'remove-logo': {
+      delete state.settings.rachaLogo;
+      photoDel(RACHA_LOGO_ID);
+      save('removeu logo do racha'); render(); toast('Logo removida.');
+      break;
+    }
     case 'copy-link': copyText($('#pay-link')?.value || '').then(ok => toast(ok ? 'Link copiado!' : 'Não foi possível copiar.', ok ? 'ok' : 'err')); break;
     case 'copy-pix': copyText($('#pix-code')?.value || '').then(ok => toast(ok ? 'Código PIX copiado!' : 'Não foi possível copiar.', ok ? 'ok' : 'err')); break;
+    case 'copy-donation-app': copyText($('#donate-code')?.value || '').then(ok => toast(ok ? 'Código PIX de doação copiado!' : 'Não foi possível copiar.', ok ? 'ok' : 'err')); break;
+    case 'copy-dev-donation': copyText($('#dev-donate-code')?.value || '').then(ok => toast(ok ? 'PIX do desenvolvedor copiado!' : 'Não foi possível copiar.', ok ? 'ok' : 'err')); break;
     case 'open-pay-link': {
       const link = $('#pay-link')?.value;
       if (link) window.open(link, '_blank', 'noopener');
@@ -3211,7 +4089,7 @@ document.addEventListener('click', (e) => {
       const pp = ui.paymentPage;
       if (!pp) break;
       state.payments = state.payments.filter(x => !(x.playerId === pp.playerId && x.month === pp.month && x.year === year()));
-      const rec = ensureReceipt({ id: uid(), playerId: pp.playerId, month: pp.month, year: year(), amount: pp.amount, paid: true, txid: $('#txid-input')?.value || '', paidAt: new Date().toISOString(), origem: 'link' });
+      const rec = ensureReceipt({ id: uid(), playerId: pp.playerId, month: pp.month, year: year(), amount: num(pp.amount), paid: true, txid: $('#txid-input')?.value || '', paidAt: new Date().toISOString(), origem: 'link' });
       state.payments.push(rec);
       save(); renderPaymentPage(); toast('Pagamento confirmado! Baixa registrada automaticamente.');
       break;
@@ -3281,25 +4159,73 @@ document.addEventListener('click', (e) => {
       save(); render(); toast('Diária excluída.');
     }); break;
 
+    case 'remove-arrival': {
+      const key = drawGameKey();
+      setArrivalList(key, arrivalList(key).filter(x => x.id !== id));
+      save('removeu da chamada', `${playerName(id)} · ${key}`); render();
+      break;
+    }
+    case 'undo-arrival': {
+      const key = drawGameKey();
+      const list = arrivalList(key).slice(0, -1);
+      setArrivalList(key, list);
+      save('desfez última chegada', key); render();
+      break;
+    }
+    case 'clear-arrivals': {
+      const key = drawGameKey();
+      setArrivalList(key, []);
+      save('limpou chamada', key); render(); toast('Chamada limpa.');
+      break;
+    }
+    case 'move-arrival': {
+      const key = drawGameKey();
+      const list = arrivalList(key);
+      const at = list.findIndex(x => x.id === id);
+      const to = at + num(el.dataset.dir);
+      if (at < 0 || to < 0 || to >= list.length) break;
+      [list[at], list[to]] = [list[to], list[at]];
+      setArrivalList(key, list);
+      save('ajustou ordem de chegada', `${playerName(id)} · ${key}`); render();
+      break;
+    }
     case 'toggle-confirm': {
       const key = drawGameKey();
       const set = new Set(confirmedIds(key));
-      if (set.has(id)) set.delete(id); else set.add(id);
+      const list = arrivalList(key).filter(x => x && x.id);
+      const at = list.findIndex(x => x.id === id);
+      let msg;
+      if (!set.has(id)) {
+        set.add(id);
+        if (at < 0) list.push({ id, at: new Date().toISOString() });
+        msg = 'confirmou presença';
+      } else if (at < 0) {
+        list.push({ id, at: new Date().toISOString() });
+        msg = 'registrou chegada';
+      } else {
+        set.delete(id);
+        list.splice(at, 1);
+        msg = 'desconfirmou presença';
+      }
       state.confirmations[key] = [...set];
-      save(set.has(id) ? 'confirmou presença' : 'desconfirmou presença', `${playerName(id)} · ${key}`);
+      setArrivalList(key, list);
+      save(msg, `${playerName(id)} · ${key}`);
       render();
       break;
     }
     case 'confirm-all': {
       const key = drawGameKey();
-      state.confirmations[key] = activePlayers().map(p => p.id);
-      save('confirmou todos', key); render(); toast('Todos os jogadores confirmados.');
+      const all = activePlayers();
+      state.confirmations[key] = all.map(p => p.id);
+      setArrivalList(key, sortByArrival(all, key).map(p => ({ id: p.id, at: new Date().toISOString() })));
+      save('confirmou todos', key); render(); toast('Todos confirmados, na ordem de chegada atual.');
       break;
     }
     case 'confirm-none': {
       const key = drawGameKey();
       state.confirmations[key] = [];
-      save('limpou confirmados', key); render(); toast('Lista de confirmados limpa.');
+      setArrivalList(key, []);
+      save('limpou confirmados', key); render(); toast('Lista de confirmados e chamada limpas.');
       break;
     }
     case 'do-draw': doDraw(); break;
@@ -3313,7 +4239,10 @@ document.addEventListener('click', (e) => {
       const set = new Set(confirmedIds(key));
       Object.keys(resp).forEach(id => { if (resp[id] === 'yes') set.add(id); else set.delete(id); });
       wait.forEach(id => set.delete(id));
+      const lista = sortByArrival(activePlayers().filter(p => set.has(p.id)), key)
+        .map(p => ({ id: p.id, at: new Date().toISOString() }));
       state.confirmations[key] = [...set];
+      setArrivalList(key, lista);
       save('aplicou confirmações do grupo', key); render(true); toast('Confirmações do grupo aplicadas!');
       break;
     }
@@ -3334,18 +4263,61 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'share-whatsapp': shareWhatsApp(el.dataset.kind); break;
-    case 'copy-player-link':
-      copyText(playerLinks[id] || '').then(ok => toast(ok ? 'Link do jogador copiado!' : 'Link indisponível. Atualize o link do grupo.', ok ? 'ok' : 'err'));
+    case 'copy-whatsapp': copyWhatsApp(el.dataset.kind); break;
+    case 'copy-player-link': {
+      const url = playerLinks[id] || '';
+      if (!url) { toast('Link do jogador ainda não foi gerado. Crie o link do grupo em Configurações.', 'err'); break; }
+      copyText(url).then(ok => toast(ok ? 'Link do jogador copiado!' : 'Não foi possível copiar. Use o botão no navegador do Windows.', ok ? 'ok' : 'err'));
       break;
+    }
     case 'send-player-link': {
       const url = playerLinks[id] || '';
-      if (!url) { toast('Link indisponível. Atualize o link do grupo.', 'err'); break; }
+      if (!url) { toast('Link do jogador ainda não foi gerado. Crie o link do grupo em Configurações.', 'err'); break; }
       const p = playerById(id);
       const first = String(p?.name || 'jogador').split(' ')[0];
-      const msg = `Olá ${first}! Aqui está seu link pessoal do Racha do Loló ⚽\n\n${url}\n\nUse-o para confirmar presença, avaliar jogos e ver suas mensalidades. Guarde o link: ele é o seu acesso e não deve ser compartilhado.`;
+      const msg = `Olá ${first}! Aqui está seu link pessoal do Racha do Loló ⚽\n\n${url}\n\nUse-o para confirmar presença, ver suas mensalidades e acompanhar o racha. Guarde o link: ele é o seu acesso e não deve ser compartilhado.`;
       const direct = !!waNumber(p?.phone);
       window.open(waDirect(p?.phone, msg), '_blank', 'noopener');
       toast(direct ? `WhatsApp aberto para ${first}!` : 'Sem telefone cadastrado: escolha o contato no WhatsApp.', direct ? 'ok' : 'err');
+      break;
+    }
+    case 'refresh-daily-summary':
+      fetchDailySummary(false).then(() => render());
+      break;
+    case 'connect-mp':
+      startMpConnect();
+      break;
+    case 'ack-notices': ackPaymentNotices(); break;
+    case 'manual-confirm': {
+      const pid = $('#manual-player')?.value || '';
+      const gameId = $('#manual-game')?.value || '';
+      const presence = !!$('#manual-presence')?.checked;
+      const payment = !!$('#manual-payment')?.checked;
+      const isDaily = String(playerById(pid)?.type || '').toLowerCase() === 'diarista';
+      if (!pid || (!presence && !payment)) {
+        toast('Escolha o jogador e marque ao menos uma opção.', 'err');
+        break;
+      }
+      if ((presence || (payment && isDaily)) && !gameId) {
+        toast('Escolha o jogo para esta confirmação.', 'err');
+        break;
+      }
+      const parts = [];
+      if (presence) parts.push('presença');
+      if (payment) parts.push(isDaily ? 'diária' : 'mensalidade');
+      confirmAction(`Confirmar ${parts.join(' e ')} de ${playerName(pid) || 'jogador'} manualmente, sem PIX?`,
+        () => applyManualConfirm(pid, gameId, presence, payment));
+      break;
+    }
+    case 'cancel-daily-credit':
+    case 'cancel-daily-refund': {
+      const gameId = $('#daily-cancel-game')?.value || '';
+      if (!gameId) { toast('Escolha o jogo.', 'err'); break; }
+      const credit = el.dataset.act === 'cancel-daily-credit';
+      const msg = credit
+        ? 'Cancelar este jogo e transformar as diárias pagas em crédito para a próxima diária dos mesmos jogadores?'
+        : 'Cancelar este jogo e registrar o estorno das diárias pagas (devolução combinada com o jogador, fora do app)?';
+      confirmAction(msg, () => cancelDailyPaidGame(gameId, credit ? 'credit' : 'refund'));
       break;
     }
     case 'show-reminders': modalReminders(); break;
@@ -3356,6 +4328,10 @@ document.addEventListener('click', (e) => {
       save('restaurou frases dos lembretes'); render(); toast('Frases padrão restauradas e publicadas.', 'ok');
       break;
     }
+    case 'reset-group-message':
+      state.settings.groupAccessMessage = GROUP_ACCESS_MESSAGE;
+      save('restaurou mensagem do grupo'); render(); toast('Mensagem do grupo restaurada.', 'ok');
+      break;
     case 'live-start': runLiveAction('start'); break;
     case 'live-goal': runLiveAction('goal'); break;
     case 'live-assist': runLiveAction('assist'); break;
@@ -3403,6 +4379,7 @@ document.addEventListener('click', (e) => {
     case 'bank-ignore': {
       const row = ui.bankRows[num(el.dataset.i)];
       if (!row) break;
+      let taxaIgnorada = false;
       if (el.dataset.act === 'bank-confirm' && row.match) {
         const ref = bankCandidates().find(c => c.type === row.match.type && c.id === row.match.id);
         if (ref) {
@@ -3415,10 +4392,18 @@ document.addEventListener('click', (e) => {
         bankRegister(row, 'matched', row.match);
         save('conciliou extrato', row.desc);
       } else if (el.dataset.act === 'bank-import') {
-        const date = row.date, [y, m] = date.split('-').map(Number);
-        state.expenses.push({ id: uid(), date, month: m, year: y, category: 'Outros', description: row.desc || 'Importado do extrato', amount: Math.abs(row.amount), reconciledAt: new Date().toISOString() });
-        bankRegister(row, 'imported');
-        save('importou despesa do extrato', row.desc);
+        /* A taxa do Mercado Pago já está embutida no valor cobrado do jogador,
+           mas não no caixa: lançá-la aqui descontaria a taxa duas vezes. */
+        if (isMpFeeDescription(row.desc)) {
+          taxaIgnorada = true;
+          bankRegister(row, 'ignored');
+          save('ignorou taxa do Mercado Pago no caixa', row.desc);
+        } else {
+          const date = row.date, [y, m] = date.split('-').map(Number);
+          state.expenses.push({ id: uid(), date, month: m, year: y, category: 'Outros', description: row.desc || 'Importado do extrato', amount: Math.abs(row.amount), reconciledAt: new Date().toISOString() });
+          bankRegister(row, 'imported');
+          save('importou despesa do extrato', row.desc);
+        }
       } else {
         bankRegister(row, 'ignored');
         save('ignorou lançamento do extrato', row.desc);
@@ -3426,7 +4411,7 @@ document.addEventListener('click', (e) => {
       ui.bankRows = ui.bankRows.filter((_, i) => i !== num(el.dataset.i));
       modalReconcile();
       render();
-      toast('Lançamento processado.');
+      toast(taxaIgnorada ? 'Taxa do Mercado Pago não entrou no caixa (valor líquido já registrado).' : 'Lançamento processado.');
       break;
     }
 
@@ -3434,7 +4419,7 @@ document.addEventListener('click', (e) => {
       const cat = el.dataset.cat, m = currentMonth(), y = year();
       const amount = cat === 'Quadra' ? num(settings().fieldRent) : num(settings().goalkeepers) * num(settings().goalkeeperFee) * num(settings().gamesPerMonth);
       const date = isoDate(y, m, cat === 'Quadra' ? 5 : 28);
-      state.expenses.push({ id: uid(), date, month: m, year: y, category: cat, description: cat === 'Quadra' ? `Aluguel de ${monthName(m)}` : `${settings().goalkeepers} goleiros × ${settings().gamesPerMonth} jogos`, amount });
+      state.expenses.push({ id: uid(), date, month: m, year: y, category: cat, description: cat === 'Quadra' ? `Aluguel de ${monthName(m)}` : `${settings().goalkeepers} goleiros × ${settings().gamesPerMonth} jogos`, amount, fixed: cat === 'Quadra' ? 'fieldRent' : 'goalkeepers' });
       save(); render(); toast('Despesa lançada.');
       break;
     }
@@ -3443,6 +4428,17 @@ document.addEventListener('click', (e) => {
       state.expenses = state.expenses.filter(x => x.id !== id);
       save('excluiu despesa', exp ? `${fmtDate(exp.date)} · ${exp.description || exp.category}` : id); render(); toast('Despesa excluída.');
     }); break;
+    case 'delete-expense-series': {
+      const sid = String(el.dataset.series || '');
+      const rows = state.expenses.filter(x => x.seriesId === sid);
+      if (!rows.length) { toast('Repetição não encontrada.', 'err'); break; }
+      confirmAction(`Apagar ${rows.length} lançamento(s) desta repetição?`, () => {
+        state.expenses = state.expenses.filter(x => x.seriesId !== sid);
+        save('apagou repetição de despesa', `${rows.length} lançamentos`);
+        render(); toast('Repetição apagada.');
+      });
+      break;
+    }
 
     case 'edit-benefit': modalBenefit(id); break;
     case 'delete-benefit': confirmAction('Excluir este benefício?', () => {
@@ -3483,9 +4479,13 @@ document.addEventListener('click', (e) => {
       demoIds.forEach(id => photoDel(id));
       save('removeu dados de exemplo'); render(); toast('Dados de exemplo removidos.');
     }); break;
-    case 'clear-all': confirmAction('Apagar TODOS os dados deste navegador? Esta ação não pode ser desfeita.', () => {
-      photoClear(); state = emptyState(); ui.sim = null; save('apagou todos os dados'); navigate('dashboard'); toast('Tudo apagado.');
-    }); break;
+    case 'clear-all': confirmActionTwice(
+      'Apagar TODOS os dados deste navegador? Esta ação não pode ser desfeita.',
+      'Última confirmação: faça um backup se precisar. Os dados serão apagados agora.',
+      () => {
+        photoClear(); state = emptyState(); ui.sim = null; save('apagou todos os dados'); navigate('dashboard'); toast('Tudo apagado.');
+      }
+    ); break;
   }
 });
 
@@ -3498,6 +4498,16 @@ document.addEventListener('submit', async (e) => {
   const type = form.dataset.form;
 
   if (licenseLocked() && !['checkout', 'license-key', 'license-transfer'].includes(type)) { warnLocked(); return; }
+
+  /* Evita lançamento "invisível": os totais só consideram o ano de controle. */
+  const usesDate = ['game', 'day', 'expense', 'benefit'].includes(type) && !(type === 'benefit' && form.dataset.id);
+  if (usesDate && v('date')) {
+    const dateYear = Number(v('date').slice(0, 4));
+    if (dateYear !== year()) {
+      toast(`Essa data é de ${dateYear}. Use ${year()} ou troque o ano no topo antes de salvar.`, 'err');
+      return;
+    }
+  }
 
   if (type === 'checkout') {
     const btn = form.querySelector('button[type="submit"]');
@@ -3512,6 +4522,22 @@ document.addEventListener('submit', async (e) => {
     } catch (err) {
       toast(err.message || 'Não foi possível iniciar.', 'err');
       if (btn) { btn.disabled = false; btn.textContent = 'Ir para o pagamento →'; }
+    }
+    return;
+  }
+
+  if (type === 'upgrade') {
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Fazendo upgrade...'; }
+    try {
+      const data = await window.RachaLicense.changePlan(form.dataset.plan);
+      if (!data || data.ok !== true) throw new Error((data && data.error) || 'Não foi possível fazer o upgrade.');
+      closeModal();
+      toast(data.message || 'Upgrade concluído!', 'ok');
+      render();
+    } catch (err) {
+      toast(err.message || 'Não foi possível fazer o upgrade.', 'err');
+      if (btn) { btn.disabled = false; btn.textContent = 'Confirmar upgrade →'; }
     }
     return;
   }
@@ -3563,8 +4589,11 @@ document.addEventListener('submit', async (e) => {
   }
   else if (type === 'payment') {
     const playerId = v('playerId'), month = num(v('month')), y = year();
+    /* Pendência antiga mantém o valor original, mesmo que a mensalidade tenha mudado. */
+    const anterior = state.payments.find(x => x.playerId === playerId && x.month === month && x.year === y);
+    const esperado = anterior ? num(anterior.amount) : num(settings().monthlyFee);
     state.payments = state.payments.filter(x => !(x.playerId === playerId && x.month === month && x.year === y));
-    if (fd.get('paid') !== null) state.payments.push({ id: uid(), playerId, month, year: y, amount: num(v('amount')), paid: true });
+    if (fd.get('paid') !== null) state.payments.push({ id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: true });
     save(fd.get('paid') !== null ? 'recebeu mensalidade' : 'removeu mensalidade', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast('Pagamento salvo.');
   }
   else if (type === 'game') {
@@ -3591,19 +4620,55 @@ document.addEventListener('submit', async (e) => {
     save('lançou diária', `${playerName(v('playerId'))} · ${fmtDate(date)}`); closeModal(); render(); toast('Diária lançada.');
   }
   else if (type === 'expense') {
-    const date = v('date'), [y, m] = date.split('-').map(Number);
-    state.expenses.push({ id: uid(), date, month: m, year: y, category: v('category'), description: v('description'), amount: num(v('amount')) });
-    save('lançou despesa', `${v('category')} · ${fmtDate(date)}`); closeModal(); render(); toast('Despesa salva.');
+    const date = v('date'), [y, m, day] = date.split('-').map(Number);
+    const category = v('category'), description = v('description'), amount = num(v('amount'));
+    const repeat = v('repeat') || 'once';
+    const base = { date, month: m, year: y, category, description, amount, repeat };
+    const seriesId = uid();
+    let rows = [];
+
+    if (repeat === 'game') {
+      const games = state.games.filter(g => g && g.year === y).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+      if (!games.length) {
+        toast('Não há jogos cadastrados neste ano para repetir por jogo.', 'err');
+        return;
+      }
+      rows = games.map(g => ({
+        ...base, id: uid(), seriesId, date: g.date, month: num(g.month), year: num(g.year), gameId: g.id
+      }));
+    } else if (repeat === 'month') {
+      rows = Array.from({ length: 12 }, (_, i) => {
+        const mo = i + 1;
+        const safeDay = Math.min(day || 1, new Date(y, mo, 0).getDate());
+        return { ...base, id: uid(), seriesId, date: isoDate(y, mo, safeDay), month: mo, year: y };
+      });
+    } else if (repeat === 'year') {
+      rows = [{ ...base, id: uid(), seriesId }];
+    } else {
+      rows = [{ ...base, id: uid() }];
+    }
+
+    rows.forEach(row => state.expenses.push(row));
+    const repeatLabel = { game: 'por jogo', month: 'por mês', year: 'ano todo' }[repeat] || '';
+    save('lançou despesa', `${category} · ${rows.length} lançamento(s)${repeatLabel ? ' · ' + repeatLabel : ''}`);
+    closeModal(); render();
+    toast(rows.length > 1 ? `${rows.length} despesas salvas (${repeatLabel}).` : 'Despesa salva.');
   }
   else if (type === 'award') {
-    const m = currentMonth(), y = year();
-    let aw = state.awards.find(a => a.month === m && a.year === y);
+    const m = currentMonth(), y = year(), tops = topWinners(m);
+    let aw = state.awards.find(a => num(a.month) === m && num(a.year) === y);
     if (!aw) { aw = { id: uid(), month: m, year: y }; state.awards.push(aw); }
-    Object.assign(aw, {
-      bestGk: v('bestGk'), defender: v('defender'), fairPlay: v('fairPlay'), crack: v('crack'),
-      vipCount: num(v('vipCount')), gift: v('gift'), cost: num(v('cost')), delivered: fd.get('delivered') !== null, demo: false
-    });
-    save('salvou premiação', `${monthName(m)}/${y}`); render(); toast('Premiação salva.');
+    aw.places = AWARD_PLACES.map((meta, i) => ({
+      place: meta.place,
+      playerId: tops[i]?.playerId || '',
+      points: num(tops[i]?.points),
+      gift: v('g' + i),
+      cost: num(v('c' + i)),
+      delivered: fd.get('d' + i) !== null
+    }));
+    aw.demo = false;
+    aw.fixed = false;
+    save('salvou premiação', `${monthName(m)}/${y} · 1º/2º/3º`); render(); toast('Premiação salva com 1º, 2º e 3º lugares.');
   }
   else if (type === 'benefit') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
@@ -3618,17 +4683,36 @@ document.addEventListener('submit', async (e) => {
     closeModal();
   }
   else if (type === 'settings') {
-    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard']);
+    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsCard']);
     Object.keys(defaultSettings()).forEach(k => {
       if (k === 'bbqEnabled') { state.settings.bbqEnabled = fd.get('bbqEnabled') !== null; return; }
+      if (k === 'dailyPaymentEnabled') { state.settings.dailyPaymentEnabled = fd.get('dailyPaymentEnabled') !== null; return; }
+      if (k === 'donationEnabled') { state.settings.donationEnabled = fd.get('donationEnabled') !== null; return; }
       if (!fd.has(k)) return;
       state.settings[k] = numeric.has(k) ? num(v(k)) : v(k);
     });
-    ui.sim = null; save('alterou premissas'); render(); toast('Premissas salvas.');
+    syncFixedExpenses();
+    ui.sim = null; save('alterou premissas'); render(); toast('Premissas salvas. Quadra e Goleiros foram recalculados.');
   }
 });
 
-document.addEventListener('change', (e) => {
+/* Backup importado: strings são dados, não HTML. Números/booleanos seguem intactos. */
+function sanitizeBackupStrings(value) {
+  if (typeof value === 'string') return value.replace(/[<>]/g, '').slice(0, 2000);
+  if (Array.isArray(value)) return value.map(sanitizeBackupStrings);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).forEach((key) => {
+      const cleanKey = sanitizeBackupStrings(key);
+      if (cleanKey === '__proto__') return;
+      out[cleanKey] = sanitizeBackupStrings(value[key]);
+    });
+    return out;
+  }
+  return value;
+}
+
+document.addEventListener('change', async (e) => {
   const el = e.target;
   if (licenseLocked() && (['year-select', 'import-file', 'bank-file', 'pay-month', 'score-month', 'award-month'].includes(el.id) || el.dataset.goalProgress)) { warnLocked(); return; }
   if (el.id === 'bank-file' && el.files?.[0]) {
@@ -3641,6 +4725,17 @@ document.addEventListener('change', (e) => {
       toast(`Arquivo ${file.name} carregado. Clique em Analisar.`);
     };
     reader.readAsText(file);
+    return;
+  }
+  if (el.id === 'racha-logo-file' && el.files?.[0]) {
+    try {
+      const data = await readLogoImage(el.files[0]);
+      state.settings.rachaLogo = data;
+      await storePhoto(RACHA_LOGO_ID, data);
+      save('atualizou logo do racha'); render(); toast('Logo salva.');
+    } catch (err) {
+      toast(err.message || 'Não foi possível salvar a logo.', 'err');
+    }
     return;
   }
   if (el.dataset.goalProgress) {
@@ -3658,7 +4753,7 @@ document.addEventListener('change', (e) => {
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const data = JSON.parse(reader.result);
+        const data = sanitizeBackupStrings(JSON.parse(reader.result));
         if (!data.settings || !Array.isArray(data.players)) throw new Error('Arquivo inválido');
         state = data; normalizeState();
         await hydratePhotos();

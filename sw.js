@@ -1,11 +1,12 @@
 /* Service worker — cache offline do Racha do Loló */
-const CACHE = 'racha-do-lolo-v13';
+const CACHE = 'racha-do-lolo-v67';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './subscription.js',
+  './developer.js',
   './visualizar.html',
   './visualizar.js',
   './jogador.html',
@@ -17,7 +18,8 @@ const ASSETS = [
   './icon-512.png',
   './icon.svg',
   './termos.html',
-  './privacidade.html'
+  './privacidade.html',
+  './contato.html'
 ];
 
 self.addEventListener('install', (event) => {
@@ -44,6 +46,9 @@ self.addEventListener('fetch', (event) => {
 
   // Funções de pagamento/licença nunca entram no cache.
   if (url.pathname.startsWith('/.netlify/functions/')) return;
+
+  // Links com token (v=VW- / p=VP-) vão direto à rede, sem tocar no cache.
+  if (/[?&](?:v=VW-|p=VP-)/.test(url.search)) return;
 
   if (request.mode === 'navigate' || (request.headers.get('accept') || '').includes('text/html')) {
     event.respondWith(
