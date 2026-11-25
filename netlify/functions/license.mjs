@@ -71,12 +71,15 @@ export default async (req) => {
   }
 
   const allPlans = plans();
+  const publicPlans = {};
+  Object.entries(allPlans).forEach(([id, p]) => {
+    publicPlans[id] = {
+      amount: p.amount, label: p.label, tier: p.tier, cycle: p.cycle
+    };
+  });
   const publicInfo = {
     configured: !!process.env.MP_ACCESS_TOKEN,
-    plans: {
-      monthly: { amount: allPlans.monthly.amount, label: 'Mensal' },
-      yearly: { amount: allPlans.yearly.amount, label: 'Anual' }
-    }
+    plans: publicPlans
   };
 
   if (!key) return json({ ...publicInfo, state: 'no_key' }, 200);
@@ -114,7 +117,7 @@ export default async (req) => {
       ...publicInfo,
       valid: false,
       state: 'device_mismatch',
-      message: 'Esta chave está vinculada a outro dispositivo. Use o aparelho original ou fale com o administrador.'
+      message: 'Esta chave está vinculada a outro dispositivo. Digite o e-mail usado no checkout no formulário abaixo para mover o vínculo para este aparelho.'
     }, 200);
   }
 

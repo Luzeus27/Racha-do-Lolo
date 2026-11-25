@@ -1,6 +1,6 @@
 /* Nota (1..5) dada por um jogador a um jogo já realizado, no link compartilhado. */
 import { getStore } from '@netlify/blobs';
-import { json, setCorsOrigin, viewUnavailable } from './_shared.mjs';
+import { json, setCorsOrigin, viewUnavailable, rateLimit } from './_shared.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -63,6 +63,10 @@ export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
+  const limit = await rateLimit(req, 'view-rating', { max: 60, windowMs: 60000 });
+  if (!limit.ok) return json({ error: 'Muitas notas enviadas. Aguarde um instante.' }, 429, {
+    'Retry-After': String(limit.retryAfter)
+  });
 
   const { body, tooLarge } = await readJson(req);
   if (tooLarge) return json({ error: 'Requisição muito grande.' }, 413);

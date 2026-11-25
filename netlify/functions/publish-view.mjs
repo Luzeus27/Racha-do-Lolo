@@ -3,7 +3,8 @@
    podem publicar. Cada licença publica apenas o seu próprio retrato. */
 import { randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil, setCorsOrigin, rateLimit } from './_shared.mjs';
+import { json, licenses, siteUrl, cleanDevice, deviceAllowed, normalizeStatus, validUntil, planTier, setCorsOrigin, rateLimit } from './_shared.mjs';
+import { copyAutoPayments, copyCredits, copyDailyPayments, copyMonthlyPayments, copyReservations } from './_daily.mjs';
 
 const MAX_BYTES = 3 * 1024 * 1024;
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -100,17 +101,35 @@ function sanitizeDues(raw) {
 function sanitizeSettings(raw) {
   const settings = pick(raw, [
     'year', 'monthlyFee', 'dayFee', 'goalkeepers', 'gamesPerMonth',
-    'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard',
-    'plannedMembers', 'maxPlayers'
+    'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsCard',
+    'plannedMembers', 'maxPlayers', 'paymentMode'
   ]);
   const max = Number(settings.maxPlayers);
   settings.maxPlayers = Number.isFinite(max) && max > 0 ? Math.min(1000, Math.floor(max)) : 0;
-  return settings;
+  return Object.assign(settings, {
+    dailyPaymentEnabled: raw.dailyPaymentEnabled !== false,
+    donationEnabled: raw.donationEnabled !== false,
+    donationText: text(raw.donationText, 160),
+    donationPix: typeof raw.donationPix === 'string' && raw.donationPix.startsWith('000201')
+      ? raw.donationPix.slice(0, 800) : '',
+    pixKey: text(raw.pixKey, 200),
+    pixMerchant: text(raw.pixMerchant, 25),
+    pixCity: text(raw.pixCity, 15),
+    rachaName: text(raw.rachaName, 90),
+    rachaFounded: text(raw.rachaFounded, 20),
+    rachaLocation: text(raw.rachaLocation, 120),
+    rachaTime: text(raw.rachaTime, 10),
+    rachaDuration: text(raw.rachaDuration, 40),
+    rachaRules: text(raw.rachaRules, 4000),
+    rachaLogo: typeof raw.rachaLogo === 'string' && /^data:image\/(png|jpeg|webp);base64,/i.test(raw.rachaLogo)
+      ? raw.rachaLogo.slice(0, PHOTO_MAX)
+      : ''
+  });
 }
 
 const DEFAULT_REMINDER_TEXT = {
-  group: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
-  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
+  group: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
+  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}'
 };
 
 /* Frases editáveis ficam FORA do snapshot público: somente send-reminders as lê. */
@@ -123,16 +142,16 @@ function privateTexts(raw) {
   return { group: clean(src.group, DEFAULT_REMINDER_TEXT.group), player: clean(src.player, DEFAULT_REMINDER_TEXT.player) };
 }
 
-/* Contatos privados ficam FORA do snapshot público. Somente send-reminders
-   usa este mapa para abrir o chat direto de cada jogador nos lembretes. */
-function privateContacts(rawPlayers, tokens) {
+/* Contatos privados ficam FORA do snapshot público. O app envia os telefones
+   em `playerPhones`, separados do retrato. Servem para o jogador encontrar o
+   próprio perfil (find-player) e para send-reminders abrir o chat direto. */
+function privateContacts(rawPhones, tokens) {
   const out = dict();
-  const list = Array.isArray(rawPlayers) ? rawPlayers.slice(0, 200) : [];
-  list.forEach((value) => {
-    const p = isObject(value) ? value : {};
-    const id = text(p.id, 60);
+  const src = isObject(rawPhones) ? rawPhones : {};
+  Object.keys(src).slice(0, 200).forEach((key) => {
+    const id = text(key, 60);
     if (!id || !Object.prototype.hasOwnProperty.call(tokens, id)) return;
-    let digits = String(p.phone ?? '').replace(/\D/g, '');
+    let digits = String(src[key] ?? '').replace(/\D/g, '');
     if (digits.length === 10 || digits.length === 11) digits = '55' + digits;
     if (/^55\d{10,11}$/.test(digits)) out[id] = digits;
   });
@@ -193,6 +212,9 @@ function sanitize(raw) {
       presence: number(s.presence),
       fairPlay: number(s.fairPlay),
       punctual: number(s.punctual),
+      farrapou: number(s.farrapou),
+      atrasado: number(s.atrasado),
+      desarmes: number(s.desarmes),
       cards: number(s.cards)
     };
   });
@@ -251,6 +273,18 @@ function syncPlayerTokens(players, previous) {
   return out;
 }
 
+/* Tipo do jogador fica só no registro privado. O servidor usa isso para
+   decidir quem confirma de graça e quem precisa pagar a diária. */
+function buildPlayerRoles(players, tokens) {
+  const out = dict();
+  players.forEach((p) => {
+    const id = text(p?.id, 60);
+    if (!id || !tokens[id]) return;
+    out[id] = String(p.type || '').toLowerCase() === 'diarista' ? 'daily' : 'monthly';
+  });
+  return out;
+}
+
 export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
@@ -305,6 +339,7 @@ export default async (req) => {
 
   const now = new Date().toISOString();
   const playerTokens = syncPlayerTokens(snapshot.players, previous?.playerTokens);
+  const playerRoles = buildPlayerRoles(snapshot.players, playerTokens);
   const base = siteUrl(req);
   const playerLinks = dict();
   Object.keys(playerTokens).forEach((id) => {
@@ -314,20 +349,35 @@ export default async (req) => {
   await store.setJSON(token, {
     token,
     ownerKey: key,
+    /* Definido pelo servidor conforme o plano da licença: o navegador não
+       pode ligar o check-in automático por conta própria. */
+    autoCheckin: planTier(record.plan) === 'intermediate',
+    /* Escolha do administrador. Só passa a valer se a conta dele estiver vinculada. */
+    paymentMode: String(snapshot.settings?.paymentMode || '').toLowerCase() === 'mp' ? 'mp' : 'manual',
     createdAt: previous?.createdAt || now,
     updatedAt: now,
     expiresAt: cleanExpiry(body.expiresAt),
     revokedAt: null,
     snapshot: { ...snapshot, publishedAt: now },
     /* Nunca vai para get-view/get-player-view: apenas os lembretes leem. */
-    contacts: privateContacts(isObject(body.snapshot) ? body.snapshot.players : [], playerTokens),
+    contacts: privateContacts(body.playerPhones, playerTokens),
     reminderTexts: privateTexts(body.reminderTexts),
     /* Respostas, fila, notas e ao vivo pertencem ao link e sobrevivem a
        republicações do retrato. */
     playerTokens,
+    playerRoles,
     responses: isObject(previous?.responses) ? previous.responses : dict(),
     waitlist: isObject(previous?.waitlist) ? previous.waitlist : dict(),
     ratings: isObject(previous?.ratings) ? previous.ratings : dict(),
+    /* Pagamentos, reservas e créditos sobrevivem a republicações. */
+    dailyPayments: copyDailyPayments(previous?.dailyPayments),
+    monthlyPayments: copyMonthlyPayments(previous?.monthlyPayments),
+    autoPayments: copyAutoPayments(previous?.autoPayments),
+    dailyCredits: copyCredits(previous?.dailyCredits),
+    reservations: copyReservations(previous?.reservations),
+    dailyCancelLog: Array.isArray(previous?.dailyCancelLog) ? previous.dailyCancelLog.slice(-20) : [],
+    manualLog: Array.isArray(previous?.manualLog) ? previous.manualLog.slice(-30) : [],
+    paymentNotices: Array.isArray(previous?.paymentNotices) ? previous.paymentNotices.slice(-30) : [],
     live: previous?.live ?? null
   }, { metadata: { owner: 'license' } });
 

@@ -1,7 +1,8 @@
 /* Visão individual de um jogador, liberada apenas pelo par de tokens VW + VP.
    Nunca devolve tokens de outros jogadores nem dados de contato. */
 import { getStore } from '@netlify/blobs';
-import { json, setCorsOrigin, viewUnavailable } from './_shared.mjs';
+import { cardFeeRate, cardGross, json, paymentModeFor, setCorsOrigin, viewUnavailable } from './_shared.mjs';
+import { copyAutoPayments, copyCredits, latestMonthlyPayment, latestPayment, manualPixCode, playerRole, unpaidMonths } from './_daily.mjs';
 
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
 const PLAYER_TOKEN = /^VP-[A-F0-9]{16}$/;
@@ -71,28 +72,33 @@ function waitlisted(raw, gameId, playerId) {
   return Array.isArray(games[gameId]) && games[gameId].slice(0, 200).includes(playerId);
 }
 
-function myRating(raw, gameId, playerId) {
-  const games = isObject(raw) ? raw : {};
-  const values = isObject(games[gameId]) ? games[gameId] : {};
-  const rating = Number(values[playerId]);
-  return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null;
-}
-
-function openDues(raw, playerId) {
-  const source = isObject(raw) ? raw : {};
-  const list = Object.prototype.hasOwnProperty.call(source, playerId) && Array.isArray(source[playerId])
-    ? source[playerId]
-    : [];
-  return list.slice(0, 36).filter((d) => isObject(d) && d.paid === false).map((d) => {
-    const pix = typeof d.pix === 'string' && d.pix.startsWith('000201') ? d.pix.slice(0, 800) : '';
+/* Cada pendência leva junto o PIX manual do administrador (como alternativa)
+   e, quando existe, a cobrança/pagamento gerado no Mercado Pago. */
+function duesWithPayment(record, playerId, list) {
+  return list.map((d) => {
+    const row = latestMonthlyPayment(record, playerId, d.month, d.year);
+    const oldCode = typeof d.pix === 'string' && d.pix.startsWith('000201') ? d.pix.slice(0, 800) : '';
+    const txid = text(d.txid, 80) || 'RL' + d.year + String(d.month).padStart(2, '0') + text(playerId, 4).toUpperCase();
     return {
-      month: number(d.month),
-      year: number(d.year),
-      amount: number(d.amount),
+      month: d.month,
+      year: d.year,
+      amount: d.amount,
       paid: false,
-      pix,
-      txid: text(d.txid, 80),
-      receiptId: text(d.receiptId, 80)
+      pix: manualPixCode(record.snapshot?.settings, d.amount, txid) || oldCode,
+      txid,
+      payment: row ? {
+        status: row.status,
+        amount: row.amount,
+        method: row.method || '',
+        grossAmount: row.grossAmount || 0,
+        feeAmount: row.feeAmount || 0,
+        checkoutUrl: row.checkoutUrl || '',
+        qrCode: row.qrCode,
+        qrBase64: row.qrBase64,
+        expiresAt: row.expiresAt,
+        paidAt: row.paidAt,
+        paymentId: row.paymentId
+      } : null
     };
   });
 }
@@ -121,6 +127,15 @@ export default async (req) => {
   const mine = players.find((player) => isObject(player) && text(player.id, 60) === playerId);
   if (!mine) return json({ error: 'Jogador não encontrado neste link.' }, 403);
 
+  const kind = playerRole(record, playerId);
+  const dailyEnabled = snapshot.settings?.dailyPaymentEnabled !== false;
+  const dailyAmount = number(snapshot.settings?.dayFee);
+  const monthlyFee = number(snapshot.settings?.monthlyFee);
+  const credit = copyCredits(record.dailyCredits)[playerId] || 0;
+  const unpaid = unpaidMonths(record, playerId);
+  const monthlyPending = kind === 'monthly' && unpaid.length > 0;
+  const monthlyDue = monthlyPending ? unpaid[0] : null;
+
   const today = todayISO();
   const games = copyGames(snapshot.games);
   const upcoming = games.filter((g) => g.date && g.date >= today);
@@ -128,19 +143,68 @@ export default async (req) => {
   const nextGames = pool.slice().sort((a, b) => a.date.localeCompare(b.date)).slice(0, 12);
 
   const confirmations = isObject(snapshot.confirmations) ? snapshot.confirmations : {};
+  /* O PIX manual continua disponível como alternativa; o Mercado Pago só
+     aparece quando o administrador escolheu e vinculou a conta dele. */
+  const mpMode = (await paymentModeFor(record)) === 'mp';
   const gamesOut = nextGames.map((g) => {
     let confirmed = answersFor(record.responses, g.id, playerId);
     if (confirmed === null && Array.isArray(confirmations[g.id]) &&
         confirmations[g.id].slice(0, 200).some((id) => text(id, 60) === playerId)) {
       confirmed = 'yes';
     }
+    const requiresPayment = dailyEnabled && kind === 'daily';
+    const row = requiresPayment ? latestPayment(record, g.id, playerId) : null;
+    if (confirmed === null && row && row.status === 'confirmed') confirmed = 'yes';
+    const payment = row ? {
+      status: row.status,
+      amount: row.amount,
+      method: row.method || '',
+      grossAmount: row.grossAmount || 0,
+      feeAmount: row.feeAmount || 0,
+      qrCode: row.qrCode,
+      qrBase64: row.qrBase64,
+      expiresAt: row.expiresAt,
+      paidAt: row.paidAt,
+      usedCredit: row.usedCredit,
+      paymentId: row.paymentId
+    } : null;
     return {
       id: g.id,
       date: g.date,
       confirmed,
-      waitlisted: waitlisted(record.waitlist, g.id, playerId)
+      waitlisted: waitlisted(record.waitlist, g.id, playerId),
+      requiresPayment,
+      payment,
+      manualPix: requiresPayment
+        ? manualPixCode(record.snapshot?.settings, dailyAmount, 'DIARIA' + text(g.id, 8).toUpperCase() + text(playerId, 4).toUpperCase())
+        : '',
+      monthlyPending: !requiresPayment && monthlyPending,
+      monthlyDue: !requiresPayment && monthlyDue
+        ? { month: monthlyDue.month, year: monthlyDue.year, amount: monthlyDue.amount }
+        : null
     };
   });
+
+  const autoRow = copyAutoPayments(record.autoPayments)[playerId] || null;
+  const cardNet = kind === 'monthly' ? Math.round((monthlyDue ? monthlyDue.amount : monthlyFee) * 100) / 100 : 0;
+  const cardGrossAmount = cardNet > 0 ? cardGross(cardNet) : 0;
+  const card = kind === 'monthly' && mpMode ? {
+    feeRate: cardFeeRate(),
+    net: cardNet,
+    gross: cardGrossAmount,
+    fee: Math.round((cardGrossAmount - cardNet) * 100) / 100
+  } : null;
+  const auto = autoRow && kind === 'monthly' && mpMode ? {
+    status: autoRow.status,
+    netAmount: autoRow.netAmount,
+    grossAmount: autoRow.grossAmount,
+    feeAmount: autoRow.feeAmount,
+    initPoint: autoRow.initPoint,
+    activatedAt: autoRow.activatedAt,
+    cancelledAt: autoRow.cancelledAt,
+    lastChargeAt: autoRow.lastChargeAt,
+    lastChargeStatus: autoRow.lastChargeStatus
+  } : null;
 
   const pastGames = games
     .filter((g) => g.done || (g.date && g.date < today))
@@ -149,8 +213,7 @@ export default async (req) => {
     .map((g) => ({
       id: g.id,
       label: label(g),
-      date: g.date,
-      myRating: myRating(record.ratings, g.id, playerId)
+      date: g.date
     }));
 
   return json({
@@ -159,13 +222,22 @@ export default async (req) => {
       id: playerId,
       name: text(mine.name, 90),
       position: text(mine.position, 30),
+      kind,
+      dailyAmount,
+      monthlyFee,
+      credit,
       photo: typeof mine.photo === 'string' && /^data:image\/(png|jpeg|webp);base64,/i.test(mine.photo)
         ? mine.photo.slice(0, 160000)
         : ''
     },
     games: gamesOut,
     pastGames,
-    dues: openDues(snapshot.dues, playerId),
+    /* No modo Mercado Pago a baixa vem do webhook, nunca do clique do jogador. */
+    autoCheckin: record.autoCheckin === true && !mpMode,
+    paymentMode: mpMode ? 'mp' : 'manual',
+    card,
+    auto,
+    dues: duesWithPayment(record, playerId, kind === 'monthly' ? unpaid : []),
     updatedAt: record.updatedAt || null
   });
 };

@@ -38,6 +38,13 @@ function authorized(req, scheduled) {
 
 async function isScheduledInvocation(req) {
   if (String(req.method || '').toUpperCase() !== 'POST') return false;
+  /* O agendador do Netlify chega com o corpo next_run e um identificador de
+     agendamento. Exigir os dois evita que um POST qualquer dispare lembretes
+     se a função um dia passar a ter URL pública. */
+  const get = typeof req.headers?.get === 'function' ? (n) => req.headers.get(n) : () => '';
+  const event = String(get('x-netlify-event') || get('x-nf-event') || '').toLowerCase();
+  const agent = String(get('user-agent') || '').toLowerCase();
+  if (event !== 'schedule' && !agent.includes('netlify clockwork')) return false;
   try {
     const raw = await req.clone().text();
     if (!raw || raw.length > 1024) return false;
@@ -99,7 +106,7 @@ function labelBR(date) {
 }
 
 const DEFAULT_REMINDER_TEXT = {
-  group: '⚽ {jogo}: jogo em {data} ({horario})!\nProgramação, escala e ranking: {link}\nConfirme sua presença pelo seu link individual (enviado no privado).',
+  group: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
   player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
 };
 

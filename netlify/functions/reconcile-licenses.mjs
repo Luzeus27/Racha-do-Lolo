@@ -36,6 +36,12 @@ function authorized(req, scheduled) {
 
 async function isScheduledInvocation(req) {
   if (String(req.method || '').toUpperCase() !== 'POST') return false;
+  /* Exige o identificador de agendamento além do corpo next_run, para que um
+     POST comum não dispare a reconciliação se a função ganhar URL pública. */
+  const get = typeof req.headers?.get === 'function' ? (n) => req.headers.get(n) : () => '';
+  const event = String(get('x-netlify-event') || get('x-nf-event') || '').toLowerCase();
+  const agent = String(get('user-agent') || '').toLowerCase();
+  if (event !== 'schedule' && !agent.includes('netlify clockwork')) return false;
   try {
     const raw = await req.clone().text();
     if (!raw || raw.length > 1024) return false;

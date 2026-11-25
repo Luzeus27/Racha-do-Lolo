@@ -9,8 +9,10 @@ const PLAYER_FIELDS = [
 ];
 const SETTINGS_FIELDS = [
   'year', 'monthlyFee', 'dayFee', 'goalkeepers', 'gamesPerMonth',
-  'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsCard',
-  'plannedMembers', 'maxPlayers'
+  'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsCard',
+  'plannedMembers', 'maxPlayers',
+  'rachaName', 'rachaFounded', 'rachaLocation', 'rachaTime', 'rachaDuration', 'rachaRules', 'rachaLogo',
+  'donationEnabled', 'donationText', 'donationPix'
 ];
 
 function isObject(value) {
@@ -54,7 +56,7 @@ function publicResponses(raw) {
   return out;
 }
 
-/* Notas 1..5 por jogo/jogador: usadas para escolher MVP e xerifão. */
+/* Notas 1..5 por jogo/jogador vindas de versões antigas (a interface não usa mais). */
 function publicRatings(raw) {
   const out = dict();
   const src = isObject(raw) ? raw : {};

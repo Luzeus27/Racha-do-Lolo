@@ -64,11 +64,66 @@ function envNumber(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+/* Dois planos: Básico e PRO (antigo Intermediário), mensal ou anual.
+   MP_PRICE_MONTHLY/YEARLY continuam valendo para o Básico (R$ 9,90/R$ 99).
+   MP_PRICE_INTERMEDIATE_* controla o PRO; o nome da variável foi mantido
+   para não exigir alteração nas variáveis já configuradas. */
 export function plans() {
   return {
-    monthly: { amount: envNumber('MP_PRICE_MONTHLY', 9), frequency: 1, label: 'Mensal' },
-    yearly: { amount: envNumber('MP_PRICE_YEARLY', 90), frequency: 12, label: 'Anual' }
+    monthly: {
+      amount: envNumber('MP_PRICE_MONTHLY', 9.9), frequency: 1,
+      label: 'Básico mensal', tier: 'basic', cycle: 'monthly'
+    },
+    yearly: {
+      amount: envNumber('MP_PRICE_YEARLY', 99), frequency: 12,
+      label: 'Básico anual', tier: 'basic', cycle: 'yearly'
+    },
+    intermediate_monthly: {
+      amount: envNumber('MP_PRICE_INTERMEDIATE_MONTHLY', 19.9), frequency: 1,
+      label: 'PRO mensal', tier: 'intermediate', cycle: 'monthly'
+    },
+    intermediate_yearly: {
+      amount: envNumber('MP_PRICE_INTERMEDIATE_YEARLY', 199), frequency: 12,
+      label: 'PRO anual', tier: 'intermediate', cycle: 'yearly'
+    }
   };
+}
+
+/* Nível gravado na licença. O vitalício e o PRO (antigo Intermediário) liberam
+   os recursos de ADM: o jogador confirma a presença, mas quem baixa o pagamento
+   é o administrador no PIX manual ou o webhook no Mercado Pago. */
+export function planTier(plan) {
+  const value = String(plan || 'monthly');
+  return value === 'lifetime' || value.startsWith('intermediate_') ? 'intermediate' : 'basic';
+}
+
+/* Padrão do modelo de cobrança: PIX manual com a chave do administrador.
+   Cada cliente pode escolher o Mercado Pago no app; a escolha fica no retrato
+   publicado (paymentMode). Esta variável continua como alternativa global. */
+export function playerPaymentsMode() {
+  return String(process.env.PLAYER_PAYMENTS || '').trim().toLowerCase() === 'mp' ? 'mp' : 'manual';
+}
+
+/* Taxa do cartão no checkout online. A variável MP_CARD_FEE aceita 4.98 ou
+   0.0498. O padrão 4,98% é o de crédito à vista com recebimento na hora;
+   ajuste no painel da Netlify se a sua conta tiver outro prazo. */
+export function cardFeeRate() {
+  const raw = Number(process.env.MP_CARD_FEE);
+  if (!Number.isFinite(raw) || raw <= 0) return 0.0498;
+  /* Arredonda a conversão de porcentagem (4.98 → 0.0498) para não arrastar
+     casas decimais binárias para o cálculo do valor cobrado. */
+  const rate = raw > 1 ? Math.round(raw / 100 * 1e6) / 1e6 : raw;
+  return Math.min(0.3, rate);
+}
+
+/* Para o racha receber o valor cheio, a taxa incide sobre o valor JÁ
+   acrescido: cobrar = líquido / (1 - taxa). Somar a taxa deixaria o racha
+   com alguns centavos a menos. */
+export function cardGross(net) {
+  /* Arredonda para cima: assim o valor que sobra após a taxa nunca fica
+     abaixo da mensalidade (um centavo a menos por pagamento se acumula). */
+  const value = Math.ceil((Number(net) || 0) / (1 - cardFeeRate()) * 100) / 100;
+  return value > 0 ? value : 0;
 }
 
 export function maskEmail(email) {
@@ -76,6 +131,11 @@ export function maskEmail(email) {
   const at = value.indexOf('@');
   if (at <= 1) return value ? '***' : '';
   return value[0] + '***' + value.slice(at);
+}
+
+export function cleanLicenseKey(value) {
+  const key = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+  return /^[A-Z0-9-]{8,40}$/.test(key) ? key : '';
 }
 
 /* Identificador anônimo do aparelho, gerado no navegador. Não contém dados pessoais. */
@@ -120,8 +180,9 @@ export function clearStaleCancel(record, sub) {
 
 /* Limite de requisições por IP (e, opcionalmente, por chave/email).
    Usa um store separado das licenças e expira as contagens automaticamente.
-   Falhas de infraestrutura não bloqueiam o usuário: melhor permitir um excesso
-   do que derrubar o checkout por um problema temporário no Blobs. */
+   Falha fechada: se o Blobs não responder, a requisição é recusada. Em rotas
+   de pagamento/licença, permitir o excesso seria abrir uma brecha justamente
+   durante uma instabilidade. */
 export async function rateLimit(req, action, { max = 30, windowMs = 60000, key = '' } = {}) {
   const headers = req?.headers;
   const forwarded = String(headers?.get?.('x-forwarded-for') || '').split(',')[0];
@@ -149,7 +210,7 @@ export async function rateLimit(req, action, { max = 30, windowMs = 60000, key =
       retryAfter: Math.ceil(windowMs / 1000)
     };
   } catch (e) {
-    return { ok: true, remaining: max, retryAfter: 0 };
+    return { ok: false, remaining: 0, retryAfter: Math.ceil(windowMs / 1000), unavailable: true };
   }
 }
 
@@ -181,4 +242,107 @@ export async function mpFetch(path, { token, method = 'GET', body } = {}) {
   } catch (err) {
     return { ok: false, status: 0, data: null, error: err.message || String(err) };
   }
+}
+
+/* ---------- Conta Mercado Pago vinculada pelo administrador ---------- */
+
+export function mpOAuthConfig() {
+  const clientId = String(process.env.MP_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.MP_CLIENT_SECRET || '').trim();
+  return { clientId, clientSecret, configured: !!(clientId && clientSecret) };
+}
+
+/* A troca code -> token e a renovação acontecem SOMENTE no servidor.
+   O client_secret nunca é enviado ao navegador. */
+export async function oauthToken(payload) {
+  const { clientId, clientSecret, configured } = mpOAuthConfig();
+  if (!configured) {
+    return { ok: false, status: 0, data: null, error: 'Vínculo com Mercado Pago não configurado no servidor.' };
+  }
+  try {
+    const res = await fetch('https://api.mercadopago.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, ...payload })
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, data: null, error: err.message || String(err) };
+  }
+}
+
+export async function mpConnectionFor(ownerKey) {
+  if (!ownerKey) return null;
+  try {
+    const license = await licenses().get(ownerKey, { type: 'json', consistency: 'strong' });
+    const connection = license?.mpConnection;
+    if (!connection || !connection.accessToken) return null;
+    return { ...connection, license };
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Token do administrador desta licença. Se faltar, usa o token global antigo.
+   Renova sozinho quando faltam menos de 7 dias para vencer (o token dura 180). */
+export async function mpTokenFor(ownerKey) {
+  const connection = await mpConnectionFor(ownerKey);
+  if (!connection) return String(process.env.MP_ACCESS_TOKEN || '').trim();
+
+  const expires = Date.parse(String(connection.expiresAt || ''));
+  if (!Number.isFinite(expires) || expires - Date.now() > 7 * 24 * 60 * 60 * 1000) {
+    return connection.accessToken;
+  }
+  if (!connection.refreshToken) return '';
+
+  const refreshed = await oauthToken({ grant_type: 'refresh_token', refresh_token: connection.refreshToken });
+  if (!refreshed.ok || !refreshed.data?.access_token) return '';
+
+  const seconds = Number(refreshed.data.expires_in) || 15552000;
+  const next = {
+    ...connection,
+    accessToken: refreshed.data.access_token,
+    refreshToken: refreshed.data.refresh_token || connection.refreshToken,
+    publicKey: refreshed.data.public_key || connection.publicKey,
+    userId: refreshed.data.user_id || connection.userId,
+    expiresAt: new Date(Date.now() + seconds * 1000).toISOString(),
+    renewedAt: new Date().toISOString()
+  };
+  const { license, ...cleanConnection } = next;
+  await licenses().setJSON(ownerKey, {
+    ...license,
+    mpConnection: cleanConnection,
+    updatedAt: new Date().toISOString()
+  });
+  return next.accessToken;
+}
+
+/* Modo efetivo deste link: a escolha do administrador só vale se a conta MP
+   estiver realmente vinculada na licença dele. */
+export async function paymentModeFor(record) {
+  if (String(record?.paymentMode || '').toLowerCase() === 'mp') {
+    if (await mpConnectionFor(String(record?.ownerKey || ''))) return 'mp';
+  }
+  return playerPaymentsMode();
+}
+
+/* O painel recebe só o que pode ser mostrado: nunca token, refresh ou secret. */
+export function mpStatusFor(license) {
+  const connection = license?.mpConnection;
+  const status = {
+    connected: !!(connection && connection.accessToken),
+    configured: mpOAuthConfig().configured
+  };
+  if (!status.connected) return status;
+  return {
+    ...status,
+    email: maskEmail(String(connection.email || '')),
+    userId: String(connection.userId || '').slice(0, 30),
+    expiresAt: String(connection.expiresAt || ''),
+    connectedAt: String(connection.connectedAt || ''),
+    expired: !!(connection.expiresAt && Date.parse(String(connection.expiresAt)) <= Date.now())
+  };
 }

@@ -1,7 +1,8 @@
-/* Cria uma licença vitalícia (conta master) para o administrador.
-   Sem cobrança no Mercado Pago e sem recorrência. Uso único, protegido por segredo. */
-import { randomUUID } from 'node:crypto';
-import { json, licenses, cleanDevice, setCorsOrigin } from './_shared.mjs';
+/* Cria a conta master vitalícia exclusiva do proprietário/desenvolvedor.
+   Não é um plano à venda: sem cobrança no Mercado Pago e sem recorrência.
+   Uso único, protegido por MASTER_SETUP_SECRET. */
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { json, licenses, cleanDevice, setCorsOrigin, rateLimit } from './_shared.mjs';
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -12,14 +13,21 @@ export default async (req) => {
   if (req.method === 'OPTIONS') return json({}, 204);
   if (req.method !== 'POST') return json({ error: 'Método não permitido.' }, 405);
 
-  /* Se MASTER_SETUP_SECRET estiver definida, ela tem precedência.
-     Enquanto isso não acontece, usa a chave secreta já configurada do webhook. */
-  const secret = process.env.MASTER_SETUP_SECRET || process.env.MP_WEBHOOK_SECRET;
+  const limit = await rateLimit(req, 'create-master', { max: 10, windowMs: 60000 });
+  if (!limit.ok) return json({ error: 'Muitas tentativas. Aguarde um minuto.' }, 429, {
+    'Retry-After': String(limit.retryAfter)
+  });
+
+  /* Segredo exclusivo: nunca reaproveitar a chave do webhook. */
+  const secret = String(process.env.MASTER_SETUP_SECRET || '').trim();
   if (!secret) return json({ error: 'Setup de conta master não configurado.' }, 503);
 
   let body = {};
   try { body = await req.json(); } catch (e) { body = {}; }
-  if (String(body.secret || '') !== secret) {
+  const provided = String(body.secret || '');
+  const a = Buffer.from(provided);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
     return json({ error: 'Não autorizado.' }, 401);
   }
 
