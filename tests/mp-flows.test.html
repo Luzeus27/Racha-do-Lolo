@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Racha do Loló — testes das funções Mercado Pago</title>
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 0; padding: 20px; background: #f6f8fb; color: #17202a; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p.topo { margin: 0 0 16px; color: #5b6776; font-size: 13px; }
+  button { padding: 8px 14px; border: 0; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; font-size: 13px; }
+  button[disabled] { opacity: .6; cursor: default; }
+  #summary { margin: 14px 0; padding: 12px; border-radius: 10px; background: #fff; border: 1px solid #dbe3ee; font-weight: 600; }
+  #summary.ok { border-color: #86efac; background: #f0fdf4; color: #166534; }
+  #summary.fail { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+  .grupo { margin: 18px 0 8px; font-weight: 700; font-size: 14px; color: #334155; }
+  .teste { padding: 7px 10px; margin: 4px 0; border-radius: 8px; background: #fff; border: 1px solid #e5eaf1; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+  .teste.ok { border-left: 4px solid #22c55e; }
+  .teste.fail { border-left: 4px solid #ef4444; background: #fff7f7; }
+  .tag { font-size: 11px; font-weight: 700; min-width: 42px; }
+  .ok .tag { color: #15803d; }
+  .fail .tag { color: #b91c1c; }
+  .detalhe { color: #b91c1c; font-size: 12px; white-space: pre-wrap; }
+  code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Testes das funções Mercado Pago</h1>
+<p class="topo">Roda localmente, sem deploy e sem chaves reais. Os dados ficam só nesta aba. Use também a checagem de fluxo de caixa em <code>index.html</code>.</p>
+<button id="run" type="button">Rodar novamente</button>
+<div id="summary">Preparando…</div>
+<div id="report"></div>
+
+<script>
+(async function () {
+/* ------------------------------------------------------------------ */
+/* Infraestrutura de teste                                             */
+/* ------------------------------------------------------------------ */
+
+const origFetch = globalThis.fetch.bind(globalThis);
+const origProcess = globalThis.process;
+const KEY = 'RL-TESTE-00000001';
+const DEVICE = 'DEV-AAAAAAAAAAAAAAAAAAAAAAAA';
+const V = 'VW-0123456789ABCDEF';
+const P = 'VP-0123456789ABCDEF';
+const PLAYER = 'p1';
+const GAME = 'jogo1';
+const SECRET = 'SEGREDO-WEBHOOK-TESTE';
+
+let counter = 0;
+let mpHandler = null;
+let mpCalls = [];
+let stores = {};
+let licenseMap = new Map();
+let viewMap = new Map();
+let rateMap = new Map();
+let stateMap = new Map();
+let attemptsMap = new Map();
+let eventsMap = new Map();
+
+/* HMAC determinístico e simples: serve para validar o fluxo da assinatura,
+   não para substituir a criptografia real (que o Netlify usa no servidor). */
+function stubHmac(secret, message) {
+  const text = String(secret) + '|' + String(message);
+  let out = '';
+  for (let block = 0; block < 8; block++) {
+    let h = (2166136261 ^ (block * 2654435761)) >>> 0;
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i) + block;
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    out += h.toString(16).padStart(8, '0');
+  }
+  return out;
+}
+
+globalThis.Buffer = {
+  byteLength: (v) => new TextEncoder().encode(String(v ?? '')).length,
+  from: (v) => {
+    const s = String(v ?? '');
+    return { toString: () => s, get length() { return s.length; } };
+  }
+};
+
+const HASH_FAKE = 'a'.repeat(64);
+const cryptoSource = `
+  export function createHash() {
+    return { update() { return this; }, digest() { return '${HASH_FAKE}'; } };
+  }
+  export function randomUUID() {
+    counterGlobal += 1;
+    const n = counterGlobal.toString(16).padStart(2, '0').repeat(16).slice(0, 32);
+    return n.slice(0,8)+'-'+n.slice(8,12)+'-'+n.slice(12,16)+'-'+n.slice(16,20)+'-'+n.slice(20);
+  }
+  export function randomBytes(n) {
+    counterGlobal += 1;
+    let out = '';
+    while (out.length < n * 2) out += counterGlobal.toString(16).padStart(2, '0');
+    return { toString() { return out.slice(0, n * 2); } };
+  }
+  export function createHmac(alg, secret) {
+    const parts = [];
+    return { update(v) { parts.push(String(v)); return this; }, digest() { return globalThis.__stubHmac(secret, parts.join('')); } };
+  }
+  export function timingSafeEqual(a, b) { return String(a) === String(b); }
+`;
+globalThis.__stubHmac = stubHmac;
+globalThis.counterGlobal = counter;
+/* encodeURIComponent não escapa aspas simples; sem isto o specifier do import quebra. */
+const dataUrl = (source) => 'data:text/javascript,' + encodeURIComponent(source).replace(/'/g, '%27');
+const cryptoUrl = dataUrl(cryptoSource);
+
+function makeMapStore(map) {
+  return {
+    get: async (k) => map.has(k) ? map.get(k) : null,
+    setJSON: async (k, v) => { map.set(k, v); },
+    delete: async (k) => { map.delete(k); },
+    list: async () => ({ blobs: Array.from(map.keys()).map((key) => ({ key })) })
+  };
+}
+
+function installStores() {
+  stores = {
+    'racha-licencas': makeMapStore(licenseMap),
+    'racha-visualizacoes': makeMapStore(viewMap),
+    'racha-rate': makeMapStore(rateMap),
+    'racha-tentativas': makeMapStore(attemptsMap),
+    'racha-webhook-eventos': makeMapStore(eventsMap)
+  };
+  globalThis.__stores = stores;
+}
+installStores();
+
+const blobUrl = dataUrl(
+  'export function getStore(o){ return globalThis.__stores[o.name] || { get:async()=>null, setJSON:async()=>{}, delete:async()=>{}, list:async()=>({blobs:[]}) }; }'
+);
+
+function reexportUrl(name, mod) {
+  const body = Object.keys(mod).map((k) => `export const ${k} = globalThis.__mods.${name}.${k};`).join('\n');
+  return dataUrl(body);
+}
+
+async function loadModule(file, replacements = []) {
+  let src = await origFetch(new URL(file, location.href)).then((r) => {
+    if (!r.ok) throw new Error('Não foi possível ler ' + file);
+    return r.text();
+  });
+  for (const [from, to] of replacements) src = src.split(from).join(to);
+  const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
+  try { return await import(url); } finally { URL.revokeObjectURL(url); }
+}
+
+globalThis.__mods = {};
+globalThis.__etapa = 'shared';
+const sharedReplacements = [
+  ["from 'node:crypto'", "from '" + cryptoUrl + "'"],
+  ["from '@netlify/blobs'", "from '" + blobUrl + "'"]
+];
+globalThis.__mods.shared = await loadModule('../netlify/functions/_shared.mjs', sharedReplacements);
+globalThis.__etapa = 'daily';
+globalThis.__mods.daily = await loadModule('../netlify/functions/_daily.mjs');
+globalThis.__etapa = 'reexports';
+const sharedUrl = reexportUrl('shared', globalThis.__mods.shared);
+const dailyUrl = reexportUrl('daily', globalThis.__mods.daily);
+
+const commonReplacements = [
+  ...sharedReplacements,
+  ["from './_shared.mjs'", "from '" + sharedUrl + "'"],
+  ["from './_daily.mjs'", "from '" + dailyUrl + "'"]
+];
+
+const names = [
+  'mp-connect', 'create-daily-pix', 'create-monthly-pix', 'create-monthly-card',
+  'create-monthly-auto', 'cancel-monthly-auto', 'manage-daily-payments',
+  'get-player-view', 'view-respond', 'mp-webhook', 'find-player', 'create-master',
+  'send-reminders', 'reconcile-licenses', 'change-plan', 'license'
+];
+for (const name of names) {
+  globalThis.__etapa = 'modulo:' + name;
+  globalThis.__mods[name] = await loadModule('../netlify/functions/' + name + '.mjs', commonReplacements);
+}
+globalThis.__etapa = 'fixtures';
+
+/* ------------------------------------------------------------------ */
+/* Fixtures                                                            */
+/* ------------------------------------------------------------------ */
+
+function connectedLicense(days = 90) {
+  return {
+    status: 'active',
+    ownerKey: KEY,
+    nextPaymentAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+    devices: [DEVICE],
+    email: 'dono@exemplo.com',
+    mpConnection: {
+      accessToken: 'ACCESS_TOKEN_TESTE',
+      refreshToken: 'REFRESH_TOKEN_TESTE',
+      email: 'loja@exemplo.com',
+      userId: '123456',
+      expiresAt: new Date(Date.now() + days * 86400000).toISOString(),
+      connectedAt: new Date().toISOString()
+    }
+  };
+}
+
+function baseView(overrides = {}) {
+  const base = {
+    ownerKey: KEY,
+    paymentMode: 'mp',
+    playerTokens: { [PLAYER]: P },
+    playerRoles: { [PLAYER]: 'monthly' },
+    responses: {},
+    waitlist: {},
+    reservations: {},
+    dailyPayments: {},
+    monthlyPayments: {},
+    autoPayments: {},
+    dailyCredits: {},
+    paymentNotices: [],
+    snapshot: {
+      settings: {
+        year: 2026, monthlyFee: 60, dayFee: 60, maxPlayers: 6,
+        dailyPaymentEnabled: true,
+        pixKey: 'rachadololo@gmail.com', pixMerchant: 'RACHA DO LOLO', pixCity: 'MACEIO - AL'
+      },
+      players: [{ id: PLAYER, name: 'Ana', type: 'mensalista' }],
+      games: [{ id: GAME, date: '2026-12-10', done: false }],
+      dues: { [PLAYER]: [{ month: 11, year: 2026, amount: 60, paid: false, pix: '', txid: 'RL202611P1' }] },
+      finance: { paid: 0, open: 60 }
+    }
+  };
+  const snap = overrides.snapshot || {};
+  return {
+    ...base,
+    ...overrides,
+    snapshot: {
+      ...base.snapshot,
+      ...snap,
+      settings: { ...base.snapshot.settings, ...(snap.settings || {}) },
+      dues: snap.dues || base.snapshot.dues
+    }
+  };
+}
+
+function defaultMpHandler(url, init) {
+  const method = String(init?.method || 'GET').toUpperCase();
+  const body = init?.body ? JSON.parse(init.body) : {};
+  if (url.includes('/oauth/token')) {
+    return {
+      ok: true, status: 200,
+      data: {
+        access_token: 'NOVO_ACCESS_TOKEN_TESTE', refresh_token: 'NOVO_REFRESH_TOKEN_TESTE',
+        expires_in: 15552000, user_id: '123456', user_email: 'loja@exemplo.com'
+      }
+    };
+  }
+  if (method === 'POST' && url.endsWith('/v1/payments')) {
+    return {
+      ok: true, status: 201,
+      data: {
+        id: 'MP-' + (++globalThis.counterGlobal),
+        point_of_interaction: { transaction_data: { qr_code: '000201TESTE' + globalThis.counterGlobal, qr_code_base64: 'QUJD' } }
+      }
+    };
+  }
+  if (method === 'POST' && url.endsWith('/checkout/preferences')) {
+    return { ok: true, status: 201, data: { id: 'PREF-1', init_point: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=PREF-1' } };
+  }
+  if (method === 'POST' && url.endsWith('/preapproval')) {
+    return { ok: true, status: 201, data: { id: 'PRE-1', init_point: 'https://www.mercadopago.com.br/authorization?preapproval_id=PRE-1' } };
+  }
+  if (url.includes('/refund') || (method === 'PUT' && url.includes('/preapproval/'))) {
+    return { ok: true, status: 200, data: { id: 'REF-1' } };
+  }
+  return { ok: true, status: 200, data: {} };
+}
+
+function reset(options = {}) {
+  globalThis.counterGlobal = ++counter;
+  licenseMap = new Map();
+  viewMap = new Map();
+  rateMap = new Map();
+  stateMap = new Map();
+  attemptsMap = new Map();
+  eventsMap = new Map();
+  installStores();
+
+  const license = options.license === undefined ? connectedLicense(options.expiresInDays) : options.license;
+  if (license) licenseMap.set(KEY, license);
+  const view = options.view === undefined ? baseView() : options.view;
+  if (view) viewMap.set(V, view);
+
+  globalThis.process = {
+    env: {
+      SITE_URL: 'https://rachadololo.netlify.app',
+      PLAYER_PAYMENTS: 'manual',
+      MP_ACCESS_TOKEN: 'GLOBAL_TOKEN_TESTE',
+      MP_WEBHOOK_SECRET: SECRET,
+      MP_CLIENT_ID: 'CLIENT_ID_TESTE',
+      MP_CLIENT_SECRET: 'CLIENT_SECRET_TESTE',
+      MP_CARD_FEE: '0.0498',
+      ...(options.env || {})
+    }
+  };
+
+  mpCalls = [];
+  mpHandler = options.mpHandler || defaultMpHandler;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+    if (url.startsWith('https://api.mercadopago.com')) {
+      const headers = new Headers(init?.headers || {});
+      mpCalls.push({ url, method: String(init?.method || 'GET').toUpperCase(), body: init?.body ? JSON.parse(init.body) : {}, auth: headers.get('authorization') || '' });
+      const result = await mpHandler(url, init);
+      if (result instanceof Response) return result;
+      return new Response(JSON.stringify(result.data ?? {}), {
+        status: result.status || 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return origFetch(input, init);
+  };
+}
+
+function post(fn, body, headers = {}) {
+  return fn(new Request('https://rachadololo.netlify.app/.netlify/functions/teste', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify(body)
+  }));
+}
+function get(fn, query) {
+  return fn(new Request('https://rachadololo.netlify.app/.netlify/functions/teste?' + query));
+}
+
+function webhookHeaders(dataId, requestId = 'req-1', secret = SECRET) {
+  const ts = String(Date.now());
+  const manifest = 'id:' + String(dataId).toLowerCase() + ';request-id:' + requestId + ';ts:' + ts + ';';
+  return {
+    'content-type': 'application/json',
+    'x-request-id': requestId,
+    'x-signature': 'ts=' + ts + ',v1=' + stubHmac(secret, manifest)
+  };
+}
+function callWebhook(dataId, topic) {
+  return globalThis.__mods['mp-webhook'].default(new Request(
+    'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' + new URLSearchParams({
+      cliente: KEY, topic, 'data.id': dataId
+    }).toString(),
+    { method: 'GET', headers: webhookHeaders(dataId, 'req-1', optionsSecret()) }
+  ));
+}
+function optionsSecret() { return globalThis.process.env.MP_WEBHOOK_SECRET || SECRET; }
+
+/* ------------------------------------------------------------------ */
+/* Asserções e relatório                                              */
+/* ------------------------------------------------------------------ */
+
+const suites = [];
+let atual = null;
+function grupo(nome) { atual = { nome, testes: [] }; suites.push(atual); }
+async function teste(nome, fn) {
+  try { await fn(); atual.testes.push({ nome, ok: true }); }
+  catch (e) { atual.testes.push({ nome, ok: false, erro: e && e.message ? e.message : String(e) }); }
+}
+function ok(cond, msg) { if (!cond) throw new Error(msg || 'Condição falsa'); }
+function eq(a, b, msg) {
+  const sa = JSON.stringify(a), sb = JSON.stringify(b);
+  if (sa !== sb) throw new Error((msg || 'Valores diferentes') + ': esperado ' + sb + ', recebido ' + sa);
+}
+function perto(a, b, msg) { if (Math.abs(Number(a) - Number(b)) > 0.005) throw new Error((msg || 'Valores diferentes') + ': esperado ' + b + ', recebido ' + a); }
+function includes(texto, parte, msg) { ok(String(texto).includes(String(parte)), (msg || 'Texto não encontrado') + ': ' + parte); }
+function naiveClone(v) { return JSON.parse(JSON.stringify(v)); }
+
+/* ------------------------------------------------------------------ */
+/* Bateria de testes                                                   */
+/* ------------------------------------------------------------------ */
+
+const S = globalThis.__mods.shared;
+
+grupo('1. Regras de taxa e modo de pagamento');
+await teste('taxa padrão 4,98% aceita 0.0498 e 4.98', () => {
+  reset();
+  eq(S.cardFeeRate(), 0.0498);
+  globalThis.process.env.MP_CARD_FEE = '4.98';
+  eq(S.cardFeeRate(), 0.0498);
+  globalThis.process.env.MP_CARD_FEE = '0';
+  eq(S.cardFeeRate(), 0.0498);
+});
+await teste('valor do cartão é líquido/(1-taxa), arredondado para cima', () => {
+  reset();
+  eq(S.cardGross(60), 63.15);
+  eq(S.cardGross(70), 73.67);
+  const taxa = S.cardFeeRate();
+  ok(S.cardGross(60) * (1 - taxa) >= 60 - 0.00001, 'o racha receberia menos que R$ 60');
+});
+await teste('modo MP publicado só vale com conta vinculada', async () => {
+  reset({ license: null });
+  eq(await S.paymentModeFor({ paymentMode: 'mp', ownerKey: KEY }), 'manual');
+  reset();
+  eq(await S.paymentModeFor({ paymentMode: 'mp', ownerKey: KEY }), 'mp');
+});
+await teste('variável global MP força o modo sem depender da publicação', async () => {
+  reset({ env: { PLAYER_PAYMENTS: 'mp' }, license: null });
+  eq(await S.paymentModeFor({ paymentMode: 'manual', ownerKey: KEY }), 'mp');
+});
+await teste('status do vínculo nunca devolve token, refresh ou segredo', () => {
+  reset();
+  const status = S.mpStatusFor(licenseMap.get(KEY));
+  const texto = JSON.stringify(status);
+  ok(status.connected && status.configured, 'status deveria estar conectado');
+  eq(status.email, 'l***@exemplo.com');
+  ok(!texto.includes('ACCESS_TOKEN_TESTE'), 'token vazou');
+  ok(!texto.includes('REFRESH_TOKEN_TESTE'), 'refresh vazou');
+  ok(!texto.includes('CLIENT_SECRET_TESTE'), 'secret vazou');
+});
+await teste('token renovado no servidor antes dos 7 dias', async () => {
+  reset({ expiresInDays: 3 });
+  const token = await S.mpTokenFor(KEY);
+  eq(token, 'NOVO_ACCESS_TOKEN_TESTE');
+  includes(mpCalls[0].body.grant_type, 'refresh_token');
+  eq(licenseMap.get(KEY).mpConnection.refreshToken, 'NOVO_REFRESH_TOKEN_TESTE');
+});
+
+grupo('2. Vínculo Mercado Pago em um clique (OAuth)');
+let stateValido = '';
+await teste('start abre autorização correta sem expor segredo', async () => {
+  reset();
+  const res = await post(globalThis.__mods['mp-connect'].default, { action: 'start', licenseKey: KEY, deviceId: DEVICE });
+  const data = await res.json();
+  eq(res.status, 200);
+  const url = new URL(data.authorizationUrl);
+  eq(url.host, 'auth.mercadopago.com');
+  eq(url.searchParams.get('client_id'), 'CLIENT_ID_TESTE');
+  eq(url.searchParams.get('redirect_uri'), 'https://rachadololo.netlify.app/.netlify/functions/mp-connect');
+  ok(/^[a-f0-9]{32}$/.test(url.searchParams.get('state') || ''), 'state inválido');
+  ok(!JSON.stringify(data).includes('CLIENT_SECRET_TESTE'), 'segredo apareceu na resposta');
+  stateValido = url.searchParams.get('state');
+});
+await teste('callback salva token/refresh só no Blob e volta para #config', async () => {
+  const res = await get(globalThis.__mods['mp-connect'].default, 'code=codigo-teste&state=' + stateValido);
+  eq(res.status, 302);
+  eq(res.headers.get('location'), 'https://rachadololo.netlify.app/index.html#config&mp=connected');
+  const conn = licenseMap.get(KEY).mpConnection;
+  eq(conn.accessToken, 'NOVO_ACCESS_TOKEN_TESTE');
+  eq(conn.refreshToken, 'NOVO_REFRESH_TOKEN_TESTE');
+});
+await teste('state é de uso único', async () => {
+  const res = await get(globalThis.__mods['mp-connect'].default, 'code=codigo-teste&state=' + stateValido);
+  eq(res.status, 302);
+  includes(res.headers.get('location'), 'mp=error');
+});
+await teste('callback recusa aparelho diferente do autorizado', async () => {
+  reset();
+  const start = await post(globalThis.__mods['mp-connect'].default, { action: 'start', licenseKey: KEY, deviceId: DEVICE });
+  const state = new URL((await start.json()).authorizationUrl).searchParams.get('state');
+  licenseMap.get(KEY).devices = ['DEV-BBBBBBBBBBBBBBBBBBBBBBBB'];
+  delete licenseMap.get(KEY).mpConnection;
+  const res = await get(globalThis.__mods['mp-connect'].default, 'code=codigo-teste&state=' + state);
+  includes(res.headers.get('location'), 'mp=error');
+  ok(!licenseMap.get(KEY).mpConnection, 'vínculo não deveria ter sido salvo');
+});
+
+grupo('3. Diária no Mercado Pago');
+const dailyCall = () => post(globalThis.__mods['create-daily-pix'].default, { v: V, p: P, gameId: GAME });
+await teste('modo manual recusa criação de PIX no MP', async () => {
+  reset({ view: baseView({ paymentMode: 'manual' }) });
+  const res = await dailyCall();
+  eq(res.status, 410);
+});
+await teste('PIX da diária usa token do dono, valor líquido e ?cliente=', async () => {
+  reset({ view: baseView({ playerRoles: { [PLAYER]: 'daily' }, snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }] } }) });
+  const res = await dailyCall();
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(data.status, 'pending');
+  eq(mpCalls.length, 1);
+  eq(mpCalls[0].auth, 'Bearer ACCESS_TOKEN_TESTE');
+  eq(mpCalls[0].body.transaction_amount, 60);
+  eq(mpCalls[0].body.payment_method_id, 'pix');
+  includes(mpCalls[0].body.notification_url, '?cliente=' + encodeURIComponent(KEY));
+  ok(data.payment.qrCode.startsWith('000201'), 'QR não devolvido');
+});
+await teste('segundo toque reaproveita o mesmo QR', async () => {
+  await dailyCall();
+  const antes = mpCalls.length;
+  const res = await dailyCall();
+  const data = await res.json();
+  eq(data.status, 'pending');
+  eq(mpCalls.length, antes);
+});
+await teste('sem vaga entra na fila sem chamar o Mercado Pago', async () => {
+  reset({ view: baseView({
+    playerRoles: { [PLAYER]: 'daily' },
+    snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }], settings: { maxPlayers: 1 } },
+    responses: { [GAME]: { outro: 'yes' } }
+  }) });
+  const res = await dailyCall();
+  const data = await res.json();
+  eq(data.status, 'wait');
+  ok(Array.isArray(data.waitlist) && data.waitlist.includes(PLAYER), 'jogador não entrou na fila');
+  eq(mpCalls.length, 0);
+});
+await teste('crédito de jogo cancelado confirma sem novo pagamento', async () => {
+  reset({ view: baseView({ playerRoles: { [PLAYER]: 'daily' }, dailyCredits: { [PLAYER]: 60 }, snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }] } }) });
+  const res = await dailyCall();
+  const data = await res.json();
+  eq(data.status, 'yes');
+  eq(data.usedCredit, true);
+  eq(mpCalls.length, 0);
+  eq(viewMap.get(V).dailyCredits[PLAYER] || 0, 0);
+});
+
+grupo('4. Mensalidade: PIX, cartão e cobrança automática');
+await teste('PIX da mensalidade cobra apenas o valor líquido', async () => {
+  reset();
+  const res = await post(globalThis.__mods['create-monthly-pix'].default, { v: V, p: P, month: 11, year: 2026 });
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(mpCalls[0].body.transaction_amount, 60);
+  eq(data.payment.amount, 60);
+  eq(data.payment.grossAmount || 0, 0);
+});
+await teste('cartão cobra R$ 63,15 mas guarda R$ 60,00 como valor do racha', async () => {
+  reset();
+  const res = await post(globalThis.__mods['create-monthly-card'].default, { v: V, p: P, month: 11, year: 2026 });
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(mpCalls[0].body.items[0].unit_price, 63.15);
+  eq(mpCalls[0].body.payment_methods.installments, 1);
+  eq(data.amount, 60);
+  eq(data.grossAmount, 63.15);
+  eq(data.feeAmount, 3.15);
+  const row = Object.values(viewMap.get(V).monthlyPayments)[0];
+  eq(row.amount, 60);
+  eq(row.grossAmount, 63.15);
+  eq(row.feeAmount, 3.15);
+});
+await teste('checkout de cartão pendente é reaproveitado', async () => {
+  await post(globalThis.__mods['create-monthly-card'].default, { v: V, p: P, month: 11, year: 2026 });
+  const antes = mpCalls.length;
+  const res = await post(globalThis.__mods['create-monthly-card'].default, { v: V, p: P, month: 11, year: 2026 });
+  eq((await res.json()).status, 'pending');
+  eq(mpCalls.length, antes);
+});
+await teste('cobrança automática usa o bruto, mas registra líquido e taxa', async () => {
+  reset();
+  const res = await post(globalThis.__mods['create-monthly-auto'].default, { v: V, p: P });
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(mpCalls[0].body.auto_recurring.transaction_amount, 63.15);
+  eq(mpCalls[0].body.auto_recurring.frequency, 1);
+  eq(data.amount, 60);
+  const row = viewMap.get(V).autoPayments[PLAYER];
+  eq(row.netAmount, 60);
+  eq(row.grossAmount, 63.15);
+  eq(row.feeAmount, 3.15);
+});
+await teste('cancelamento da automática usa token do dono', async () => {
+  const view = viewMap.get(V);
+  view.autoPayments[PLAYER].status = 'active';
+  const res = await post(globalThis.__mods['cancel-monthly-auto'].default, { v: V, p: P });
+  eq(res.status, 200);
+  eq(mpCalls[mpCalls.length - 1].method, 'PUT');
+  eq(mpCalls[mpCalls.length - 1].auth, 'Bearer ACCESS_TOKEN_TESTE');
+  eq(viewMap.get(V).autoPayments[PLAYER].status, 'cancelled');
+});
+
+grupo('5. Webhook — assinatura, baixa e taxa fora do caixa');
+await teste('sem segredo configurado, webhook recusa tudo', async () => {
+  reset({ env: { MP_WEBHOOK_SECRET: '' } });
+  const res = await callWebhook('MP-1', 'payment');
+  eq(res.status, 503);
+});
+await teste('assinatura inválida é recusada', async () => {
+  reset();
+  const res = await globalThis.__mods['mp-webhook'].default(new Request(
+    'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?cliente=' + KEY + '&topic=payment&data.id=MP-1',
+    { headers: { 'x-signature': 'ts=1,v1=' + '0'.repeat(64), 'x-request-id': 'req-1' } }
+  ));
+  eq(res.status, 401);
+});
+await teste('diária aprovada libera presença e usa token do cliente no ?cliente=', async () => {
+  reset({
+    view: baseView({ playerRoles: { [PLAYER]: 'daily' } }),
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-1', status: 'approved', transaction_amount: 60,
+        external_reference: 'DIARIA|' + V + '|DP-1111111111111111',
+        date_approved: new Date().toISOString()
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const view = viewMap.get(V);
+  view.dailyPayments['DP-1111111111111111'] = { paymentId: 'DP-1111111111111111', gameId: GAME, playerId: PLAYER, amount: 60, status: 'pending', mpPaymentId: 'MP-1', externalReference: 'DIARIA|' + V + '|DP-1111111111111111' };
+  const res = await callWebhook('MP-1', 'payment');
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(data.status, 'confirmed');
+  eq(viewMap.get(V).responses[GAME][PLAYER], 'yes');
+  eq(mpCalls[0].auth, 'Bearer ACCESS_TOKEN_TESTE');
+  const again = await callWebhook('MP-1', 'payment');
+  const againData = await again.json();
+  eq(againData.duplicate, true, 'a segunda entrega do mesmo evento foi processada de novo');
+  eq(viewMap.get(V).dailyPayments['DP-1111111111111111'].status, 'confirmed');
+  eq(viewMap.get(V).responses[GAME][PLAYER], 'yes');
+});
+await teste('pagamento aprovado após cancelamento é estornado', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/') && !url.includes('/refund')) return { ok: true, status: 200, data: {
+        id: 'MP-2', status: 'approved', transaction_amount: 60,
+        external_reference: 'DIARIA|' + V + '|DP-2222222222222222'
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const view = viewMap.get(V);
+  view.dailyPayments['DP-2222222222222222'] = { paymentId: 'DP-2222222222222222', gameId: GAME, playerId: PLAYER, amount: 60, status: 'cancelled', mpPaymentId: 'MP-2', externalReference: 'DIARIA|' + V + '|DP-2222222222222222' };
+  const res = await callWebhook('MP-2', 'payment');
+  const data = await res.json();
+  eq(data.status, 'refunded');
+  ok(mpCalls.some((c) => c.url.includes('/refund')), 'estorno não foi chamado');
+  ok(!viewMap.get(V).responses[GAME] || !viewMap.get(V).responses[GAME][PLAYER], 'presença não deveria ser liberada');
+});
+await teste('cartão aprovado baixa a dívida pelo líquido, não pelo bruto', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-3', status: 'approved', transaction_amount: 63.15,
+        external_reference: 'MENSALIDADE-CARD|' + V + '|MS-3333333333333333',
+        date_approved: new Date().toISOString()
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const view = viewMap.get(V);
+  view.monthlyPayments['MS-3333333333333333'] = {
+    paymentId: 'MS-3333333333333333', playerId: PLAYER, month: 11, year: 2026,
+    amount: 60, grossAmount: 63.15, feeAmount: 3.15, method: 'card', status: 'pending',
+    mpPaymentId: '', externalReference: 'MENSALIDADE-CARD|' + V + '|MS-3333333333333333'
+  };
+  const res = await callWebhook('MP-3', 'payment');
+  const data = await res.json();
+  eq(data.status, 'confirmed');
+  const row = viewMap.get(V).monthlyPayments['MS-3333333333333333'];
+  eq(row.amount, 60);
+  eq(row.grossAmount, 63.15);
+  eq(row.feeAmount, 3.15);
+
+  const summary = await post(globalThis.__mods['manage-daily-payments'].default, {
+    licenseKey: KEY, deviceId: DEVICE, token: V, action: 'summary'
+  });
+  const s = await summary.json();
+  eq(s.monthly.paidAmount, 60);
+  ok(s.monthly.paidAmount !== 63.15, 'a taxa entrou no resumo do administrador');
+});
+await teste('valor divergente no cartão vai para revisão manual', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-4', status: 'approved', transaction_amount: 62,
+        external_reference: 'MENSALIDADE-CARD|' + V + '|MS-4444444444444444'
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  viewMap.get(V).monthlyPayments['MS-4444444444444444'] = {
+    paymentId: 'MS-4444444444444444', playerId: PLAYER, month: 11, year: 2026,
+    amount: 60, grossAmount: 63.15, feeAmount: 3.15, method: 'card', status: 'pending'
+  };
+  const res = await callWebhook('MP-4', 'payment');
+  const row = viewMap.get(V).monthlyPayments['MS-4444444444444444'];
+  eq(row.status, 'manual');
+  eq(row.refundReason, 'valor_divergente');
+});
+await teste('cobrança automática aprovada registra líquido e não duplica', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      if (url.includes('/authorized_payments/')) return { ok: true, status: 200, data: {
+        id: 'PRE-1', status: 'approved', preapproval_id: 'PRE-1',
+        payment_id: 'MP-AUTO-1', transaction_amount: 63.15,
+        date_created: new Date().toISOString()
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const view = viewMap.get(V);
+  view.autoPayments[PLAYER] = { playerId: PLAYER, status: 'active', preapprovalId: 'PRE-1', netAmount: 60, grossAmount: 63.15, feeAmount: 3.15 };
+  const r1 = await callWebhook('PRE-1', 'invoice');
+  eq((await r1.json()).status, 'approved');
+  const rows1 = Object.values(viewMap.get(V).monthlyPayments);
+  eq(rows1.length, 1);
+  eq(rows1[0].amount, 60);
+  eq(rows1[0].grossAmount, 63.15);
+  eq(rows1[0].feeAmount, 3.15);
+  await callWebhook('PRE-1', 'invoice');
+  eq(Object.values(viewMap.get(V).monthlyPayments).length, 1);
+});
+await teste('assinatura do app continua atualizando a licença', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-APP-1', status: 'approved', transaction_amount: 9.9,
+        external_reference: KEY, date_approved: new Date().toISOString()
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const res = await callWebhook('MP-APP-1', 'payment');
+  const data = await res.json();
+  eq(data.key, KEY);
+  eq(licenseMap.get(KEY).status, 'active');
+});
+await teste('webhook ignora cobrança de jogador quando o modo é manual', async () => {
+  reset({
+    view: baseView({ paymentMode: 'manual' }),
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-5', status: 'approved', transaction_amount: 60,
+        external_reference: 'DIARIA|' + V + '|DP-5555555555555555'
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  viewMap.get(V).dailyPayments['DP-5555555555555555'] = { paymentId: 'DP-5555555555555555', gameId: GAME, playerId: PLAYER, amount: 60, status: 'pending', mpPaymentId: 'MP-5' };
+  const res = await callWebhook('MP-5', 'payment');
+  const data = await res.json();
+  includes(data.ignored || '', 'desativado');
+  eq(viewMap.get(V).dailyPayments['DP-5555555555555555'].status, 'pending');
+});
+
+grupo('6. Resposta do jogador (presença, fila e aviso)');
+await teste('no MP, botão antigo “Já paguei” vira aviso e não baixa pagamento', async () => {
+  reset();
+  const res = await post(globalThis.__mods['view-respond'].default, { v: V, p: P, response: 'paid', gameId: GAME });
+  eq(res.status, 200);
+  eq((await res.json()).status, 'notice');
+  eq(Object.keys(viewMap.get(V).monthlyPayments || {}).length, 0);
+});
+await teste('no MP, “Vou jogar” pede o pagamento e não libera presença', async () => {
+  reset({ view: baseView({ playerRoles: { [PLAYER]: 'daily' }, snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }] } }) });
+  const res = await post(globalThis.__mods['view-respond'].default, { v: V, p: P, response: 'yes', gameId: GAME });
+  const data = await res.json();
+  eq(data.status, 'pay');
+  ok(!viewMap.get(V).responses[GAME] || !viewMap.get(V).responses[GAME][PLAYER], 'presença liberada sem pagamento');
+});
+await teste('no MP, aviso ao administrador continua valendo', async () => {
+  reset();
+  const res = await post(globalThis.__mods['view-respond'].default, { v: V, p: P, response: 'notice', month: 11, year: 2026 });
+  eq((await res.json()).status, 'notice');
+  eq(viewMap.get(V).paymentNotices.length, 1);
+  eq(viewMap.get(V).paymentNotices[0].kind, 'monthly');
+});
+await teste('no PIX manual do ADM, “Vou jogar” não baixa diária nem mensalidade', async () => {
+  reset({ view: baseView({ paymentMode: 'manual', autoCheckin: true, playerRoles: { [PLAYER]: 'daily' }, snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }] } }) });
+  const res = await post(globalThis.__mods['view-respond'].default, { v: V, p: P, response: 'yes', gameId: GAME });
+  const data = await res.json();
+  eq(data.status, 'manual');
+  eq(viewMap.get(V).dailyPayments ? Object.values(viewMap.get(V).dailyPayments).length : 0, 0);
+  eq(Object.keys(viewMap.get(V).monthlyPayments || {}).length, 0);
+});
+await teste('link revogado devolve 410', async () => {
+  reset({ view: baseView({ revokedAt: new Date().toISOString() }) });
+  const res = await post(globalThis.__mods['view-respond'].default, { v: V, p: P, response: 'notice' });
+  eq(res.status, 410);
+});
+
+grupo('7. Visão do jogador');
+await teste('no MP mostra cartão com taxa e mantém PIX manual alternativo', async () => {
+  reset();
+  const res = await get(globalThis.__mods['get-player-view'].default, 'v=' + V + '&p=' + P);
+  const data = await res.json();
+  eq(data.paymentMode, 'mp');
+  eq(data.card.net, 60);
+  eq(data.card.gross, 63.15);
+  eq(data.card.fee, 3.15);
+  ok(data.dues[0].pix.startsWith('000201'), 'PIX manual desapareceu');
+  eq(data.dues[0].amount, 60);
+});
+await teste('pendência com cartão expõe bruto/taxa sem trocar o valor devido', async () => {
+  reset();
+  viewMap.get(V).monthlyPayments['MS-6666666666666666'] = {
+    paymentId: 'MS-6666666666666666', playerId: PLAYER, month: 11, year: 2026,
+    amount: 60, grossAmount: 63.15, feeAmount: 3.15, method: 'card', status: 'pending',
+    checkoutUrl: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=PREF-1'
+  };
+  const res = await get(globalThis.__mods['get-player-view'].default, 'v=' + V + '&p=' + P);
+  const data = await res.json();
+  eq(data.dues[0].amount, 60);
+  eq(data.dues[0].payment.grossAmount, 63.15);
+  eq(data.dues[0].payment.feeAmount, 3.15);
+});
+await teste('link vencido devolve 410 na visão do jogador', async () => {
+  reset({ view: baseView({ expiresAt: new Date(Date.now() - 60000).toISOString() }) });
+  const res = await get(globalThis.__mods['get-player-view'].default, 'v=' + V + '&p=' + P);
+  eq(res.status, 410);
+});
+await teste('no modo manual não aparece cartão nem cobrança automática', async () => {
+  reset({ view: baseView({ paymentMode: 'manual' }) });
+  const res = await get(globalThis.__mods['get-player-view'].default, 'v=' + V + '&p=' + P);
+  const data = await res.json();
+  eq(data.paymentMode, 'manual');
+  eq(data.card, null);
+  eq(data.auto, null);
+});
+
+grupo('8. Fluxo de caixa — a taxa não entra');
+await teste('revenue() e publicSnapshot() usam só amount, não bruto/taxa', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const inicio = src.indexOf('function revenue(m)');
+  const fim = src.indexOf('function expenses(m)', inicio);
+  const fn = src.slice(inicio, fim);
+  ok(fn.includes('p.amount') && fn.includes('d.amount'), 'revenue não usa os valores esperados');
+  ok(!/\b(gross|fee|grossAmount|feeAmount|cardGross|cardFee)\b/i.test(fn), 'taxa apareceu em revenue()');
+  const ini2 = src.indexOf('function publicSnapshot()');
+  const fim2 = src.indexOf('async function publishView', ini2);
+  const snapFn = src.slice(ini2, fim2);
+  ok(snapFn.includes('paid += amount'), 'financeiro público não soma amount');
+  ok(!/\b(gross|fee|grossAmount|feeAmount|cardGross|cardFee)\b/i.test(snapFn), 'taxa apareceu em publicSnapshot()');
+});
+await teste('revenue() ignora bruto/taxa mesmo quando o registro contém esses campos', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const ini = src.indexOf('function revenue(m)');
+  const fim = src.indexOf('function expenses(m)', ini);
+  ok(ini >= 0 && fim > ini, 'revenue() não encontrada');
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const sum = (arr, fn) => arr.reduce((a, x) => a + num(fn(x)), 0);
+  const state = {
+    payments: [{ year: 2026, month: 11, amount: 60, grossAmount: 63.15, feeAmount: 3.15, paid: true }],
+    dayEntries: [{ year: 2026, month: 11, amount: 60, grossAmount: 70, feeAmount: 10 }]
+  };
+  const revenue = new Function('state', 'year', 'num', 'sum', src.slice(ini, fim) + '; return revenue;')(state, () => 2026, num, sum);
+  eq(revenue(11), { mens: 60, dias: 60, total: 120 });
+});
+await teste('despesas do caixa não têm categoria de taxa do Mercado Pago', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  ok(src.includes("const CASH_ROWS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros', 'Brindes', 'Benefícios']"), 'categorias mudaram');
+  ok(!/CASH_ROWS[^\n]*taxa/i.test(src), 'taxa entrou nas categorias');
+});
+
+grupo('9. Proteção contra taxa digitada ou importada');
+await teste('cashNet transforma bruto digitado em líquido e preserva desconto', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const match = src.match(/const cashNet = \(amount, expected\) => \{[\s\S]*?\n\};/);
+  ok(match, 'cashNet não encontrada');
+  const criar = new Function('num', 'return ' + match[0].replace(/^const cashNet = /, '').replace(/;$/, ''));
+  const cashNet = criar((v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; });
+  eq(cashNet(63.15, 60), 60);
+  eq(cashNet(55, 60), 55);
+  eq(cashNet(60, 0), 60);
+});
+await teste('baixa manual usa cashNet e respeita o valor da pendência antiga', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  ok(src.includes("amount: cashNet(v('amount'), esperado)"), 'formulário de mensalidade não protegido');
+  ok(src.includes('const esperado = anterior ? num(anterior.amount) : num(settings().monthlyFee)'), 'pendência antiga perdeu o valor original');
+  ok(src.includes('amt = num(el.dataset.amount)'), 'confirmação do modal deixou de usar o valor publicado');
+  ok(src.includes('amount: num(pp.amount)'), 'confirmação da página deixou de usar o valor publicado');
+});
+await teste('extrato com taxa/tarifa MP não vira despesa do caixa', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  ok(src.includes('const isMpFeeDescription = (text) => /mercado\\s*pago|taxa|tarifa/i.test'), 'filtro de taxa ausente');
+  ok(src.includes('if (isMpFeeDescription(row.desc))'), 'importação do extrato não filtra taxa');
+  ok(!/state\.expenses\.push\(\{[^}]*isMpFeeDescription/.test(src), 'taxa ainda pode ser importada');
+});
+
+grupo('10. Acesso ao grupo e mensagem de envio');
+await teste('botão “Gerar Acesso” e frase de check-in estão no app', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  eq((src.match(/>🔗 Gerar Acesso</g) || []).length, 2, 'o nome novo deve aparecer na Visão geral e em Configurações');
+  ok(!src.includes('>🔗 Gerar link do grupo<'), 'o nome antigo ainda aparece');
+  ok(src.includes("if (kind === 'view') return"), 'envio do grupo não encontrado');
+  ok(src.includes('Check-in Liberado! Acesse o link, procure o seu perfil e escolha a forma de pagamento para garantir a sua vaga.'), 'frase pedida não está na mensagem');
+  ok(src.includes('data-act="share-whatsapp" data-kind="view"') && src.includes('data-act="copy-whatsapp" data-kind="view"'), 'botões de envio/cópia não usam a mesma mensagem');
+});
+await teste('mensagem do grupo é editável e pode voltar ao padrão', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(src, 'const GROUP_ACCESS_MESSAGE =', 'texto padrão não está centralizado');
+  includes(src, '{link}', 'o texto padrão não marca onde o endereço entra');
+  includes(src, 'groupAccessMessage: GROUP_ACCESS_MESSAGE', 'a mensagem não está nos ajustes padrão');
+  includes(src, 'name="groupAccessMessage"', 'não há campo para editar a mensagem');
+  includes(src, 'renderReminderText(settings().groupAccessMessage || GROUP_ACCESS_MESSAGE, { link: viewUrl() })', 'o envio não usa a mensagem editada');
+  includes(src, 'data-act="reset-group-message"', 'botão de restaurar o padrão ausente');
+  includes(src, "case 'reset-group-message':", 'ação de restaurar o padrão ausente');
+});
+await teste('título do convite é o nome do racha do cliente', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(src, 'const GROUP_ACCESS_MESSAGE = \'🏽 {racha}', 'o padrão ainda usa o nome do aplicativo');
+  includes(src, 'ctx.rachaName || settings().rachaName', '{racha} não é trocado pelo nome cadastrado');
+  includes(src, '<code>{racha}</code> vira o nome cadastrado em Perfil do racha', 'a ajuda do campo não explica {racha}');
+  ok(!src.includes("const GROUP_ACCESS_MESSAGE = '🏽 Racha do Loló"), 'o nome do aplicativo continua no título padrão');
+});
+await teste('convite antigo é migrado automaticamente', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(src, 'const LEGACY_GROUP_ACCESS_MESSAGE', 'falta o texto antigo para comparar');
+  includes(src, 'if (state.settings.groupAccessMessage === LEGACY_GROUP_ACCESS_MESSAGE)', 'a migração do convite não está ativa');
+});
+
+grupo('11. Botões da interface');
+await teste('botão “＋ Novo” removido da barra superior', async () => {
+  const html = await origFetch(new URL('../index.html', location.href)).then((r) => r.text());
+  ok(!html.includes('＋ Novo'), 'o rótulo do botão ainda aparece no HTML');
+  ok(!html.includes('data-modal="quick-add"'), 'o atalho do menu rápido continua ligado');
+  ok(html.includes('data-act="export-json"'), 'o botão de backup foi removido junto');
+});
+
+grupo('12. Endurecimento contra invasão e falhas');
+const F = globalThis.__mods['find-player'];
+const R = globalThis.__mods['view-respond'];
+const W = globalThis.__mods['mp-webhook'];
+const CM = globalThis.__mods['create-master'];
+const SR = globalThis.__mods['send-reminders'];
+const RC = globalThis.__mods['reconcile-licenses'];
+
+function viewComTelefone() {
+  const view = baseView({ playerTokens: { [PLAYER]: P }, playerRoles: { [PLAYER]: 'monthly' } });
+  view.contacts = { [PLAYER]: '5511999994321' };
+  return view;
+}
+async function webhookDeTeste(url, dataId, requestId) {
+  return W.default(new Request(url, {
+    method: 'GET',
+    headers: webhookHeaders(dataId, requestId)
+  }));
+}
+
+await teste('limite de requisições falha fechado se o Blobs cair', async () => {
+  reset();
+  const storeNormal = stores['racha-rate'];
+  stores['racha-rate'] = { get: async () => { throw new Error('Blobs fora'); }, setJSON: async () => {} };
+  try {
+    const res = await S.rateLimit(new Request('https://rachadololo.netlify.app/'), 'checkout');
+    ok(res.ok === false, 'o limite liberou o acesso durante a falha');
+    ok(res.unavailable === true, 'a falha não foi sinalizada');
+  } finally { stores['racha-rate'] = storeNormal; }
+});
+
+await teste('nome errado e número errado mostram a mesma mensagem', async () => {
+  reset({ view: viewComTelefone() });
+  const nome = await post(F.default, { v: V, id: 'quem', input: '4321' });
+  const numero = await post(F.default, { v: V, id: PLAYER, input: '0000' });
+  eq(nome.status, 403);
+  eq(numero.status, 403);
+  const a = await nome.json();
+  const b = await numero.json();
+  eq(a.error, b.error);
+  includes(a.error, 'incorreto');
+});
+
+await teste('cinco erros travam o jogador por 15 minutos', async () => {
+  reset({ view: viewComTelefone() });
+  for (let i = 0; i < 5; i++) {
+    const res = await post(F.default, { v: V, id: PLAYER, input: '0000' });
+    eq(res.status, 403, 'tentativa ' + (i + 1));
+  }
+  const travado = await post(F.default, { v: V, id: PLAYER, input: '4321' });
+  eq(travado.status, 429);
+  const aindaTravado = await post(F.default, { v: V, id: PLAYER, input: '4321' });
+  eq(aindaTravado.status, 429);
+});
+
+await teste('acertar os dígitos devolve somente o link daquele jogador', async () => {
+  reset({ view: viewComTelefone() });
+  const res = await post(F.default, { v: V, id: PLAYER, input: '4321' });
+  eq(res.status, 200);
+  const data = await res.json();
+  includes(data.url, '/jogador.html?v=' + V + '&p=' + P);
+});
+
+await teste('“Vou jogar” não baixa mensalidade nem no plano PRO', async () => {
+  reset({ view: baseView({ paymentMode: 'manual', autoCheckin: true }) });
+  const res = await post(R.default, { v: V, p: P, gameId: GAME, response: 'yes' });
+  const data = await res.json();
+  eq(data.status, 'manual');
+  ok(!data.autoPaid, 'a resposta marcou pagamento automático');
+  eq(Object.keys(viewMap.get(V).monthlyPayments || {}).length, 0, 'mensalidade foi baixada');
+});
+
+await teste('botão antigo “Já paguei” vira aviso ao administrador', async () => {
+  reset({ view: baseView({ paymentMode: 'manual', autoCheckin: true }) });
+  const res = await post(R.default, { v: V, p: P, gameId: GAME, response: 'paid' });
+  eq((await res.json()).status, 'notice');
+  const salvo = viewMap.get(V);
+  eq(Object.keys(salvo.monthlyPayments || {}).length, 0, 'mensalidade foi baixada');
+  ok((salvo.paymentNotices || []).length > 0, 'o aviso não foi registrado');
+});
+
+await teste('diária do PIX manual nunca é confirmada pelo clique', async () => {
+  const view = baseView({ paymentMode: 'manual', autoCheckin: true, playerRoles: { [PLAYER]: 'daily' } });
+  reset({ view });
+  const res = await post(R.default, { v: V, p: P, gameId: GAME, response: 'yes' });
+  eq((await res.json()).status, 'manual');
+  eq(Object.keys(viewMap.get(V).dailyPayments || {}).length, 0, 'diária foi baixada');
+});
+
+await teste('webhook repetido não processa o mesmo evento duas vezes', async () => {
+  reset({
+    license: { ...connectedLicense(), ownerKey: KEY },
+    mpHandler: () => ({
+      ok: true, status: 200,
+      data: { id: 'SUB-1', status: 'active', external_reference: KEY, payer_email: 'dono@exemplo.com' }
+    })
+  });
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+    new URLSearchParams({ topic: 'subscription_preapproval', 'data.id': 'SUB-1' }).toString();
+  const primeiro = await webhookDeTeste(url, 'SUB-1', 'req-unico');
+  eq(primeiro.status, 200);
+  eq((await primeiro.json()).received, true);
+  const historico = (licenseMap.get(KEY).history || []).length;
+  ok(historico > 0, 'o primeiro aviso não foi registrado');
+  const repetido = await webhookDeTeste(url, 'SUB-1', 'req-unico');
+  eq((await repetido.json()).duplicate, true);
+  eq((licenseMap.get(KEY).history || []).length, historico, 'o histórico foi duplicado');
+});
+
+await teste('webhook não aceita ?cliente= de outro dono', async () => {
+  reset({
+    license: { ...connectedLicense(), ownerKey: KEY },
+    mpHandler: () => ({
+      ok: true, status: 200,
+      data: { id: 'SUB-2', status: 'active', external_reference: KEY, payer_email: 'x@y.com' }
+    })
+  });
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+    new URLSearchParams({ cliente: 'RL-OUTRO-00000002', topic: 'subscription_preapproval', 'data.id': 'SUB-2' }).toString();
+  const res = await webhookDeTeste(url, 'SUB-2', 'req-outro');
+  eq(res.status, 200);
+  eq((await res.json()).ignored, 'cliente divergente');
+  eq((licenseMap.get(KEY).history || []).length, 0, 'a licença foi alterada');
+});
+
+await teste('conta master exige segredo próprio, não o do webhook', async () => {
+  reset();
+  const res = await post(CM.default, { secret: SECRET, email: 'master@exemplo.com' });
+  eq(res.status, 503);
+});
+
+await teste('conta master aceita somente MASTER_SETUP_SECRET', async () => {
+  reset({ env: { MASTER_SETUP_SECRET: 'SEGREDO-MASTER-TESTE' } });
+  const errado = await post(CM.default, { secret: SECRET, email: 'master@exemplo.com' });
+  eq(errado.status, 401);
+  const certo = await post(CM.default, {
+    secret: 'SEGREDO-MASTER-TESTE', email: 'master@exemplo.com', deviceId: DEVICE
+  });
+  eq(certo.status, 200);
+  const data = await certo.json();
+  ok(licenseMap.has(data.key), 'a licença vitalícia não foi criada');
+});
+
+await teste('POST comum não dispara funções agendadas', async () => {
+  reset();
+  const lembretes = await post(SR.default, { next_run: new Date().toISOString() });
+  ok(lembretes.status === 503 || lembretes.status === 401, 'lembretes aceitos sem agendamento: ' + lembretes.status);
+  const reconciliacao = await post(RC.default, { next_run: new Date().toISOString() });
+  ok(reconciliacao.status === 403 || reconciliacao.status === 401, 'reconciliação aceita sem agendamento: ' + reconciliacao.status);
+});
+
+await teste('chamada agendada identificada continua funcionando', async () => {
+  reset({ view: null });
+  const res = await SR.default(new Request(
+    'https://rachadololo.netlify.app/.netlify/functions/send-reminders',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-nf-event': 'schedule' },
+      body: JSON.stringify({ next_run: new Date().toISOString() })
+    }
+  ));
+  eq(res.status, 200);
+});
+
+await teste('frontend valida foto, backup, redirecionamento e cache com token', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const visual = await origFetch(new URL('../visualizar.js', location.href)).then((r) => r.text());
+  const jogador = await origFetch(new URL('../jogador.js', location.href)).then((r) => r.text());
+  const sw = await origFetch(new URL('../sw.js', location.href)).then((r) => r.text());
+  includes(app, 'const safeImageUrl =', 'foto sem validação');
+  includes(app, "data-id=\"${esc(p.id)}\"", 'data-id do jogador sem escape');
+  includes(app, 'function sanitizeBackupStrings(', 'importação de backup sem higienização');
+  includes(app, 'sanitizeBackupStrings(JSON.parse(reader.result))', 'o backup não usa a higienização');
+  includes(visual, "startsWith(location.origin + '/jogador.html?')", 'redirecionamento sem validar origem');
+  ok(!jogador.includes('presença e a diária são confirmadas na hora'), 'jogador.js ainda promete baixa automática');
+  includes(jogador, 'O administrador dará a baixa.', 'fluxo único de aviso ausente');
+  includes(sw, 'racha-do-lolo-v67', 'cache não foi atualizado');
+  includes(sw, '/[?&](?:v=VW-|p=VP-)/.test(url.search)', 'tokens ainda entram no cache');
+});
+
+await teste('privacidade cita WhatsApp e ANPD; Apagar tudo pede duas confirmações', async () => {
+  const priv = await origFetch(new URL('../privacidade.html', location.href)).then((r) => r.text());
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(priv, 'WhatsApp (Meta)', 'WhatsApp não foi citado como terceiro');
+  includes(priv, 'não envia mensagens automaticamente', 'envio manual do WhatsApp não foi explicado');
+  includes(priv, 'Autoridade Nacional de Proteção de Dados (ANPD)', 'ANPD ausente');
+  includes(priv, '3 dias úteis', 'prazo de comunicação ausente');
+  includes(priv, 'duas confirmações', 'a política não fala nas duas confirmações');
+  includes(app, 'function confirmActionTwice(', 'ajuda de dupla confirmação ausente');
+  includes(app, "case 'clear-all': confirmActionTwice(", 'Apagar tudo ainda tem uma confirmação só');
+});
+
+await teste('plano PRO usa R$ 19,90/mês e R$ 199/ano sem trocar chaves internas', async () => {
+  const sub = await origFetch(new URL('../subscription.js', location.href)).then((r) => r.text());
+  const shared = await origFetch(new URL('../netlify/functions/_shared.mjs', location.href)).then((r) => r.text());
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(sub, "intermediate_monthly: { amount: 19.9, label: 'PRO mensal', tier: 'intermediate', cycle: 'monthly' }", 'preço/rótulo mensal do PRO no app');
+  includes(sub, "intermediate_yearly: { amount: 199, label: 'PRO anual', tier: 'intermediate', cycle: 'yearly' }", 'preço/rótulo anual do PRO no app');
+  includes(sub, "if (feature === 'pro') return tier() === 'intermediate';", "can('pro') não aponta para o PRO");
+  includes(shared, "amount: envNumber('MP_PRICE_INTERMEDIATE_MONTHLY', 19.9), frequency: 1,", 'padrão mensal do servidor');
+  includes(shared, "amount: envNumber('MP_PRICE_INTERMEDIATE_YEARLY', 199), frequency: 12,", 'padrão anual do servidor');
+  includes(shared, "label: 'PRO mensal', tier: 'intermediate', cycle: 'monthly'", 'rótulo do PRO no servidor');
+  includes(app, 'Plano PRO ADM', 'card do PRO não foi renomeado');
+  includes(app, "section('Escolha seu plano', 'Básico ou PRO · mensal ou anual · renovação automática')", 'título da tela de planos');
+  ok(!/R\$ 15,90|R\$ 159,00|15\.9\)|159\)/.test(app + sub + shared), 'preço antigo ainda aparece');
+});
+
+await teste('upgrade Básico → PRO muda a assinatura atual, sem nova chave nem cobrança dupla', async () => {
+  reset({
+    license: {
+      key: KEY, email: 'cliente@exemplo.com', plan: 'monthly', amount: 9.9,
+      status: 'active', subscriptionId: 'PRE-1', devices: [DEVICE],
+      nextPaymentAt: new Date(Date.now() + 20 * 86400000).toISOString(), history: []
+    },
+    mpHandler: (url, init) => {
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (url.includes('/preapproval/PRE-1') && method === 'GET') {
+        return { ok: true, status: 200, data: { id: 'PRE-1', status: 'authorized', auto_recurring: { transaction_amount: 9.9, currency_id: 'BRL' } } };
+      }
+      return defaultMpHandler(url, init);
+    }
+  });
+  const res = await post(globalThis.__mods['change-plan'].default, { key: KEY, deviceId: DEVICE, plan: 'intermediate_monthly' });
+  const data = await res.json();
+  eq(res.status, 200, 'upgrade recusado');
+  eq(data.ok, true, 'resposta sem ok');
+  eq(data.plan, 'intermediate_monthly');
+  eq(data.amount, 19.9);
+  const saved = licenseMap.get(KEY);
+  eq(saved.plan, 'intermediate_monthly', 'plano do Blobs não mudou');
+  eq(saved.amount, 19.9, 'valor do Blobs não mudou');
+  eq(saved.subscriptionId, 'PRE-1', 'subscriptionId foi trocado');
+  eq(saved.previousPlan, 'monthly');
+  const put = mpCalls.find((c) => c.method === 'PUT' && c.url.includes('/preapproval/PRE-1'));
+  ok(put, 'não houve PUT na assinatura existente');
+  eq(put.body.auto_recurring.transaction_amount, 19.9);
+  eq(put.body.auto_recurring.currency_id, 'BRL');
+  ok(!mpCalls.some((c) => c.method === 'POST' && c.url.endsWith('/preapproval')), 'criou segunda assinatura');
+  ok(!put.body.frequency && !put.body.auto_recurring.frequency, 'tentou mudar a frequência');
+});
+
+await teste('upgrade bloqueia ciclo diferente, plano não básico e dispositivo errado', async () => {
+  const license = (plan) => ({
+    key: KEY, email: 'cliente@exemplo.com', plan, amount: plan === 'monthly' ? 9.9 : 19.9,
+    status: 'active', subscriptionId: 'PRE-1', devices: [DEVICE], history: []
+  });
+  const mp = (url, init) => {
+    const method = String(init?.method || 'GET').toUpperCase();
+    if (url.includes('/preapproval/PRE-1') && method === 'GET') {
+      return { ok: true, status: 200, data: { id: 'PRE-1', status: 'authorized', auto_recurring: { transaction_amount: 9.9, currency_id: 'BRL' } } };
+    }
+    return defaultMpHandler(url, init);
+  };
+
+  reset({ license: license('monthly'), mpHandler: mp });
+  let res = await post(globalThis.__mods['change-plan'].default, { key: KEY, deviceId: DEVICE, plan: 'intermediate_yearly' });
+  eq(res.status, 409, 'troca mensal → anual deveria ser bloqueada');
+  ok(!mpCalls.some((c) => c.method === 'PUT'), 'bloqueio ainda chamou o Mercado Pago');
+
+  reset({ license: license('intermediate_monthly'), mpHandler: mp });
+  res = await post(globalThis.__mods['change-plan'].default, { key: KEY, deviceId: DEVICE, plan: 'monthly' });
+  eq(res.status, 400, 'downgrade deveria ser bloqueado');
+  eq(licenseMap.get(KEY).plan, 'intermediate_monthly', 'licença PRO foi alterada');
+
+  reset({ license: license('monthly'), mpHandler: mp });
+  res = await post(globalThis.__mods['change-plan'].default, { key: KEY, deviceId: 'DEV-BBBBBBBBBBBBBBBBBBBBBBBB', plan: 'intermediate_monthly' });
+  eq(res.status, 403, 'outro aparelho deveria ser bloqueado');
+});
+
+await teste('app e documentos explicam o upgrade e usam o cache novo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const sub = await origFetch(new URL('../subscription.js', location.href)).then((r) => r.text());
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  const termos = await origFetch(new URL('../termos.html', location.href)).then((r) => r.text());
+  const sw = await origFetch(new URL('../sw.js', location.href)).then((r) => r.text());
+  includes(app, 'data-act="upgrade" data-plan=', 'botão de upgrade ausente');
+  includes(app, 'data-form="upgrade" data-plan=', 'formulário de upgrade ausente');
+  includes(app, 'window.RachaLicense.changePlan(', 'app não chama changePlan');
+  includes(app, 'Fazer upgrade para o PRO', 'texto do botão ausente');
+  includes(sub, 'async function changePlan(plan)', 'subscription.js sem changePlan');
+  includes(sub, 'changePlan, cancel', 'changePlan não foi exportado');
+  includes(readme, '### Upgrade do Básico para o PRO', 'README sem o passo a passo');
+  includes(readme, '### Modalidades de pagamento da assinatura', 'README sem as modalidades');
+  includes(termos, '⚡ Fazer upgrade para o PRO', 'Termos sem a cláusula de upgrade');
+  includes(sw, 'racha-do-lolo-v67', 'cache não foi atualizado');
+});
+
+await teste('conta master fica só no servidor; clientes não veem plano vitalício', async () => {
+  const sub = await origFetch(new URL('../subscription.js', location.href)).then((r) => r.text());
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const master = await origFetch(new URL('../netlify/functions/create-master.mjs', location.href)).then((r) => r.text());
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  const termos = await origFetch(new URL('../termos.html', location.href)).then((r) => r.text());
+  const priv = await origFetch(new URL('../privacidade.html', location.href)).then((r) => r.text());
+  const inicio = sub.indexOf('const DEFAULT_PLANS');
+  const fim = sub.indexOf('const PLAN_TIERS');
+  ok(!sub.slice(inicio, fim).includes('lifetime'), 'lifetime foi incluído nos planos vendáveis');
+  ok(!/data-plan="lifetime"/.test(app), 'app oferece o plano vitalício no checkout');
+  ok(!/vital[ií]ci[oa]/i.test(app), 'app ainda mostra a palavra vitalício');
+  ok(!/vital[ií]ci[oa]/i.test(termos), 'Termos ainda mostram a palavra vitalício');
+  ok(!/vital[ií]ci[oa]/i.test(priv), 'Privacidade ainda mostra a palavra vitalício');
+  includes(master, "plan: 'lifetime'", 'conta master não grava plano lifetime');
+  includes(master, 'master: true', 'conta master não foi marcada como master');
+  includes(master, 'MASTER_SETUP_SECRET', 'conta master perdeu o segredo de setup');
+  includes(readme, '**não é vendida ao público**', 'README não deixa claro que não é vendido');
+  includes(readme, 'exclusiva do proprietário/desenvolvedor', 'README não identifica o dono');
+});
+
+await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo', async () => {
+  const licenseSrc = await origFetch(new URL('../netlify/functions/license.mjs', location.href)).then((r) => r.text());
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  ok(!/Para usar em outro dispositivo, fale com o administrador/.test(app), 'app ainda manda procurar o administrador');
+  ok(!/Use o aparelho original ou fale com o administrador/.test(licenseSrc), 'servidor ainda manda procurar o administrador');
+  includes(app, 'confirme o e-mail da assinatura', 'app não explica a troca sozinha');
+  includes(app, 'O vínculo é transferido automaticamente', 'app não diz que a troca é automática');
+  includes(readme, 'até o titular confirmar o e-mail da compra no aparelho novo', 'README não explica a troca');
+
+  const NOVO = 'DEV-BBBBBBBBBBBBBBBBBBBBBBBB';
+  const base = {
+    key: KEY, email: 'cliente@exemplo.com', plan: 'monthly', amount: 9.9,
+    status: 'active', subscriptionId: 'PRE-1', devices: [DEVICE],
+    nextPaymentAt: new Date(Date.now() + 20 * 86400000).toISOString(), history: []
+  };
+  const L = globalThis.__mods['license'].default;
+
+  reset({ license: { ...base } });
+  let res = await post(L, { key: KEY, deviceId: NOVO });
+  let data = await res.json();
+  eq(data.state, 'device_mismatch', 'não avisou que a chave está em outro aparelho');
+  includes(data.message, 'Digite o e-mail usado no checkout', 'mensagem não ensina como trocar');
+  ok(!/fale com o administrador/i.test(data.message), 'mensagem ainda pede contato com o administrador');
+
+  res = await post(L, { action: 'transfer', key: KEY, deviceId: NOVO, email: 'errado@exemplo.com' });
+  eq(res.status, 403, 'e-mail errado deveria ser recusado');
+  eq(licenseMap.get(KEY).devices[0], DEVICE, 'e-mail errado transferiu o vínculo');
+
+  res = await post(L, { action: 'transfer', key: KEY, deviceId: NOVO, email: 'CLIENTE@EXEMPLO.COM' });
+  data = await res.json();
+  eq(res.status, 200, 'troca com e-mail correto falhou');
+  eq(data.ok, true, 'resposta sem ok');
+  eq(licenseMap.get(KEY).devices[0], NOVO, 'vínculo não foi movido');
+  eq(licenseMap.get(KEY).devices.length, 1, 'ficou mais de um aparelho vinculado');
+  ok(licenseMap.get(KEY).history.some((h) => h.event === 'transfer:device'), 'troca não entrou no histórico');
+
+  res = await post(L, { key: KEY, deviceId: NOVO });
+  data = await res.json();
+  eq(data.valid, true, 'aparelho novo não ficou válido');
+  eq(data.plan, 'monthly', 'plano mudou na troca');
+  eq(data.subscriptionId, undefined, 'resposta pública expôs subscriptionId');
+
+  res = await post(L, { key: KEY, deviceId: DEVICE });
+  data = await res.json();
+  eq(data.state, 'device_mismatch', 'aparelho antigo continua válido');
+});
+
+await teste('botão Falar com o Administrador abre formulário com foto', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const contato = await origFetch(new URL('../contato.html', location.href)).then((r) => r.text());
+  const sw = await origFetch(new URL('../sw.js', location.href)).then((r) => r.text());
+  const priv = await origFetch(new URL('../privacidade.html', location.href)).then((r) => r.text());
+  const termos = await origFetch(new URL('../termos.html', location.href)).then((r) => r.text());
+  includes(app, 'href="contato.html" target="_blank" rel="noopener"', 'botão não abre nova janela/aba');
+  includes(app, '✉️ Falar com o Administrador', 'botão de contato ausente');
+  includes(contato, 'name="contato-admin"', 'formulário sem nome do Netlify');
+  includes(contato, 'data-netlify="true"', 'formulário não será detectado no deploy');
+  includes(contato, 'enctype="multipart/form-data"', 'formulário sem codificação de arquivo');
+  includes(contato, 'name="foto" type="file" accept="image/*"', 'sem anexo de imagem');
+  includes(contato, "fetch('/', { method: 'POST', body: new FormData(form) })", 'envio do anexo está errado');
+  const inicioFetch = contato.indexOf("fetch('/', { method: 'POST'");
+  ok(!/Content-Type/.test(contato.slice(inicioFetch, inicioFetch + 220)), 'Content-Type quebra o envio multipart');
+  includes(contato, 'mailto:rachadololo@gmail.com', 'sem alternativa por e-mail');
+  ok(!/lucianojunior373@gmail\.com/i.test(contato + priv + termos), 'e-mail antigo ainda aparece nas páginas');
+  includes(contato, '7 MB', 'limite da foto não foi avisado');
+  includes(sw, "'./contato.html'", 'página de contato fora do cache offline');
+  includes(priv, '✉️ Falar com o Administrador', 'Privacidade não cita o formulário');
+  includes(termos, '✉️ Falar com o Administrador', 'Termos não citam o formulário');
+});
+
+/* ------------------------------------------------------------------ */
+/* Execução                                                            */
+/* ------------------------------------------------------------------ */
+
+function pintar() {
+  const report = document.getElementById('report');
+  const total = suites.reduce((n, s) => n + s.testes.length, 0);
+  const falhas = suites.reduce((n, s) => n + s.testes.filter((x) => !x.ok).length, 0);
+  const resumo = document.getElementById('summary');
+  resumo.textContent = falhas ? `${falhas} falha(s) de ${total} testes` : `Todos os ${total} testes passaram`;
+  resumo.className = falhas ? 'fail' : 'ok';
+  report.innerHTML = suites.map((s) => `
+    <div class="grupo">${s.nome}</div>
+    ${s.testes.map((t) => `<div class="teste ${t.ok ? 'ok' : 'fail'}"><span class="tag">${t.ok ? 'OK' : 'FALHA'}</span><span>${t.nome}${t.erro ? '<div class="detalhe">' + t.erro.replace(/</g, '&lt;') + '</div>' : ''}</span></div>`).join('')}
+  `).join('');
+}
+
+/* A bateria roda durante a carga. O botão apenas recarrega para repetir. */
+document.getElementById('run').addEventListener('click', () => location.reload());
+pintar();
+globalThis.fetch = origFetch;
+})().catch((e) => {
+  const resumo = document.getElementById('summary');
+  if (resumo) {
+    resumo.textContent = 'Erro ao preparar testes (' + (globalThis.__etapa || '?') + '): ' + (e && e.message ? e.message : String(e));
+    resumo.className = 'fail';
+  }
+});
+</script>
+</body>
+</html>
