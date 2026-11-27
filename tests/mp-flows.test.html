@@ -2104,6 +2104,94 @@ await teste('README explica historico e dívidas antigas', async () => {
   ok(!readme.includes('ano de controle padrão é **2027**'), 'README ainda diz que o padrão é 2027');
 });
 
+grupo('26. Lote 5 — endurecimento das funções');
+
+await teste('assinatura inválida não consulta o MP nem grava', async () => {
+  reset({ license: { ...connectedLicense(1), ownerKey: KEY } });
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+    new URLSearchParams({ cliente: KEY, topic: 'payment', 'data.id': 'MP-SEG' }).toString();
+  const res = await W.default(new Request(url, {
+    method: 'POST',
+    headers: { 'x-request-id': 'ruim', 'x-signature': 'ts=1,v1=' + '0'.repeat(64) }
+  }));
+  eq(res.status, 401);
+  eq(mpCalls.length, 0, 'o Mercado Pago foi consultado antes da assinatura');
+  ok(!licenseMap.get(KEY).updatedAt, 'a licença foi gravada antes da assinatura');
+});
+
+await teste('webhook recusa verbo diferente de GET e POST', async () => {
+  reset();
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+    new URLSearchParams({ topic: 'payment', 'data.id': 'MP-METODO' }).toString();
+  const res = await W.default(new Request(url, {
+    method: 'PUT', headers: webhookHeaders('MP-METODO', 'req-metodo')
+  }));
+  eq(res.status, 405);
+});
+
+await teste('webhook falha fechado se o limite de requisições cair', async () => {
+  reset();
+  const normal = stores['racha-rate'];
+  stores['racha-rate'] = { get: async () => { throw new Error('Blobs fora'); }, setJSON: async () => {} };
+  try {
+    const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+      new URLSearchParams({ topic: 'payment', 'data.id': 'MP-LIMITE' }).toString();
+    const res = await W.default(new Request(url, {
+      method: 'POST', headers: webhookHeaders('MP-LIMITE', 'req-limite')
+    }));
+    eq(res.status, 429);
+  } finally { stores['racha-rate'] = normal; }
+});
+
+await teste('corpo nulo devolve 400, não exceção', async () => {
+  const req = new Request('https://rachadololo.netlify.app/.netlify/functions/change-plan', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: 'null'
+  });
+  const res = await globalThis.__mods['change-plan'].default(req);
+  eq(res.status, 400);
+});
+
+await teste('jogo inexistente não recebe resposta do jogador', async () => {
+  reset();
+  const res = await post(R.default, { v: V, p: P, gameId: 'jogo-que-nao-existe', response: 'yes' });
+  eq(res.status, 404);
+  const rating = await origFetch(new URL('../netlify/functions/view-rating.mjs', location.href)).then((r) => r.text());
+  includes(rating, 'gameById(record, gameId)', 'nota aceita jogo inexistente');
+});
+
+await teste('preflight 204 também sai sem cache', () => {
+  const res = S.json({}, 204);
+  eq(res.status, 204);
+  eq(res.headers.get('cache-control'), 'no-store');
+});
+
+await teste('segredos agendados usam comparação em tempo constante', async () => {
+  reset({ env: { REMINDER_SECRET: 'SEGREDO-LEMBRETE-TESTE' } });
+  const errado = await post(SR.default, { next_run: new Date().toISOString() },
+    { 'x-reminder-secret': 'ERRADO' });
+  eq(errado.status, 401);
+  const certo = await post(SR.default, { next_run: new Date().toISOString() },
+    { 'x-reminder-secret': 'SEGREDO-LEMBRETE-TESTE' });
+  eq(certo.status, 200);
+  for (const nome of ['reconcile-licenses', 'send-reminders', 'license']) {
+    const src = await origFetch(new URL('../netlify/functions/' + nome + '.mjs', location.href)).then((r) => r.text());
+    includes(src, 'timingSafeEqual', nome + ' ainda compara segredo com ==');
+  }
+  const rec = await origFetch(new URL('../netlify/functions/reconcile-licenses.mjs', location.href)).then((r) => r.text());
+  const rem = await origFetch(new URL('../netlify/functions/send-reminders.mjs', location.href)).then((r) => r.text());
+  includes(rec, "rateLimit(req, 'reconcile'", 'reconciliação sem limite');
+  includes(rem, "rateLimit(req, 'reminder'", 'lembretes sem limite');
+});
+
+await teste('erro de rede do Mercado Pago não é devolvido ao navegador', async () => {
+  for (const nome of ['create-checkout', 'create-daily-pix', 'create-monthly-pix',
+    'create-monthly-card', 'create-monthly-auto', 'cancel-monthly-auto', 'change-plan']) {
+    const src = await origFetch(new URL('../netlify/functions/' + nome + '.mjs', location.href)).then((r) => r.text());
+    ok(!src.includes('result.error') && !src.includes('changed.error'),
+      nome + ' ainda devolve o erro interno de rede');
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* Execução                                                            */
 /* ------------------------------------------------------------------ */
