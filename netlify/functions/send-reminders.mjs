@@ -1,7 +1,8 @@
 /* Gera links de lembrete (WhatsApp) para jogos próximos dos links publicados.
    Função agendável: exige REMINDER_SECRET no header x-reminder-secret. */
+import { timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, siteUrl, setCorsOrigin, viewUnavailable } from './_shared.mjs';
+import { json, siteUrl, setCorsOrigin, viewUnavailable, rateLimit } from './_shared.mjs';
 
 const MAX_REMINDERS = 200;
 const MAX_PAGES = 50;
@@ -30,7 +31,9 @@ function authorized(req, scheduled) {
   const secret = process.env.REMINDER_SECRET;
   if (secret) {
     const provided = typeof req.headers?.get === 'function' ? req.headers.get('x-reminder-secret') : null;
-    return String(provided || '') === secret;
+    const a = Buffer.from(String(provided || ''));
+    const b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
   }
   /* Sem segredo configurado: somente chamada explícita local em desenvolvimento. */
   return !isProduction() && new URL(req.url).searchParams.get('local') === '1';
@@ -130,6 +133,11 @@ export default async (req) => {
 
   const declared = Number(typeof req.headers?.get === 'function' ? req.headers.get('content-length') : 0);
   if (Number.isFinite(declared) && declared > 16 * 1024) return json({ error: 'Requisição muito grande.' }, 413);
+  const limit = await rateLimit(req, 'reminder', { max: 10, windowMs: 60000 });
+  if (!limit.ok) return json({ error: 'Muitas tentativas. Aguarde um minuto.' }, 429, {
+    'Retry-After': String(limit.retryAfter)
+  });
+
   const scheduled = await isScheduledInvocation(req);
   if (!authorized(req, scheduled)) {
     return json({ error: process.env.REMINDER_SECRET ? 'Não autorizado.' : 'Lembretes não configurados.' },

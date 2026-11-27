@@ -2,9 +2,10 @@
    Confere o status real de cada assinatura e corrige o Blobs caso um webhook
    tenha sido perdido. Função agendável: aceita o POST interno do Netlify
    (`{"next_run":...}`) ou o header x-reconcile-secret. */
+import { timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 import {
-  json, licenses, mpFetch, normalizeStatus, setCorsOrigin, clearStaleCancel
+  json, licenses, mpFetch, normalizeStatus, setCorsOrigin, clearStaleCancel, rateLimit
 } from './_shared.mjs';
 
 const MAX_PAGES = 50;
@@ -29,7 +30,9 @@ function authorized(req, scheduled) {
     const provided = typeof req.headers?.get === 'function'
       ? req.headers.get('x-reconcile-secret')
       : null;
-    return String(provided || '') === secret;
+    const a = Buffer.from(String(provided || ''));
+    const b = Buffer.from(secret);
+    return a.length === b.length && timingSafeEqual(a, b);
   }
   return !isProduction() && new URL(req.url).searchParams.get('local') === '1';
 }
@@ -85,6 +88,11 @@ export default async (req) => {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return json({ error: 'Método não permitido.' }, 405);
   }
+
+  const limit = await rateLimit(req, 'reconcile', { max: 10, windowMs: 60000 });
+  if (!limit.ok) return json({ error: 'Muitas tentativas. Aguarde um minuto.' }, 429, {
+    'Retry-After': String(limit.retryAfter)
+  });
 
   const scheduled = await isScheduledInvocation(req);
   if (!authorized(req, scheduled)) return json({ error: 'Não autorizado.' }, 403);

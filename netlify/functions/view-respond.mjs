@@ -5,7 +5,7 @@ import { getStore } from '@netlify/blobs';
 import { json, paymentModeFor, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   activeReservations, copyCredits, copyDailyPayments, copyMonthlyPayments,
-  copyReservations, playerRole, unpaidMonths
+  copyReservations, playerRole, unpaidMonths, gameById
 } from './_daily.mjs';
 
 const MAX_BODY = 16 * 1024;
@@ -163,6 +163,7 @@ export default async (req) => {
   if (!record) return json({ error: 'Link inválido ou removido.' }, 404);
   const unavailable = viewUnavailable(record);
   if (unavailable) return json({ error: unavailable, expired: true }, 410);
+  if (gameId && !gameById(record, gameId)) return json({ error: 'Jogo não identificado.' }, 404);
 
   const playerId = findPlayerId(record.playerTokens, p);
   if (!playerId) return json({ error: 'Link de jogador inválido.' }, 403);

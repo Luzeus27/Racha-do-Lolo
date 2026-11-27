@@ -145,7 +145,7 @@ export default async (req) => {
   });
 
   if (!result.ok || !result.data) {
-    const detail = result.data?.message || result.error || 'Não foi possível iniciar o pagamento.';
+    const detail = result.data?.message || 'Não foi possível iniciar o pagamento.';
     return json({ error: 'Mercado Pago: ' + detail }, 502);
   }
 

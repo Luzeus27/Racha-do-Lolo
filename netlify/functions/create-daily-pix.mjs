@@ -225,7 +225,7 @@ export default async (req) => {
   });
 
   if (!result.ok || !result.data) {
-    const detail = result.data?.message || result.error || 'Não foi possível gerar o PIX.';
+    const detail = result.data?.message || 'Não foi possível gerar o PIX.';
     return json({ error: 'Mercado Pago: ' + detail }, 502);
   }
 

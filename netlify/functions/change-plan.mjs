@@ -13,6 +13,9 @@ export default async (req) => {
 
   let body = {};
   try { body = await req.json(); } catch (e) { return json({ error: 'Dados inválidos.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json({ error: 'Dados inválidos.' }, 400);
+  }
 
   const key = cleanKey(body.key);
   const device = cleanDevice(body.deviceId);
@@ -89,8 +92,8 @@ export default async (req) => {
     }
   });
   if (!changed.ok) {
-    const detail = changed.data?.message || changed.error || '';
-    return json({ error: 'Não foi possível alterar o valor no Mercado Pago. ' + detail, detail: detail || null }, 502);
+    const detail = changed.data?.message || '';
+    return json({ error: 'Não foi possível alterar o valor no Mercado Pago. ' + detail }, 502);
   }
 
   const now = new Date().toISOString();

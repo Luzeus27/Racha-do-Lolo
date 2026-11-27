@@ -1,6 +1,7 @@
 /* Nota (1..5) dada por um jogador a um jogo já realizado, no link compartilhado. */
 import { getStore } from '@netlify/blobs';
 import { json, setCorsOrigin, viewUnavailable, rateLimit } from './_shared.mjs';
+import { gameById } from './_daily.mjs';
 
 const MAX_BODY = 16 * 1024;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
@@ -85,6 +86,7 @@ export default async (req) => {
   if (!record) return json({ error: 'Link inválido ou removido.' }, 404);
   const unavailable = viewUnavailable(record);
   if (unavailable) return json({ error: unavailable, expired: true }, 410);
+  if (!gameById(record, gameId)) return json({ error: 'Jogo não identificado.' }, 404);
 
   const playerId = findPlayerId(record.playerTokens, p);
   if (!playerId) return json({ error: 'Link de jogador inválido.' }, 403);

@@ -19,6 +19,9 @@ export default async (req) => {
 
   let body = {};
   try { body = await req.json(); } catch (e) { body = {}; }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json({ error: 'Dados inválidos.' }, 400);
+  }
 
   const key = cleanKey(body.key);
   const device = cleanDevice(body.deviceId);

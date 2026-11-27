@@ -20,6 +20,9 @@ export default async (req) => {
 
   let body;
   try { body = await req.json(); } catch (e) { return json({ error: 'Dados inválidos.' }, 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return json({ error: 'Dados inválidos.' }, 400);
+  }
 
   const email = String(body.email || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -69,7 +72,7 @@ export default async (req) => {
 
   const result = await mpFetch('/preapproval', { token, method: 'POST', body: payload });
   if (!result.ok || !result.data || !result.data.init_point) {
-    const detail = result.data?.message || result.error || 'Não foi possível abrir o pagamento.';
+    const detail = result.data?.message || 'Não foi possível abrir o pagamento.';
     return json({ error: 'Mercado Pago: ' + detail }, 502);
   }
 

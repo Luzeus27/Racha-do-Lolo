@@ -1,4 +1,5 @@
 /* Consulta pública da licença. Nunca devolve token nem dados de pagamento. */
+import { timingSafeEqual } from 'node:crypto';
 import {
   json, licenses, plans, maskEmail, validUntil, mpFetch, normalizeStatus,
   cleanDevice, deviceAllowed, setCorsOrigin, clearStaleCancel, rateLimit
@@ -97,7 +98,10 @@ export default async (req) => {
      Mantém uma licença ativa por dispositivo por vez. */
   if (action === 'transfer') {
     if (!device) return json({ ...publicInfo, error: 'Dispositivo não identificado.' }, 400);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email !== String(record.email || '').toLowerCase()) {
+    const ownerEmail = String(record.email || '').toLowerCase();
+    const a = Buffer.from(email);
+    const b = Buffer.from(ownerEmail);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || a.length !== b.length || !timingSafeEqual(a, b)) {
       return json({ ...publicInfo, valid: false, error: 'O e-mail informado não corresponde ao titular da assinatura.' }, 403);
     }
     const now = new Date().toISOString();

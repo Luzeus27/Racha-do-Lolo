@@ -50,7 +50,7 @@ export default async (req) => {
     body: { status: 'cancelled' }
   });
   if (!result.ok) {
-    const detail = result.data?.message || result.error || 'Não foi possível cancelar no Mercado Pago.';
+    const detail = result.data?.message || 'Não foi possível cancelar no Mercado Pago.';
     return json({ error: 'Mercado Pago: ' + detail }, 502);
   }
 

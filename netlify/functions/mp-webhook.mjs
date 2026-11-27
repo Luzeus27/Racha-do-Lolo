@@ -2,7 +2,7 @@
    e as cobranças dos jogadores quando o administrador escolheu esse modo. */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { cleanLicenseKey, json, licenses, mpFetch, mpTokenFor, normalizeStatus, paymentModeFor, setCorsOrigin, clearStaleCancel } from './_shared.mjs';
+import { cleanLicenseKey, json, licenses, mpFetch, mpTokenFor, normalizeStatus, paymentModeFor, setCorsOrigin, clearStaleCancel, rateLimit } from './_shared.mjs';
 import {
   VIEW_TOKEN, PAYMENT_ID, MONTHLY_PAYMENT_ID, cleanWaitlist, copyAutoPayments, copyDailyPayments,
   copyMonthlyPayments, copyReservations, copyResponses, copyWaitlist,
@@ -403,12 +403,13 @@ async function handleAutoCharge(charge, id, token, now, cliente = '') {
 export default async (req) => {
   setCorsOrigin(req);
   if (req.method === 'OPTIONS') return json({}, 204);
+  /* O Mercado Pago avisa por POST e também por GET com os dados na URL.
+     Outros verbos não têm motivo para chegar a esta função. */
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return json({ received: false, error: 'Método não permitido.' }, 405);
+  }
 
   const url = new URL(req.url);
-  const tokenInfo = await tokenForNotification(url);
-  let token = tokenInfo.token;
-  if (!token) return json({ received: false, error: 'Pagamentos não configurados.' }, 503);
-
   const dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') || '';
   const requestId = req.headers.get('x-request-id') || '';
   const secret = process.env.MP_WEBHOOK_SECRET;
@@ -419,6 +420,19 @@ export default async (req) => {
   if (!signatureIsValid(secret, signature, dataId, requestId)) {
     return json({ received: false, error: 'Assinatura inválida.' }, 401);
   }
+
+  /* Nada de consulta ao Mercado Pago nem escrita no Blobs antes da assinatura:
+     sem o segredo, um chamador não pode provocar renovação de token. */
+  const limit = await rateLimit(req, 'webhook', { max: 300, windowMs: 60000 });
+  if (!limit.ok) {
+    return json({ received: false, error: 'Muitas notificações. Aguarde um instante.' }, 429, {
+      'Retry-After': String(limit.retryAfter)
+    });
+  }
+
+  const tokenInfo = await tokenForNotification(url);
+  let token = tokenInfo.token;
+  if (!token) return json({ received: false, error: 'Pagamentos não configurados.' }, 503);
 
   let payload = {};
   try { payload = await req.json(); } catch (e) { payload = {}; }

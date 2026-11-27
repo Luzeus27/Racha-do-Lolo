@@ -307,6 +307,7 @@ export default async (req) => {
 
   const { body, tooLarge } = await readJson(req, MAX_BODY_BYTES);
   if (tooLarge) return json({ error: 'Retrato muito grande (fotos). Reduza as imagens.' }, 413);
+  if (!isObject(body)) return json({ error: 'Dados inválidos.' }, 400);
 
   const key = cleanKey(body.licenseKey);
   const device = cleanDevice(body.deviceId);
