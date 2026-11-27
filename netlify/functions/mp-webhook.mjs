@@ -506,11 +506,14 @@ export default async (req) => {
 
   if (topic === 'subscription_preapproval' || topic === 'subscription') {
     let activeToken = token;
-    let result = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
+    const first = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
+    let result = first;
+    let found = null;
+    let owned = '';
     if (!result.ok && !tokenInfo.cliente) {
-      const found = await findAutoBySubscription(viewStore, id);
+      found = await findAutoBySubscription(viewStore, id);
       if (found) {
-        const owned = await mpTokenFor(String(found.record.ownerKey || ''));
+        owned = await mpTokenFor(String(found.record.ownerKey || ''));
         if (owned) {
           activeToken = owned;
           result = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
@@ -518,6 +521,7 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
+      console.log('diag preapproval ' + JSON.stringify({ global: first.status, found: !!found, owned: !!owned, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       return json({ received: false, error: 'Não foi possível consultar a assinatura.' }, 502);
     }
