@@ -36,7 +36,7 @@ export default async (req) => {
         installments: 1,
         payment_method_id: pm,
         issuer_id: issuer > 0 ? issuer : undefined,
-        payer: { email: 'mensalista.f39147b4d38d2b@example.com' },
+        payer: { email: 'test@testuser.com' },
         external_reference: 'MENSALIDADE-CARD|VW-E9A2F816431A45E3|MS-A1F9857859854B3B',
         notification_url: 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?cliente=RL-D3367A29C45F',
         binary_mode: true
