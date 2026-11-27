@@ -169,6 +169,7 @@ export default async (req) => {
     for (const value of games) {
       if (reminders.length >= MAX_REMINDERS) break;
       const game = isObject(value) ? value : {};
+      if (game.canceled === true) continue;
       const date = text(game.date, 20);
       if (!date || date < today) continue;
       const when = reminderType(hoursUntil(date, nowMs));

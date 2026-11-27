@@ -261,9 +261,27 @@ export function playerRole(record, playerId) {
   return String(mine?.type || '').toLowerCase() === 'diarista' ? 'daily' : 'monthly';
 }
 
+/* Mensalidade do jogador: cargo começa no valor base e nunca fica abaixo dele. */
+const ROLE_FEE_KEYS = {
+  'presidente': 'feePresidente',
+  'vice-presidente': 'feeVice',
+  'diretor': 'feeDiretor',
+  'conselheiro': 'feeConselheiro'
+};
+
+export function playerMonthlyFee(record, playerId) {
+  const settings = isObject(record?.snapshot?.settings) ? record.snapshot.settings : {};
+  const base = number(settings.monthlyFee);
+  const players = Array.isArray(record?.snapshot?.players) ? record.snapshot.players : [];
+  const mine = players.find((p) => isObject(p) && text(p.id, 60) === playerId);
+  const key = ROLE_FEE_KEYS[String(mine?.type || '').toLowerCase()];
+  const extra = key ? number(settings[key]) : 0;
+  return Math.round(Math.max(base, extra) * 100) / 100;
+}
+
 export function gameById(record, gameId) {
   const games = Array.isArray(record?.snapshot?.games) ? record.snapshot.games : [];
-  return games.find((g) => isObject(g) && text(g.id, 60) === gameId) || null;
+  return games.find((g) => isObject(g) && g.canceled !== true && text(g.id, 60) === gameId) || null;
 }
 
 /* ---------- mensalidade paga no link individual ---------- */

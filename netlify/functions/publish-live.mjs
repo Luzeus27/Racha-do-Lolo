@@ -8,6 +8,12 @@ const MAX_BODY = 16 * 1024;
 const MAX_EVENTS = 1000;
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
 const ACTIONS = ['start', 'goal', 'assist', 'card', 'undo', 'stop'];
+const TEAM_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+function cleanTeam(value) {
+  const team = String(value || '').trim().toUpperCase();
+  return TEAM_KEYS.includes(team) ? team : 'A';
+}
 
 function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
@@ -60,7 +66,7 @@ function cleanEvent(raw, now) {
     at: text(ev.at, 40) || now,
     type: ['goal', 'assist', 'card'].includes(ev.type) ? ev.type : 'assist',
     playerId: text(ev.playerId, 60),
-    team: ev.team === 'B' ? 'B' : 'A',
+    team: cleanTeam(ev.team),
     minute: Math.max(0, Math.min(120, Math.floor(number(ev.minute))))
   };
 }
@@ -68,7 +74,10 @@ function cleanEvent(raw, now) {
 function scoreFromEvents(events) {
   const score = { A: 0, B: 0 };
   events.forEach((ev) => {
-    if (ev.type === 'goal') score[ev.team === 'B' ? 'B' : 'A'] += 1;
+    if (ev.type === 'goal') {
+      const team = cleanTeam(ev.team);
+      score[team] = (score[team] || 0) + 1;
+    }
   });
   return score;
 }
@@ -120,10 +129,17 @@ export default async (req) => {
 
     const events = (Array.isArray(previous.events) ? previous.events : []).slice(-MAX_EVENTS)
       .map((ev) => cleanEvent(ev, now));
-    const score = isObject(previous.score) ? { A: number(previous.score.A), B: number(previous.score.B) } : { A: 0, B: 0 };
+    const score = { A: 0, B: 0 };
+    if (isObject(previous.score)) {
+      for (const team of TEAM_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(previous.score, team)) {
+          score[team] = Math.max(0, Math.floor(number(previous.score[team])));
+        }
+      }
+    }
 
     if (action === 'goal' || action === 'assist' || action === 'card') {
-      const team = String(body.team || '').trim().toUpperCase() === 'B' ? 'B' : 'A';
+      const team = cleanTeam(body.team);
       events.push({
         id: 'EV-' + randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase(),
         at: now,
@@ -132,17 +148,23 @@ export default async (req) => {
         team,
         minute: Math.max(0, Math.min(120, Math.floor(number(body.minute))))
       });
-      if (action === 'goal') score[team] += 1;
+      if (action === 'goal') score[team] = (score[team] || 0) + 1;
     } else if (action === 'undo') {
       events.pop();
     }
+
+    const cleanScore = {};
+    for (const team of TEAM_KEYS) {
+      if (score[team] !== undefined) cleanScore[team] = Math.max(0, Math.floor(number(score[team])));
+    }
+    if (!Object.keys(cleanScore).length) { cleanScore.A = 0; cleanScore.B = 0; }
 
     live = {
       ...previous,
       gameId: text(previous.gameId, 60),
       startedAt: text(previous.startedAt, 40),
       events: events.slice(-MAX_EVENTS),
-      score: action === 'undo' ? scoreFromEvents(events) : { A: Math.max(0, Math.floor(score.A)), B: Math.max(0, Math.floor(score.B)) },
+      score: action === 'undo' ? scoreFromEvents(events) : cleanScore,
       updatedAt: now
     };
     if (action === 'stop') live.endedAt = now;

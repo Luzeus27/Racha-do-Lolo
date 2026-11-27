@@ -91,6 +91,7 @@ export default async (req) => {
 
   if (action === 'summary') {
     const games = (Array.isArray(view.snapshot?.games) ? view.snapshot.games : [])
+      .filter((game) => game?.canceled !== true)
       .slice(0, 500)
       .map((game) => {
         const id = text(game?.id, 60);

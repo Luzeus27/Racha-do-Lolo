@@ -2,7 +2,7 @@
    Nunca devolve tokens de outros jogadores nem dados de contato. */
 import { getStore } from '@netlify/blobs';
 import { cardFeeRate, cardGross, json, paymentModeFor, setCorsOrigin, viewUnavailable } from './_shared.mjs';
-import { copyAutoPayments, copyCredits, latestMonthlyPayment, latestPayment, manualPixCode, playerRole, unpaidMonths } from './_daily.mjs';
+import { copyAutoPayments, copyCredits, latestMonthlyPayment, latestPayment, manualPixCode, playerMonthlyFee, playerRole, unpaidMonths } from './_daily.mjs';
 
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
 const PLAYER_TOKEN = /^VP-[A-F0-9]{16}$/;
@@ -55,6 +55,7 @@ function copyGames(raw) {
     month: number(g && g.month),
     year: number(g && g.year),
     done: !!(g && g.done === true),
+    canceled: !!(g && g.canceled === true),
     name: text(g && g.name, 90),
     time: text(g && g.time, 10)
   })).filter((g) => !!g.id);
@@ -130,14 +131,14 @@ export default async (req) => {
   const kind = playerRole(record, playerId);
   const dailyEnabled = snapshot.settings?.dailyPaymentEnabled !== false;
   const dailyAmount = number(snapshot.settings?.dayFee);
-  const monthlyFee = number(snapshot.settings?.monthlyFee);
+  const monthlyFee = playerMonthlyFee(record, playerId);
   const credit = copyCredits(record.dailyCredits)[playerId] || 0;
   const unpaid = unpaidMonths(record, playerId);
   const monthlyPending = kind === 'monthly' && unpaid.length > 0;
   const monthlyDue = monthlyPending ? unpaid[0] : null;
 
   const today = todayISO();
-  const games = copyGames(snapshot.games);
+  const games = copyGames(snapshot.games).filter((g) => !g.canceled);
   const upcoming = games.filter((g) => g.date && g.date >= today);
   const pool = upcoming.length ? upcoming : games;
   const nextGames = pool.slice().sort((a, b) => a.date.localeCompare(b.date)).slice(0, 12);
@@ -221,6 +222,7 @@ export default async (req) => {
     player: {
       id: playerId,
       name: text(mine.name, 90),
+      type: text(mine.type, 30),
       position: text(mine.position, 30),
       kind,
       dailyAmount,

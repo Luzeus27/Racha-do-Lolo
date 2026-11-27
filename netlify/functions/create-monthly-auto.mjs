@@ -5,7 +5,7 @@ import { getStore } from '@netlify/blobs';
 import { cardGross, cardFeeRate, json, mpFetch, mpTokenFor, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   VIEW_TOKEN, PLAYER_TOKEN, copyAutoPayments, findPlayerId,
-  playerRole, readJson
+  playerMonthlyFee, playerRole, readJson
 } from './_daily.mjs';
 
 function payerEmail(view, playerId) {
@@ -82,7 +82,7 @@ export default async (req) => {
     });
   }
 
-  const net = Math.round(Number(record.snapshot?.settings?.monthlyFee) * 100) / 100;
+  const net = playerMonthlyFee(record, playerId);
   if (!(net > 0)) return json({ error: 'Valor da mensalidade não configurado.' }, 503);
   const gross = cardGross(net);
   const fee = Math.round((gross - net) * 100) / 100;

@@ -101,9 +101,13 @@ function sanitizeDues(raw) {
 function sanitizeSettings(raw) {
   const settings = pick(raw, [
     'year', 'monthlyFee', 'dayFee', 'goalkeepers', 'gamesPerMonth',
-    'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsCard',
+    'feePresidente', 'feeVice', 'feeDiretor', 'feeConselheiro',
+    'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsDefesas', 'ptsParedoes', 'ptsGolsSofridos', 'ptsCard',
     'plannedMembers', 'maxPlayers', 'paymentMode'
   ]);
+  ['feePresidente', 'feeVice', 'feeDiretor', 'feeConselheiro'].forEach((k) => {
+    settings[k] = number(settings[k]);
+  });
   const max = Number(settings.maxPlayers);
   settings.maxPlayers = Number.isFinite(max) && max > 0 ? Math.min(1000, Math.floor(max)) : 0;
   return Object.assign(settings, {
@@ -189,6 +193,7 @@ function sanitize(raw) {
       month: number(g.month),
       year: number(g.year),
       done: g.done === true,
+      canceled: g.canceled === true,
       name: text(g.name, 90),
       time: text(g.time, 10)
     };
@@ -215,6 +220,9 @@ function sanitize(raw) {
       farrapou: number(s.farrapou),
       atrasado: number(s.atrasado),
       desarmes: number(s.desarmes),
+      defesas: number(s.defesas),
+      paredoes: number(s.paredoes),
+      golsSofridos: number(s.golsSofridos),
       cards: number(s.cards)
     };
   });
