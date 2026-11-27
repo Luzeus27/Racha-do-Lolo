@@ -5491,9 +5491,10 @@ document.addEventListener('submit', async (e) => {
     /* Pendência antiga mantém o valor original, mesmo que a mensalidade tenha mudado. */
     const anterior = state.payments.find(x => x.playerId === playerId && x.month === month && x.year === y);
     const esperado = anterior ? num(anterior.amount) : feeForPlayerId(playerId);
+    const pago = fd.get('paid') !== null;
     state.payments = state.payments.filter(x => !(x.playerId === playerId && x.month === month && x.year === y));
-    if (fd.get('paid') !== null) state.payments.push({ id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: true });
-    save(fd.get('paid') !== null ? 'recebeu mensalidade' : 'removeu mensalidade', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast('Pagamento salvo.');
+    state.payments.push({ id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: pago });
+    save(pago ? 'recebeu mensalidade' : 'lançou mensalidade em aberto', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast(pago ? 'Pagamento salvo.' : 'Pendência salva.');
   }
   else if (type === 'game') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
