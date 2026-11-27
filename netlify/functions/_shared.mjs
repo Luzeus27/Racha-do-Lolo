@@ -331,6 +331,10 @@ export async function mpConnectionFor(ownerKey) {
 /* Token do administrador desta licença. Se faltar, usa o token global antigo.
    Renova sozinho quando faltam menos de 7 dias para vencer (o token dura 180). */
 export async function mpTokenFor(ownerKey) {
+  /* Chave temporária de sandbox: força o token de teste sem alterar a produção. */
+  if (String(process.env.MP_SANDBOX_GLOBAL || '').trim() === '1') {
+    return String(process.env.MP_SANDBOX_TOKEN || '').trim();
+  }
   const connection = await mpConnectionFor(ownerKey);
   if (!connection) return String(process.env.MP_ACCESS_TOKEN || '').trim();
 
