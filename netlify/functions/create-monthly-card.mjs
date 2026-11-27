@@ -142,7 +142,8 @@ export default async (req) => {
           installments: 1,
           excluded_payment_types: [
             { id: 'ticket' }, { id: 'atm' }, { id: 'bank_transfer' },
-            { id: 'debit_card' }, { id: 'account_money' }, { id: 'digital_currency' }
+            /* account_money não pode ser excluído nesta conta do Mercado Pago. */
+            { id: 'debit_card' }, { id: 'digital_currency' }
           ]
         },
         payer: { email: payerEmail(v, playerId) }
