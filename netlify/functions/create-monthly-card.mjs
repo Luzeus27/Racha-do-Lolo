@@ -157,7 +157,9 @@ export default async (req) => {
       return json({ error: 'Mercado Pago: ' + detail }, 502);
     }
 
-    const checkoutUrl = String(result.data.init_point || result.data.sandbox_init_point || '');
+    /* Com credencial de teste, o init_point pode vir da conta real; usar o de sandbox. */
+    const checkoutUrl = String((sandbox ? result.data.sandbox_init_point : result.data.init_point) ||
+      result.data.sandbox_init_point || result.data.init_point || '');
     if (!/^https:\/\//.test(checkoutUrl)) {
       return json({ error: 'O Mercado Pago não devolveu o link de pagamento. Tente novamente.' }, 502);
     }
