@@ -461,7 +461,9 @@ export default async (req) => {
 
   /* Nada de consulta ao Mercado Pago nem escrita no Blobs antes da assinatura:
      sem o segredo, um chamador não pode provocar renovação de token. */
+  console.log('diag webhook ' + JSON.stringify({ method: req.method, dataId: String(dataId).slice(0, 40), requestId: String(requestId).slice(0, 40), sig: !!signature.v1, secret: !!secret }));
   const limit = await rateLimit(req, 'webhook', { max: 300, windowMs: 60000 });
+  console.log('diag rate ' + JSON.stringify({ ok: limit.ok, retryAfter: limit.retryAfter || 0 }));
   if (!limit.ok) {
     return json({ received: false, error: 'Muitas notificações. Aguarde um instante.' }, 429, {
       'Retry-After': String(limit.retryAfter)
@@ -469,6 +471,7 @@ export default async (req) => {
   }
 
   const tokenInfo = await tokenForNotification(url);
+  console.log('diag token ' + JSON.stringify({ cliente: !!tokenInfo.cliente, hasToken: !!tokenInfo.token, global: !!process.env.MP_ACCESS_TOKEN }));
   let token = tokenInfo.token;
   if (!token) return json({ received: false, error: 'Pagamentos não configurados.' }, 503);
 
@@ -483,7 +486,9 @@ export default async (req) => {
     ''
   ).toLowerCase();
 
-  if (!(await claimEvent(requestId, topic, dataId))) {
+  const claimed = await claimEvent(requestId, topic, dataId);
+  console.log('diag claim ' + JSON.stringify({ topic, claimed }));
+  if (!claimed) {
     return json({ received: true, duplicate: true }, 200);
   }
 
@@ -506,14 +511,11 @@ export default async (req) => {
 
   if (topic === 'subscription_preapproval' || topic === 'subscription') {
     let activeToken = token;
-    const first = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
-    let result = first;
-    let found = null;
-    let owned = '';
+    let result = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
     if (!result.ok && !tokenInfo.cliente) {
-      found = await findAutoBySubscription(viewStore, id);
+      const found = await findAutoBySubscription(viewStore, id);
       if (found) {
-        owned = await mpTokenFor(String(found.record.ownerKey || ''));
+        const owned = await mpTokenFor(String(found.record.ownerKey || ''));
         if (owned) {
           activeToken = owned;
           result = await mpFetch('/preapproval/' + encodeURIComponent(id), { token: activeToken });
@@ -521,7 +523,6 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
-      console.log('diag preapproval ' + JSON.stringify({ global: first.status, found: !!found, owned: !!owned, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       return json({ received: false, error: 'Não foi possível consultar a assinatura.' }, 502);
     }
