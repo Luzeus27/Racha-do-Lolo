@@ -2,7 +2,7 @@
    A pendência só desaparece quando o webhook do Mercado Pago aprova o pagamento. */
 import { createHash, randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, mpFetch, mpTokenFor, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
+import { beginPayment, endPayment, json, mpFetch, mpTokenFor, paymentLockKey, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   VIEW_TOKEN, PLAYER_TOKEN, copyMonthlyPayments, findPlayerId,
   playerRole, publicMonthlyPayment, readJson, unpaidMonths
@@ -78,7 +78,7 @@ export default async (req) => {
   /* Reaproveita um código ainda válido para não criar dois PIX iguais. */
   const pending = Object.values(payments)
     .filter((row) => row.playerId === playerId && row.month === due.month && row.year === due.year &&
-      row.status === 'pending' && Date.parse(row.expiresAt) > nowMs && row.qrCode)
+      row.status === 'pending' && Date.parse(row.expiresAt) > nowMs && (row.qrCode || row.qrBase64))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if (pending) {
     return json({
@@ -105,63 +105,72 @@ export default async (req) => {
   const paymentId = newPaymentId();
   const expiresAt = new Date(nowMs + PIX_MS).toISOString();
   const externalReference = 'MENSALIDADE|' + v + '|' + paymentId;
-  const result = await mpFetch('/v1/payments', {
-    token,
-    method: 'POST',
-    body: {
-      transaction_amount: due.amount,
-      description: ('Mensalidade Racha do Loló — ' +
-        String(due.month).padStart(2, '0') + '/' + due.year).slice(0, 120),
-      external_reference: externalReference,
-      notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
-      payment_method_id: 'pix',
-      date_of_expiration: expiresAt,
-      payer: { email: payerEmail(v, playerId) }
+  const lockKey = paymentLockKey(['mensalidade-pix', v, playerId, due.month, due.year]);
+  if (!(await beginPayment(lockKey, paymentId))) {
+    return json({ error: 'Já estamos gerando seu PIX. Aguarde um instante e tente novamente.' }, 409);
+  }
+
+  try {
+    const result = await mpFetch('/v1/payments', {
+      token,
+      method: 'POST',
+      body: {
+        transaction_amount: due.amount,
+        description: ('Mensalidade Racha do Loló — ' +
+          String(due.month).padStart(2, '0') + '/' + due.year).slice(0, 120),
+        external_reference: externalReference,
+        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+        payment_method_id: 'pix',
+        date_of_expiration: expiresAt,
+        payer: { email: payerEmail(v, playerId) }
+      }
+    });
+
+    if (!result.ok || !result.data) {
+      const detail = result.data?.message || 'Não foi possível gerar o PIX.';
+      return json({ error: 'Mercado Pago: ' + detail }, 502);
     }
-  });
 
-  if (!result.ok || !result.data) {
-    const detail = result.data?.message || 'Não foi possível gerar o PIX.';
-    return json({ error: 'Mercado Pago: ' + detail }, 502);
+    const interaction = result.data.point_of_interaction?.transaction_data || {};
+    const qrCode = String(interaction.qr_code || '').slice(0, 2000);
+    const qrBase64 = String(interaction.qr_code_base64 || '');
+    if (!qrCode && !/^[A-Za-z0-9+/=]+$/.test(qrBase64)) {
+      return json({ error: 'O Mercado Pago não devolveu o código PIX. Tente novamente.' }, 502);
+    }
+
+    const row = history({
+      paymentId,
+      playerId,
+      month: due.month,
+      year: due.year,
+      amount: due.amount,
+      status: 'pending',
+      externalReference,
+      mpPaymentId: String(result.data.id || ''),
+      qrCode,
+      qrBase64: /^[A-Za-z0-9+/=]+$/.test(qrBase64) ? qrBase64.slice(0, 200000) : '',
+      createdAt: now,
+      expiresAt,
+      paidAt: '',
+      refundReason: ''
+    }, 'pix_mensalidade_gerado', now);
+    payments[paymentId] = row;
+
+    await store.setJSON(v, {
+      ...record,
+      monthlyPayments: payments,
+      updatedAt: now
+    }, { metadata: { owner: 'license' } });
+
+    return json({
+      ok: true,
+      status: 'pending',
+      message: 'PIX gerado! Pague para ficar em dia e liberar a confirmação dos jogos.',
+      month: due.month,
+      year: due.year,
+      payment: publicMonthlyPayment(row)
+    });
+  } finally {
+    await endPayment(lockKey);
   }
-
-  const interaction = result.data.point_of_interaction?.transaction_data || {};
-  const qrCode = String(interaction.qr_code || '').slice(0, 2000);
-  const qrBase64 = String(interaction.qr_code_base64 || '');
-  if (!qrCode && !/^[A-Za-z0-9+/=]+$/.test(qrBase64)) {
-    return json({ error: 'O Mercado Pago não devolveu o código PIX. Tente novamente.' }, 502);
-  }
-
-  const row = history({
-    paymentId,
-    playerId,
-    month: due.month,
-    year: due.year,
-    amount: due.amount,
-    status: 'pending',
-    externalReference,
-    mpPaymentId: String(result.data.id || ''),
-    qrCode,
-    qrBase64: /^[A-Za-z0-9+/=]+$/.test(qrBase64) ? qrBase64.slice(0, 200000) : '',
-    createdAt: now,
-    expiresAt,
-    paidAt: '',
-    refundReason: ''
-  }, 'pix_mensalidade_gerado', now);
-  payments[paymentId] = row;
-
-  await store.setJSON(v, {
-    ...record,
-    monthlyPayments: payments,
-    updatedAt: now
-  }, { metadata: { owner: 'license' } });
-
-  return json({
-    ok: true,
-    status: 'pending',
-    message: 'PIX gerado! Pague para ficar em dia e liberar a confirmação dos jogos.',
-    month: due.month,
-    year: due.year,
-    payment: publicMonthlyPayment(row)
-  });
 };

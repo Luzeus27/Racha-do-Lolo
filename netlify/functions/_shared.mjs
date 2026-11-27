@@ -215,6 +215,35 @@ export async function rateLimit(req, action, { max = 30, windowMs = 60000, key =
   }
 }
 
+/* Evita que dois toques (ou duas abas) criem dois pagamentos reais antes de
+   a reserva aparecer no retrato publicado. A gravação condicional do Blobs é
+   atômica; se o provedor não oferecer a opção, o limite de requisições e a
+   reconciliação pelo webhook continuam valendo. */
+const PAYMENT_LOCK_STORE = 'racha-cobrancas-lock';
+
+export function paymentLockKey(parts) {
+  return 'cob:' + createHash('sha256').update(parts.map((p) => String(p ?? '')).join('|')).digest('hex').slice(0, 32);
+}
+
+export async function beginPayment(key, paymentId, ttlSeconds = 180) {
+  try {
+    const store = getStore({ name: PAYMENT_LOCK_STORE, consistency: 'strong' });
+    const result = await store.setJSON(key, {
+      paymentId: String(paymentId),
+      at: new Date().toISOString()
+    }, { onlyIfNew: true, expireTtl: ttlSeconds });
+    return !result || result.modified !== false;
+  } catch (e) {
+    return true;
+  }
+}
+
+export async function endPayment(key) {
+  try {
+    await getStore({ name: PAYMENT_LOCK_STORE, consistency: 'strong' }).delete(key);
+  } catch (e) { /* a expiração automática também libera a chave */ }
+}
+
 /* Link privado do grupo pode ser revogado ou expirar. */
 export function viewUnavailable(record) {
   if (!record) return '';

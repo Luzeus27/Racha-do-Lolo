@@ -181,7 +181,19 @@ export default async (req) => {
         const refund = await mpFetch('/v1/payments/' + encodeURIComponent(row.mpPaymentId) + '/refund', {
           token: tokenMP, method: 'POST', body: { reason: 'other' }
         });
-        if (!refund.ok) { failed += 1; continue; }
+        if (!refund.ok) {
+          /* O estorno pode ter dado certo no MP e falhado só ao gravar no Blobs
+             na tentativa anterior. Antes de contar como falha, confira o estado
+             real: repetir POST /refund geraria erro e deixaria a linha presa. */
+          const check = await mpFetch('/v1/payments/' + encodeURIComponent(row.mpPaymentId), {
+            token: tokenMP
+          });
+          const status = String(check.data?.status || '').toLowerCase();
+          if (!check.ok || !['refunded', 'charged_back', 'chargeback'].includes(status)) {
+            failed += 1;
+            continue;
+          }
+        }
         row.status = 'refunded';
         row.refundReason = 'jogo_cancelado';
       }

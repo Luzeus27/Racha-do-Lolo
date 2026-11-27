@@ -3,6 +3,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 import { json, siteUrl, setCorsOrigin, viewUnavailable, rateLimit } from './_shared.mjs';
+import { hoursUntilLocal, todayBR } from './_daily.mjs';
 
 const MAX_REMINDERS = 200;
 const MAX_PAGES = 50;
@@ -89,13 +90,6 @@ async function listKeys(store) {
   return { keys, warning: 'Listagem de links truncada; nem todos foram verificados.' };
 }
 
-function hoursUntil(date, nowMs) {
-  if (!DATE_ONLY.test(date)) return null;
-  const target = Date.parse(date + 'T00:00:00Z');
-  if (!Number.isFinite(target)) return null;
-  return (target - nowMs) / 3600000;
-}
-
 function reminderType(hours) {
   if (hours === null) return '';
   if (hours >= 23 && hours <= 25) return '24h';
@@ -148,7 +142,7 @@ export default async (req) => {
   const { keys, warning } = await listKeys(store);
   const base = siteUrl(req);
   const nowMs = Date.now();
-  const today = new Date(nowMs).toISOString().slice(0, 10);
+  const today = todayBR(nowMs);
   const reminders = [];
 
   for (const vw of keys) {
@@ -180,7 +174,7 @@ export default async (req) => {
       if (game.canceled === true) continue;
       const date = text(game.date, 20);
       if (!date || date < today) continue;
-      const when = reminderType(hoursUntil(date, nowMs));
+      const when = reminderType(hoursUntilLocal(date, nowMs));
       if (!when) continue;
 
       const gameId = text(game.id, 60);

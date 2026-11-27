@@ -4,7 +4,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { getStore } from '@netlify/blobs';
 import { cleanLicenseKey, json, licenses, mpFetch, mpTokenFor, normalizeStatus, paymentModeFor, setCorsOrigin, clearStaleCancel, rateLimit } from './_shared.mjs';
 import {
-  VIEW_TOKEN, PAYMENT_ID, MONTHLY_PAYMENT_ID, cleanWaitlist, copyAutoPayments, copyDailyPayments,
+  VIEW_TOKEN, PAYMENT_ID, MONTHLY_PAYMENT_ID, cleanWaitlist, copyAutoPayments, copyCredits, copyDailyPayments,
   copyMonthlyPayments, copyReservations, copyResponses, copyWaitlist,
   hasSlot, isObject, text, unpaidMonths
 } from './_daily.mjs';
@@ -18,9 +18,20 @@ async function tokenForNotification(url) {
   return { token: String(process.env.MP_ACCESS_TOKEN || '').trim(), cliente };
 }
 
+/* Falha na listagem do Blobs não pode virar 500 genérico nem derrubar o
+   processamento das notificações seguintes. */
+async function listAll(store) {
+  try {
+    const result = await store.list();
+    return Array.isArray(result && result.blobs) ? result.blobs : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function findByMpPaymentId(store, mpId) {
   if (!mpId) return null;
-  const { blobs } = await store.list();
+  const blobs = await listAll(store);
   for (const blob of blobs) {
     const record = await store.get(blob.key, { type: 'json', consistency: 'strong' });
     if (!record) continue;
@@ -65,25 +76,37 @@ function signatureIsValid(secret, { ts, v1 }, dataId, requestId) {
 
 /* Reentrega do mesmo aviso não pode poluir o histórico nem repetir baixas.
    O x-request-id faz parte da assinatura enviada pelo Mercado Pago. */
+function eventKey(requestId) {
+  return 'evt:' + createHash('sha256').update(String(requestId)).digest('hex').slice(0, 32);
+}
+
 async function claimEvent(requestId, topic, dataId) {
   if (!requestId) return true;
-  const key = 'evt:' + createHash('sha256').update(String(requestId)).digest('hex').slice(0, 32);
+  const key = eventKey(requestId);
   const store = getStore({ name: 'racha-webhook-eventos', consistency: 'strong' });
   try {
-    const seen = await store.get(key, { type: 'json', consistency: 'strong' });
-    if (seen) return false;
-    await store.setJSON(key, {
+    /* Gravação condicional atômica: duas entregas simultâneas não passam juntas. */
+    const result = await store.setJSON(key, {
       at: new Date().toISOString(),
       requestId: String(requestId).slice(0, 120),
       topic: String(topic || '').slice(0, 40),
       dataId: String(dataId || '').slice(0, 40)
-    }, { expireTtl: 24 * 60 * 60 });
-    return true;
+    }, { onlyIfNew: true, expireTtl: 24 * 60 * 60 });
+    return !result || result.modified !== false;
   } catch (e) {
     /* Deduplicação é defesa em profundidade: se o Blobs falhar, seguimos e a
        reconfulta no Mercado Pago continua protegendo a baixa. */
     return true;
   }
+}
+
+/* Se a consulta ao Mercado Pago falhar, o evento NÃO pode ficar marcado como
+   consumido: o MP precisa reentregar para não perder a baixa. */
+async function releaseEvent(requestId) {
+  if (!requestId) return;
+  try {
+    await getStore({ name: 'racha-webhook-eventos', consistency: 'strong' }).delete(eventKey(requestId));
+  } catch (e) { /* a expiração automática também libera a chave */ }
 }
 
 /* O parâmetro ?cliente= só pode ser usado quando o registro pertence a ele. */
@@ -93,7 +116,7 @@ function ownerMatches(cliente, record) {
 
 async function findBySubscription(store, subscriptionId) {
   if (!subscriptionId) return null;
-  const { blobs } = await store.list();
+  const blobs = await listAll(store);
   for (const blob of blobs) {
     const record = await store.get(blob.key, { type: 'json', consistency: 'strong' });
     if (record && String(record.subscriptionId || '') === String(subscriptionId)) return record;
@@ -104,8 +127,11 @@ async function findBySubscription(store, subscriptionId) {
 async function save(store, key, patch, event) {
   const current = (await store.get(key, { type: 'json', consistency: 'strong' })) || {};
   const clean = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
-  /* Um aviso tardio do Mercado Pago não pode reativar uma assinatura cancelada. */
-  if (current.cancelRequestedAt && clean.status === 'active') delete clean.status;
+  /* Um aviso tardio não pode reativar assinatura cancelada. Quando a reassinatura
+     limpou o pedido de cancelamento no mesmo patch, o status novo deve valer. */
+  if (current.cancelRequestedAt && clean.cancelRequestedAt === undefined && clean.status === 'active') {
+    delete clean.status;
+  }
   const next = {
     ...current,
     ...clean,
@@ -156,6 +182,7 @@ async function handleDailyPayment(payment, id, token, now, cliente = '') {
   const responses = copyResponses(record.responses);
   const waitlist = copyWaitlist(record.waitlist);
   const reservations = copyReservations(record.reservations);
+  const credits = copyCredits(record.dailyCredits);
   reservations[entry.gameId] = (reservations[entry.gameId] || []).filter((r) => r.paymentId !== paymentId);
 
   const paid = Number(payment.transaction_amount);
@@ -187,8 +214,18 @@ async function handleDailyPayment(payment, id, token, now, cliente = '') {
       removeConfirmation(responses, entry.gameId, entry.playerId);
     }
   } else if (status === 'refunded' || status === 'chargeback') {
+    /* Se o admin tinha dado crédito e o MP estornou depois, o crédito precisa
+       ser descontado: não pode sobrar crédito e dinheiro devolvido ao mesmo tempo. */
+    const hadCredit = entry.creditReversed !== true && entry.refundReason === 'credito';
     entry.status = 'refunded';
     entry.refundReason = status;
+    if (hadCredit) {
+      const available = Math.max(0, Number(credits[entry.playerId] || 0) - Number(entry.amount || 0));
+      const remaining = Math.round(available * 100) / 100;
+      if (remaining > 0) credits[entry.playerId] = remaining;
+      else delete credits[entry.playerId];
+      entry.creditReversed = true;
+    }
     removeConfirmation(responses, entry.gameId, entry.playerId);
   } else if (['rejected', 'cancelled', 'expired'].includes(status)) {
     entry.status = status === 'rejected' ? 'failed' : status;
@@ -204,6 +241,7 @@ async function handleDailyPayment(payment, id, token, now, cliente = '') {
     responses,
     waitlist: cleanWaitlist(responses, waitlist),
     dailyPayments: payments,
+    dailyCredits: credits,
     reservations,
     updatedAt: now
   }, { metadata: { owner: 'license' } });
@@ -315,7 +353,7 @@ async function handleAutoPreapproval(sub, now, cliente = '') {
 
 async function findAutoBySubscription(viewStore, subscriptionId) {
   if (!subscriptionId) return null;
-  const { blobs } = await viewStore.list();
+  const blobs = await listAll(viewStore);
   for (const blob of blobs) {
     const record = await viewStore.get(blob.key, { type: 'json', consistency: 'strong' });
     if (!record) continue;
@@ -457,7 +495,10 @@ export default async (req) => {
   }
 
   const id = String(dataId || payload?.data?.id || '');
-  if (!id) return json({ received: true, ignored: 'sem id' }, 200);
+  if (!id) {
+    await releaseEvent(requestId);
+    return json({ received: true, ignored: 'sem id' }, 200);
+  }
 
   const store = licenses();
   const viewStore = getStore({ name: 'racha-visualizacoes', consistency: 'strong' });
@@ -477,6 +518,7 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
+      await releaseEvent(requestId);
       return json({ received: false, error: 'Não foi possível consultar a assinatura.' }, 502);
     }
 
@@ -522,7 +564,10 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
-      return json({ received: true, ignored: 'cobrança não encontrada' }, 200);
+      await releaseEvent(requestId);
+      /* 502 pede reentrega: um 200 aqui faria o MP desistir de avisar e a
+         cobrança aprovada nunca seria baixada. */
+      return json({ received: false, error: 'Não foi possível consultar a cobrança.' }, 502);
     }
 
     const charge = result.data;
@@ -558,7 +603,10 @@ export default async (req) => {
         }
       }
     }
-    if (!result.ok || !result.data) return json({ received: true }, 200);
+    if (!result.ok || !result.data) {
+      await releaseEvent(requestId);
+      return json({ received: false, error: 'Não foi possível consultar o pagamento.' }, 502);
+    }
 
     const payment = result.data;
     const ref = String(payment.external_reference || '');
@@ -591,7 +639,7 @@ export default async (req) => {
       mpStatus: status || record.mpStatus,
       lastPaymentAt: payment.date_approved || payment.date_created || now,
       lastPaymentStatus: status || '',
-      amountWarning: mismatch || undefined
+      amountWarning: mismatch === true
     }, 'payment:' + status + (revoked ? ':revogado' : '') + (mismatch ? ':valor_divergente' : ''));
 
     return json({ received: true, key }, 200);

@@ -2,7 +2,7 @@
    A vaga só é confirmada depois que o webhook do Mercado Pago avisar o pagamento. */
 import { createHash, randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { json, mpFetch, mpTokenFor, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
+import { beginPayment, endPayment, json, mpFetch, mpTokenFor, paymentLockKey, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   VIEW_TOKEN, PLAYER_TOKEN, copyCredits, copyDailyPayments, copyReservations,
   copyResponses, copyWaitlist, cleanWaitlist, findPlayerId, gameById,
@@ -119,7 +119,7 @@ export default async (req) => {
      só porque a pessoa tocou duas vezes no botão. */
   const pending = Object.values(payments)
     .filter((row) => row.gameId === gameId && row.playerId === playerId &&
-      row.status === 'pending' && Date.parse(row.expiresAt) > nowMs && row.qrCode)
+      row.status === 'pending' && Date.parse(row.expiresAt) > nowMs && (row.qrCode || row.qrBase64))
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
   if (pending) {
     return json({
@@ -210,65 +210,76 @@ export default async (req) => {
   const paymentId = newPaymentId();
   const expiresAt = new Date(nowMs + RESERVATION_MS).toISOString();
   const externalReference = 'DIARIA|' + v + '|' + paymentId;
-  const result = await mpFetch('/v1/payments', {
-    token,
-    method: 'POST',
-    body: {
-      transaction_amount: amount,
-      description: gameLabel(game),
-      external_reference: externalReference,
-      notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
-      payment_method_id: 'pix',
-      date_of_expiration: expiresAt,
-      payer: { email: payerEmail(v, playerId) }
+  /* Três toques rápidos não podem criar três cobranças reais antes de a
+     primeira reserva aparecer no retrato publicado. */
+  const lockKey = paymentLockKey(['diaria', v, playerId, gameId]);
+  if (!(await beginPayment(lockKey, paymentId))) {
+    return json({ error: 'Já estamos gerando seu PIX. Aguarde um instante e tente novamente.' }, 409);
+  }
+
+  try {
+    const result = await mpFetch('/v1/payments', {
+      token,
+      method: 'POST',
+      body: {
+        transaction_amount: amount,
+        description: gameLabel(game),
+        external_reference: externalReference,
+        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+        payment_method_id: 'pix',
+        date_of_expiration: expiresAt,
+        payer: { email: payerEmail(v, playerId) }
+      }
+    });
+
+    if (!result.ok || !result.data) {
+      const detail = result.data?.message || 'Não foi possível gerar o PIX.';
+      return json({ error: 'Mercado Pago: ' + detail }, 502);
     }
-  });
 
-  if (!result.ok || !result.data) {
-    const detail = result.data?.message || 'Não foi possível gerar o PIX.';
-    return json({ error: 'Mercado Pago: ' + detail }, 502);
+    const interaction = result.data.point_of_interaction?.transaction_data || {};
+    const qrCode = String(interaction.qr_code || '').slice(0, 2000);
+    const qrBase64 = String(interaction.qr_code_base64 || '');
+    if (!qrCode && !/^[A-Za-z0-9+/=]+$/.test(qrBase64)) {
+      return json({ error: 'O Mercado Pago não devolveu o código PIX. Tente novamente.' }, 502);
+    }
+
+    const row = history({
+      paymentId,
+      gameId,
+      playerId,
+      amount,
+      status: 'pending',
+      externalReference,
+      mpPaymentId: String(result.data.id || ''),
+      qrCode,
+      qrBase64: /^[A-Za-z0-9+/=]+$/.test(qrBase64) ? qrBase64.slice(0, 200000) : '',
+      createdAt: now,
+      expiresAt,
+      paidAt: '',
+      usedCredit: false,
+      refundReason: ''
+    }, 'pix_gerado', now);
+    payments[paymentId] = row;
+    reservations[gameId] = [
+      ...(reservations[gameId] || []).filter((r) => r.playerId !== playerId),
+      { paymentId, playerId, createdAt: now, expiresAt }
+    ].slice(0, 200);
+
+    await store.setJSON(v, {
+      ...record,
+      dailyPayments: payments,
+      reservations,
+      updatedAt: now
+    }, { metadata: { owner: 'license' } });
+
+    return json({
+      ok: true,
+      status: 'pending',
+      message: 'PIX gerado! Pague para garantir sua vaga. A confirmação é automática.',
+      payment: publicPayment(row)
+    });
+  } finally {
+    await endPayment(lockKey);
   }
-
-  const interaction = result.data.point_of_interaction?.transaction_data || {};
-  const qrCode = String(interaction.qr_code || '').slice(0, 2000);
-  const qrBase64 = String(interaction.qr_code_base64 || '');
-  if (!qrCode && !/^[A-Za-z0-9+/=]+$/.test(qrBase64)) {
-    return json({ error: 'O Mercado Pago não devolveu o código PIX. Tente novamente.' }, 502);
-  }
-
-  const row = history({
-    paymentId,
-    gameId,
-    playerId,
-    amount,
-    status: 'pending',
-    externalReference,
-    mpPaymentId: String(result.data.id || ''),
-    qrCode,
-    qrBase64: /^[A-Za-z0-9+/=]+$/.test(qrBase64) ? qrBase64.slice(0, 200000) : '',
-    createdAt: now,
-    expiresAt,
-    paidAt: '',
-    usedCredit: false,
-    refundReason: ''
-  }, 'pix_gerado', now);
-  payments[paymentId] = row;
-  reservations[gameId] = [
-    ...(reservations[gameId] || []).filter((r) => r.playerId !== playerId),
-    { paymentId, playerId, createdAt: now, expiresAt }
-  ].slice(0, 200);
-
-  await store.setJSON(v, {
-    ...record,
-    dailyPayments: payments,
-    reservations,
-    updatedAt: now
-  }, { metadata: { owner: 'license' } });
-
-  return json({
-    ok: true,
-    status: 'pending',
-    message: 'PIX gerado! Pague para garantir sua vaga. A confirmação é automática.',
-    payment: publicPayment(row)
-  });
 };

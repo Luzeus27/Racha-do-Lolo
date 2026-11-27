@@ -2,7 +2,7 @@
    O jogador paga o valor líquido + a taxa do Mercado Pago; o webhook dá a baixa. */
 import { createHash, randomUUID } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
-import { cardGross, cardFeeRate, json, mpFetch, mpTokenFor, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
+import { beginPayment, cardGross, cardFeeRate, endPayment, json, mpFetch, mpTokenFor, paymentLockKey, paymentModeFor, siteUrl, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   VIEW_TOKEN, PLAYER_TOKEN, copyMonthlyPayments, findPlayerId,
   playerRole, publicMonthlyPayment, readJson, unpaidMonths
@@ -111,85 +111,93 @@ export default async (req) => {
   const externalReference = 'MENSALIDADE-CARD|' + v + '|' + paymentId;
   const label = String(due.month).padStart(2, '0') + '/' + due.year;
   const back = siteUrl(req) + '/jogador.html?v=' + encodeURIComponent(v) + '&p=' + encodeURIComponent(p);
+  const lockKey = paymentLockKey(['mensalidade-card', v, playerId, due.month, due.year]);
+  if (!(await beginPayment(lockKey, paymentId))) {
+    return json({ error: 'Já estamos abrindo seu pagamento. Aguarde um instante e tente novamente.' }, 409);
+  }
 
-  const result = await mpFetch('/checkout/preferences', {
-    token,
-    method: 'POST',
-    body: {
-      items: [{
-        id: 'MENSALIDADE-' + paymentId,
-        title: 'Mensalidade Racha do Loló — ' + label,
-        description: 'Mensalidade do racha. Valor já inclui a taxa do cartão.',
-        quantity: 1,
-        currency_id: 'BRL',
-        unit_price: gross
-      }],
-      external_reference: externalReference,
-      notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
-      back_urls: {
-        success: back + '&status=ok',
-        pending: back + '&status=pending',
-        failure: back + '&status=fail'
-      },
-      auto_return: 'approved',
-      binary_mode: true,
-      payment_methods: {
-        installments: 1,
-        excluded_payment_types: [
-          { id: 'ticket' }, { id: 'atm' }, { id: 'bank_transfer' },
-          { id: 'debit_card' }, { id: 'account_money' }, { id: 'digital_currency' }
-        ]
-      },
-      payer: { email: payerEmail(v, playerId) }
+  try {
+    const result = await mpFetch('/checkout/preferences', {
+      token,
+      method: 'POST',
+      body: {
+        items: [{
+          id: 'MENSALIDADE-' + paymentId,
+          title: 'Mensalidade Racha do Loló — ' + label,
+          description: 'Mensalidade do racha. Valor já inclui a taxa do cartão.',
+          quantity: 1,
+          currency_id: 'BRL',
+          unit_price: gross
+        }],
+        external_reference: externalReference,
+        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+        back_urls: {
+          success: back + '&status=ok',
+          pending: back + '&status=pending',
+          failure: back + '&status=fail'
+        },
+        auto_return: 'approved',
+        binary_mode: true,
+        payment_methods: {
+          installments: 1,
+          excluded_payment_types: [
+            { id: 'ticket' }, { id: 'atm' }, { id: 'bank_transfer' },
+            { id: 'debit_card' }, { id: 'account_money' }, { id: 'digital_currency' }
+          ]
+        },
+        payer: { email: payerEmail(v, playerId) }
+      }
+    });
+
+    if (!result.ok || !result.data) {
+      const detail = result.data?.message || 'Não foi possível iniciar o pagamento.';
+      return json({ error: 'Mercado Pago: ' + detail }, 502);
     }
-  });
 
-  if (!result.ok || !result.data) {
-    const detail = result.data?.message || 'Não foi possível iniciar o pagamento.';
-    return json({ error: 'Mercado Pago: ' + detail }, 502);
+    const checkoutUrl = String(result.data.init_point || result.data.sandbox_init_point || '');
+    if (!/^https:\/\//.test(checkoutUrl)) {
+      return json({ error: 'O Mercado Pago não devolveu o link de pagamento. Tente novamente.' }, 502);
+    }
+
+    const row = autoHistory({
+      paymentId,
+      playerId,
+      month: due.month,
+      year: due.year,
+      amount: net,
+      grossAmount: gross,
+      feeAmount: fee,
+      method: 'card',
+      status: 'pending',
+      externalReference,
+      mpPaymentId: '',
+      preferenceId: String(result.data.id || ''),
+      checkoutUrl: checkoutUrl.slice(0, 600),
+      createdAt: now,
+      expiresAt,
+      paidAt: '',
+      refundReason: ''
+    }, 'checkout_cartao_gerado:' + cardFeeRate().toFixed(4), now);
+    payments[paymentId] = row;
+
+    await store.setJSON(v, {
+      ...record,
+      monthlyPayments: payments,
+      updatedAt: now
+    }, { metadata: { owner: 'license' } });
+
+    return json({
+      ok: true,
+      status: 'pending',
+      message: 'Abra o pagamento no Mercado Pago e pague no cartão.',
+      month: due.month,
+      year: due.year,
+      amount: net,
+      grossAmount: gross,
+      feeAmount: fee,
+      payment: publicMonthlyPayment(row)
+    });
+  } finally {
+    await endPayment(lockKey);
   }
-
-  const checkoutUrl = String(result.data.init_point || result.data.sandbox_init_point || '');
-  if (!/^https:\/\//.test(checkoutUrl)) {
-    return json({ error: 'O Mercado Pago não devolveu o link de pagamento. Tente novamente.' }, 502);
-  }
-
-  const row = autoHistory({
-    paymentId,
-    playerId,
-    month: due.month,
-    year: due.year,
-    amount: net,
-    grossAmount: gross,
-    feeAmount: fee,
-    method: 'card',
-    status: 'pending',
-    externalReference,
-    mpPaymentId: '',
-    preferenceId: String(result.data.id || ''),
-    checkoutUrl: checkoutUrl.slice(0, 600),
-    createdAt: now,
-    expiresAt,
-    paidAt: '',
-    refundReason: ''
-  }, 'checkout_cartao_gerado:' + cardFeeRate().toFixed(4), now);
-  payments[paymentId] = row;
-
-  await store.setJSON(v, {
-    ...record,
-    monthlyPayments: payments,
-    updatedAt: now
-  }, { metadata: { owner: 'license' } });
-
-  return json({
-    ok: true,
-    status: 'pending',
-    message: 'Abra o pagamento no Mercado Pago e pague no cartão.',
-    month: due.month,
-    year: due.year,
-    amount: net,
-    grossAmount: gross,
-    feeAmount: fee,
-    payment: publicMonthlyPayment(row)
-  });
 };

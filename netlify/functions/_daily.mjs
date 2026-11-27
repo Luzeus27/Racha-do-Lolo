@@ -22,6 +22,48 @@ export function text(value, max = 60) {
   return String(value ?? '').slice(0, max);
 }
 
+/* Datas dos jogos são locais (Brasília), não UTC. Manter a conversão aqui
+   evita avisos e avaliações no dia errado. */
+const TZ = 'America/Sao_Paulo';
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function partsInTZ(ts) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date(ts));
+  const get = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return {
+    year: get('year'), month: get('month'), day: get('day'),
+    hour: get('hour'), minute: get('minute'), second: get('second')
+  };
+}
+
+export function todayBR(nowMs = Date.now()) {
+  const p = partsInTZ(nowMs);
+  return [p.year, String(p.month).padStart(2, '0'), String(p.day).padStart(2, '0')].join('-');
+}
+
+export function hoursUntilLocal(date, nowMs = Date.now()) {
+  const match = DATE_ONLY.exec(String(date || ''));
+  if (!match) return null;
+  const y = Number(match[1]), mo = Number(match[2]), d = Number(match[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  const midday = Date.UTC(y, mo - 1, d, 12);
+  const local = partsInTZ(midday);
+  const offset = Date.UTC(local.year, local.month - 1, local.day, local.hour, local.minute, local.second) - midday;
+  let target = Date.UTC(y, mo - 1, d) - offset;
+  const check = partsInTZ(target);
+  target -= Date.UTC(check.year, check.month - 1, check.day, check.hour, check.minute, check.second) - target;
+  return (target - nowMs) / 3600000;
+}
+
+/* Nota só vale para jogo já realizado. Sem data confiável, não libera. */
+export function gamePlayed(game, nowMs = Date.now()) {
+  const date = text(game?.date, 20);
+  return DATE_ONLY.test(date) && date < todayBR(nowMs);
+}
+
 export function number(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
@@ -31,7 +73,16 @@ export function number(value) {
    Configurações e publicada no retrato. Não envolve Mercado Pago. */
 function emv(id, value) {
   const v = String(value ?? '');
-  return id + String(v.length).padStart(2, '0') + v;
+  const size = Buffer.byteLength(v, 'utf8');
+  if (size > 99) return '';
+  return id + String(size).padStart(2, '0') + v;
+}
+
+/* BR Code usa ASCII. A chave consiste de até 77 caracteres para o campo 26
+   caber dentro dos 99 bytes permitidos pelo padrão EMV. */
+function emvAscii(value, max) {
+  return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '').slice(0, max);
 }
 
 function crc16(str) {
@@ -44,9 +95,9 @@ function crc16(str) {
 }
 
 export function manualPixCode(settings, amount, txid) {
-  const key = text(settings?.pixKey, 200).trim();
+  const key = emvAscii(settings?.pixKey, 77).trim();
   if (!key) return '';
-  const norm = (v, max) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, max);
+  const norm = (v, max) => emvAscii(v, max);
   const value = number(amount);
   const payload =
     emv('00', '01') +
