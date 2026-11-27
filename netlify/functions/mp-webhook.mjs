@@ -557,7 +557,8 @@ export default async (req) => {
 
   if (topic === 'subscription_authorized_payment' || topic === 'invoice') {
     let activeToken = token;
-    let result = await mpFetch('/authorized_payments/' + encodeURIComponent(id), { token: activeToken });
+    const firstCharge = await mpFetch('/authorized_payments/' + encodeURIComponent(id), { token: activeToken });
+    let result = firstCharge;
     if (!result.ok && !tokenInfo.cliente) {
       const found = await findAutoBySubscription(viewStore, id);
       if (found) {
@@ -569,6 +570,7 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
+      console.log('diag charge ' + JSON.stringify({ global: firstCharge.status, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       /* 502 pede reentrega: um 200 aqui faria o MP desistir de avisar e a
          cobrança aprovada nunca seria baixada. */
@@ -597,7 +599,8 @@ export default async (req) => {
 
   if (topic === 'payment') {
     let activeToken = token;
-    let result = await mpFetch('/v1/payments/' + encodeURIComponent(id), { token: activeToken });
+    const firstPayment = await mpFetch('/v1/payments/' + encodeURIComponent(id), { token: activeToken });
+    let result = firstPayment;
     if (!result.ok && !tokenInfo.cliente) {
       const found = await findByMpPaymentId(viewStore, id);
       if (found) {
@@ -609,6 +612,7 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
+      console.log('diag payment ' + JSON.stringify({ global: firstPayment.status, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       return json({ received: false, error: 'Não foi possível consultar o pagamento.' }, 502);
     }
