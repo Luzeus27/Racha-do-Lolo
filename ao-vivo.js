@@ -96,24 +96,33 @@
       '<p class="tiny muted" style="margin-top:10px">Verificando novamente em 5 segundos…</p></div></div>';
   }
 
+  const TEAM_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const TEAM_TONES = ['', 'b', 'c', 'd', 'e', 'f'];
+
+  function teamKeysFrom(score, teams) {
+    const fromScore = Object.keys(score || {}).filter((k) => TEAM_KEYS.includes(k)).length;
+    const count = Math.min(TEAM_KEYS.length, Math.max(2, (Array.isArray(teams) ? teams.length : 0), fromScore));
+    return TEAM_KEYS.slice(0, count);
+  }
+
   function scoreHtml(live, teams) {
     const score = live.score || {};
-    const a = teams[0] || [];
-    const b = teams[1] || [];
-    const aInfo = a.length ? a.length + ' jogador(es)' : 'Times ainda não disponíveis';
-    const bInfo = b.length ? b.length + ' jogador(es)' : 'Times ainda não disponíveis';
-    return card('Placar', 'Início ' + fmtDateTime(live.startedAt),
-      '<div class="score-line">' +
-      '<div class="score-team"><span class="team-tag">A</span><strong>Time A</strong><div class="tiny muted">' + esc(aInfo) + '</div></div>' +
-      '<div class="score-nums"><span>' + esc(num(score.A)) + '</span><span class="x">x</span><span>' + esc(num(score.B)) + '</span></div>' +
-      '<div class="score-team right"><span class="team-tag b">B</span><strong>Time B</strong><div class="tiny muted">' + esc(bInfo) + '</div></div>' +
-      '</div>', '<span class="pill live">● Ao vivo</span>');
+    const keys = teamKeysFrom(score, teams);
+    const body = '<div class="score-grid">' + keys.map((k, i) => {
+      const list = teams[i] || [];
+      const info = list.length ? list.length + ' jogador(es)' : 'Times ainda não disponíveis';
+      return '<div class="score-team"><span class="team-tag ' + TEAM_TONES[i] + '">' + k + '</span>' +
+        '<strong>Time ' + k + '</strong><div class="tiny muted">' + esc(info) + '</div>' +
+        '<div class="score-value">' + esc(num(score[k])) + '</div></div>';
+    }).join('') + '</div>';
+    return card('Placar', 'Início ' + fmtDateTime(live.startedAt), body, '<span class="pill live">● Ao vivo</span>');
   }
 
   function teamLabel(team) {
     const s = String(team == null ? '' : team).toUpperCase();
-    if (s === 'A' || s === '0') return 'A';
-    if (s === 'B' || s === '1') return 'B';
+    if (TEAM_KEYS.includes(s)) return s;
+    if (s === '0') return 'A';
+    if (s === '1') return 'B';
     return '';
   }
 
@@ -125,8 +134,9 @@
       return '<div class="team-box"><h4>Time ' + label + ' <span class="pill">' + esc(list.length) + ' jogador(es)</span></h4>' +
         '<ul>' + items + '</ul></div>';
     };
-    return card('Times do último sorteio', 'Escalação de A e B',
-      '<div class="grid grid-2">' + box('A', teams[0] || []) + box('B', teams[1] || []) + '</div>');
+    const keys = teamKeysFrom({}, teams);
+    return card('Times do último sorteio', 'Escalação por equipe',
+      '<div class="grid grid-2">' + keys.map((k, i) => box(k, teams[i] || [])).join('') + '</div>');
   }
 
   function eventsHtml(live, by) {

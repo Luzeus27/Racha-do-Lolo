@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#35d07f" />
+  <title>Comunidade — Racha do Loló</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="dark">
+  <script>
+    try { document.body.dataset.theme = localStorage.getItem('racha-theme') || 'dark'; } catch (e) {}
+  </script>
+  <div class="legal-page">
+    <a class="legal-back" href="index.html">← Voltar ao aplicativo</a>
+    <div id="comunidade-root" class="legal-card">
+      <h1>🌍 Comunidade</h1>
+      <p class="legal-updated">Encontre donos de racha da sua região. O grupo é fechado: você pede acesso e entra só depois que o administrador te adicionar.</p>
+
+      <div class="legal-note">
+        <strong>Como funciona:</strong> as capitais já têm grupo. Escolha o estado e a capital e faça o pedido de acesso. Se sua cidade não for capital, digite <strong>cidade - UF</strong> no campo próprio mais abaixo e peça a criação: o administrador cria o grupo e depois te adiciona. O cliente não cria grupos por conta própria; ele pode pedir a criação da cidade, e nenhum convite fica exposto nesta página.
+      </div>
+
+      <h2>1. Minha cidade é capital</h2>
+      <div class="stack">
+        <label>
+          Estado
+          <select id="uf" name="uf" required>
+            <option value="">Selecione o estado</option>
+            <option value="AC">Acre</option>
+            <option value="AL">Alagoas</option>
+            <option value="AP">Amapá</option>
+            <option value="AM">Amazonas</option>
+            <option value="BA">Bahia</option>
+            <option value="CE">Ceará</option>
+            <option value="DF">Distrito Federal</option>
+            <option value="ES">Espírito Santo</option>
+            <option value="GO">Goiás</option>
+            <option value="MA">Maranhão</option>
+            <option value="MT">Mato Grosso</option>
+            <option value="MS">Mato Grosso do Sul</option>
+            <option value="MG">Minas Gerais</option>
+            <option value="PA">Pará</option>
+            <option value="PB">Paraíba</option>
+            <option value="PR">Paraná</option>
+            <option value="PE">Pernambuco</option>
+            <option value="PI">Piauí</option>
+            <option value="RJ">Rio de Janeiro</option>
+            <option value="RN">Rio Grande do Norte</option>
+            <option value="RS">Rio Grande do Sul</option>
+            <option value="RO">Rondônia</option>
+            <option value="RR">Roraima</option>
+            <option value="SC">Santa Catarina</option>
+            <option value="SP">São Paulo</option>
+            <option value="SE">Sergipe</option>
+            <option value="TO">Tocantins</option>
+          </select>
+        </label>
+        <label>
+          Cidade
+          <select id="cidade" name="cidade">
+            <option value="">Selecione a cidade</option>
+          </select>
+          <span class="tiny muted">A capital do estado escolhido aparece aqui e já tem grupo.</span>
+        </label>
+      </div>
+      <div id="lista-grupos" role="status" aria-live="polite"></div>
+
+      <form id="form-acesso" name="comunidade-acesso" method="POST" enctype="multipart/form-data" data-netlify="true" data-netlify-honeypot="bot-field" class="stack" hidden>
+        <input type="hidden" name="form-name" value="comunidade-acesso" />
+        <input type="hidden" name="tipo" value="pedido-acesso" />
+        <p hidden><label>Não preencha este campo: <input name="bot-field" /></label></p>
+        <input type="hidden" name="uf" value="" />
+        <input type="hidden" name="cidade" value="" />
+        <label>
+          Nome do seu racha
+          <input name="racha" type="text" maxlength="80" required autocomplete="off" placeholder="Como seu racha é chamado?" />
+        </label>
+        <label>
+          Final da sua chave RL- (opcional)
+          <input name="chave" type="text" maxlength="4" inputmode="numeric" placeholder="Só os 4 últimos dígitos" />
+          <span class="tiny muted">Nunca envie a chave inteira. Os 4 dígitos ajudam o administrador a confirmar sua assinatura.</span>
+        </label>
+        <label>
+          Mensagem (opcional)
+          <textarea name="mensagem" maxlength="1000" rows="3" placeholder="Conte um pouco sobre seu racha."></textarea>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">📨 Pedir acesso</button>
+      </form>
+      <p id="status-acesso" class="legal-note" role="status" aria-live="polite" hidden></p>
+
+      <h2>2. Minha cidade não é capital</h2>
+      <div class="stack">
+        <label>
+          Cidade - Estado
+          <input id="cidade-criacao" name="cidadeUF" type="text" maxlength="100" autocomplete="off" placeholder="Ex.: Arapiraca - AL" />
+          <span class="tiny muted">Escreva o nome da cidade, um hífen e a sigla do estado. Ex.: Arapiraca - AL, Piracicaba - SP.</span>
+        </label>
+      </div>
+      <div id="lista-criacao" role="status" aria-live="polite"></div>
+
+      <form id="form-criacao" name="comunidade-criacao" method="POST" enctype="multipart/form-data" data-netlify="true" data-netlify-honeypot="bot-field" class="stack">
+        <input type="hidden" name="form-name" value="comunidade-criacao" />
+        <input type="hidden" name="tipo" value="pedido-criacao" />
+        <input type="hidden" name="uf" value="" />
+        <input type="hidden" name="cidade" value="" />
+        <p hidden><label>Não preencha este campo: <input name="bot-field" /></label></p>
+        <label>
+          Nome do seu racha
+          <input name="racha" type="text" maxlength="80" required autocomplete="off" placeholder="Como seu racha é chamado?" />
+        </label>
+        <label>
+          Mensagem (opcional)
+          <textarea name="mensagem" maxlength="1000" rows="3" placeholder="Conte um pouco sobre seu racha e quantos donos de racha você conhece nessa cidade."></textarea>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">📨 Pedir criação da cidade</button>
+      </form>
+      <p id="status-criacao" class="legal-note" role="status" aria-live="polite" hidden></p>
+
+      <p class="tiny muted">
+        Prefere escrever no seu próprio e-mail? <a id="mailto-comunidade" href="mailto:rachadololo@gmail.com?subject=Comunidade%20%E2%80%94%20Racha%20do%20Lol%C3%B3">Abra o e-mail</a>.
+      </p>
+      <p class="tiny muted"><a href="privacidade.html">Política de Privacidade</a> · <a href="termos.html">Termos de Uso</a></p>
+    </div>
+  </div>
+  <script src="comunidade.js" defer></script>
+</body>
+</html>

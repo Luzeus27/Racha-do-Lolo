@@ -179,9 +179,11 @@
       : '<span class="avatar-j-fallback">' + esc(initials(p.name)) + '</span>';
     const daily = p.kind === 'daily';
     const behind = state.dues.length > 0;
+    const roles = ['Presidente', 'Vice-Presidente', 'Diretor', 'Conselheiro'];
+    const label = roles.indexOf(String(p.type || '')) >= 0 ? String(p.type) : 'Mensalista';
     const info = daily
       ? 'Diarista · diária ' + money(p.dailyAmount) + (num(p.credit) > 0 ? ' · crédito ' + money(p.credit) : '')
-      : behind ? 'Mensalista · mensalidade pendente' : 'Mensalista · mensalidade em dia';
+      : label + ' · mensalidade ' + money(p.monthlyFee) + (behind ? ' (pendente)' : ' (em dia)');
     return '<div class="card card-pad"><div class="row">' + avatar +
       '<div style="flex:1;min-width:0"><strong style="font-size:15px">' + esc(p.name || 'Jogador') + '</strong>' +
       (p.position ? '<div class="tiny muted">' + esc(p.position) + '</div>' : '') +

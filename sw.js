@@ -1,5 +1,5 @@
 /* Service worker — cache offline do Racha do Loló */
-const CACHE = 'racha-do-lolo-v67';
+const CACHE = 'racha-do-lolo-v95';
 const ASSETS = [
   './',
   './index.html',
@@ -19,15 +19,22 @@ const ASSETS = [
   './icon.svg',
   './termos.html',
   './privacidade.html',
-  './contato.html'
+  './contato.html',
+  './comunidade.html',
+  './comunidade.js',
+  './comunidade.json'
 ];
 
+/* Um arquivo que falha não pode impedir o restante de ficar offline. */
+async function precache() {
+  const cache = await caches.open(CACHE);
+  for (const asset of ASSETS) {
+    try { await cache.add(asset); } catch (e) { /* tenta de novo na próxima visita */ }
+  }
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE)
-      .then((cache) => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(precache().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {

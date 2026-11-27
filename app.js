@@ -7,8 +7,12 @@
 const STORAGE_KEY = 'racha-do-lolo-v1';
 const VIEW_KEY = 'racha-view-token';
 const PLAYER_LINKS_KEY = 'racha-player-links';
+/* O histórico do cronômetro fica disponível por 24 horas e depois é apagado. */
+const TIMER_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const MONTH_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const WEEKDAYS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+const TEAM_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];
 const EXPENSE_CATS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Brindes', 'Outros'];
 const CASH_ROWS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros', 'Brindes', 'Benefícios'];
 /* Premiações: sempre 1º, 2º e 3º lugares, com brinde/custo por colocação. */
@@ -17,6 +21,15 @@ const AWARD_PLACES = [
   { place: 2, label: '2º lugar', ico: '🥈', weight: 0.3 },
   { place: 3, label: '3º lugar', ico: '🥉', weight: 0.2 }
 ];
+/* Cargas da diretoria: pagam como mensalistas, com valor próprio por cargo.
+   Limite só de Presidente e Vice; Diretor e Conselheiro não têm teto fixo. */
+const BOARD_ROLES = [
+  { type: 'Presidente', plural: 'Presidentes', feeKey: 'feePresidente', limit: 1 },
+  { type: 'Vice-Presidente', plural: 'Vice-Presidentes', feeKey: 'feeVice', limit: 1 },
+  { type: 'Diretor', plural: 'Diretores', feeKey: 'feeDiretor', limit: 0 },
+  { type: 'Conselheiro', plural: 'Conselheiros', feeKey: 'feeConselheiro', limit: 0 }
+];
+const PLAYER_TYPES = ['Mensalista', ...BOARD_ROLES.map(r => r.type), 'Diarista'];
 
 /* Texto padrão do convite enviado ao grupo. O administrador pode editar em
    Configurações → Link para o grupo. {racha} vira o nome cadastrado em
@@ -35,19 +48,22 @@ const PAGES = {
   cash:       { title: 'Fluxo de caixa',   sub: 'Receitas, despesas, reserva e metas do ano', ico: '💰' },
   simulator:  { title: 'Simulador',        sub: 'Teste cenários de mensalidade e diaristas', ico: '📊' },
   scores:     { title: 'Pontuação',        sub: 'Lançamento mensal de gols, assistências e presença', ico: '⚽' },
-  sorteador:  { title: 'Sorteador',        sub: 'Monte as equipes do racha em seis modos diferentes', ico: '🎲' },
+  sorteador:  { title: 'Sorteador',        sub: 'Monte as equipes do racha em sete modos diferentes', ico: '🎲' },
+  timer:      { title: 'Cronômetro',       sub: 'Tempo das partidas, pausas, placar e gols', ico: '⏱️' },
   live:       { title: 'Ao vivo',          sub: 'Placar e lances do jogo, com atualização para o grupo', ico: '🔴' },
   ranking:    { title: 'Ranking',          sub: 'Campeonato interno trimestral e anual', ico: '🏆' },
   awards:     { title: 'Premiações',       sub: 'Vencedores do mês e brindes entregues', ico: '🎁' },
   subscription: { title: 'Assinatura',     sub: 'Período gratuito, plano e chave de licença', ico: '⭐' },
-  settings:   { title: 'Configurações',    sub: 'Premissas, backup e limpeza de dados', ico: '⚙️' }
+  settings:   { title: 'Configurações',    sub: 'Premissas, backup e limpeza de dados', ico: '⚙️' },
+  comunidade: { title: 'Comunidade',       sub: 'Grupos fechados por cidade para donos de racha', ico: '🌍' }
 };
 
 const NAV = [
-  { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'sorteador', 'expenses', 'benefits', 'cash'] },
+  { group: 'Gestão', items: ['dashboard', 'players', 'payments', 'games', 'sorteador', 'timer', 'expenses', 'benefits', 'cash'] },
   { group: 'Desempenho', items: ['scores', 'ranking', 'awards', 'live'] },
   { group: 'Planejamento', items: ['simulator', 'settings'] },
-  { group: 'Conta', items: ['subscription'] }
+  { group: 'Conta', items: ['subscription'] },
+  { group: 'Comunidade', items: ['comunidade'] }
 ];
 
 /* Ações que alteram dados: ficam bloqueadas se a assinatura vencer.
@@ -55,13 +71,27 @@ const NAV = [
 const WRITE_ACTS = new Set([
   'quick-target', 'edit-player', 'delete-player', 'save-photo', 'remove-photo',
   'confirm-payment-modal', 'confirm-payment-link', 'edit-payment', 'delete-payment',
-  'pay-all', 'clear-month', 'generate-games', 'delete-day', 'quick-expense',
-  'delete-expense', 'edit-benefit', 'delete-benefit', 'apply-sim',
+  'pay-all', 'clear-month', 'generate-games', 'generate-sessions', 'generate-sessions-year', 'session-delete', 'session-clear-selected', 'session-clear-all', 'game-cancel', 'delete-day',
+  'delete-expense', 'delete-expense-series', 'expense-clear-selected', 'clear-expenses', 'launch-bbq', 'edit-benefit', 'delete-benefit', 'apply-sim',
   'load-demo', 'clear-demo', 'clear-all', 'import-json', 'import-csv',
   'toggle-confirm', 'confirm-all', 'confirm-none', 'remove-arrival', 'undo-arrival', 'clear-arrivals', 'move-arrival', 'do-draw', 'clear-draw-history',
-  'apply-group-confirmations', 'save-manual-draw',
+  'apply-group-confirmations', 'save-manual-draw', 'edit-last-draw', 'move-draw-player', 'save-last-draw', 'cancel-last-draw',
+  'timer-start', 'timer-pause', 'timer-resume', 'timer-finish', 'timer-delete', 'timer-clear-history',
   'connect-mp',
-  'live-start', 'live-goal', 'live-assist', 'live-card', 'live-undo', 'live-stop'
+  'live-start', 'live-goal', 'live-assist', 'live-card', 'live-undo', 'live-stop',
+  'ack-notices', 'add-goal', 'delete-goal',
+  'bank-confirm', 'bank-ignore', 'bank-import', 'parse-bank',
+  'cancel-daily-credit', 'cancel-daily-refund',
+  'checkin', 'game-presence', 'cobranca', 'cobrar',
+  'color-preset', 'reset-colors', 'remove-logo',
+  'delete-game',
+  'manual-confirm',
+  'create-view-link', 'refresh-view-link', 'revoke-view',
+  'reset-group-message', 'reset-reminders', 'save-view-expiry',
+  'restore-backup',
+  'send-player-link',
+  'session-new', 'session-edit',
+  'timer-add-goal', 'timer-remove-goal'
 ]);
 
 function licenseLocked() {
@@ -266,7 +296,11 @@ function pixCode(amount, txid) {
   const s = settings();
   return brPixCode(s.pixKey, s.pixMerchant, s.pixCity, txid || 'RL', amount);
 }
-function txidFor(playerId, month) { return 'RL' + year() + String(month).padStart(2, '0') + String(playerId).slice(-4).toUpperCase(); }
+function txidFor(playerId, month, paymentYear) {
+  /* A dívida antiga mantém o ano em que foi lançada; só uma cobrança nova usa o ano de controle. */
+  const y = num(paymentYear) || num(ui.paymentPage?.year) || year();
+  return 'RL' + y + String(month).padStart(2, '0') + String(playerId).slice(-4).toUpperCase();
+}
 function paymentLink(playerId, month, amount) {
   const base = location.href.split('#')[0];
   return `${base}#cobranca/${encodeURIComponent(playerId)}/${month}/${Number(amount).toFixed(2)}`;
@@ -497,6 +531,43 @@ function printMonthlyReport(m) {
   setTimeout(() => { w.focus(); w.print(); }, 500);
 }
 
+/* Relatório mensal em CSV: mesmas seções do PDF, em colunas fixas para
+   abrir no Excel. Os valores ficam como número com vírgula decimal. */
+function downloadMonthlyReportCSV(m) {
+  const y = year(), rev = revenue(m), exp = expenses(m), goal = meta(m).withGifts;
+  const pays = state.payments.filter(p => p.year === y && p.month === m);
+  const scores = state.scores.filter(s => s.year === y && s.month === m);
+  const rank = rankingFor(Math.ceil(m / 3)).slice(0, 10);
+  const extras = goals().filter(g => g.mode === 'monthly' && (!g.month || num(g.month) === m));
+  const line = (cells) => cells.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';');
+  const valor = (v) => num(v).toFixed(2).replace('.', ',');
+  const head = ['Seção', 'Jogador/Item', 'Detalhe', 'Presenças', 'Gols', 'Assist.', 'Defesas', 'Paredões', 'Gols sofridos', 'Pontos', 'Valor', 'Status'];
+  const linhas = [
+    ['Resumo', 'Receitas', '', '', '', '', '', '', '', '', valor(rev.total), ''],
+    ['Resumo', 'Despesas', '', '', '', '', '', '', '', '', valor(exp.total), ''],
+    ['Resumo', 'Resultado', '', '', '', '', '', '', '', '', valor(rev.total - exp.total), ''],
+    ['Resumo', 'Meta do mês', '', '', '', '', '', '', '', '', valor(goal), ''],
+    ['Receitas', 'Mensalidades', '', '', '', '', '', '', '', '', valor(rev.mens), ''],
+    ['Receitas', 'Diárias', '', '', '', '', '', '', '', '', valor(rev.dias), '']
+  ];
+  visibleCashRows().filter(c => num(exp.byCat[c]) > 0).forEach(c => {
+    linhas.push(['Despesas', c, '', '', '', '', '', '', '', '', valor(exp.byCat[c]), '']);
+  });
+  pays.forEach(p => {
+    linhas.push(['Mensalidades', playerName(p.playerId), '', '', '', '', '', '', '', '', valor(p.amount), p.paid !== false ? 'Pago' : 'Em aberto']);
+  });
+  scores.forEach(s => {
+    linhas.push(['Pontuação', playerName(s.playerId), '', num(s.presence), num(s.goals), num(s.assists), num(s.defesas), num(s.paredoes), num(s.golsSofridos), scorePoints(s), '', '']);
+  });
+  rank.forEach(r => {
+    linhas.push(['Ranking do trimestre', r.player?.name || playerName(r.playerId), '#' + r.pos, '', num(r.goals), '', '', '', '', r.points, '', '']);
+  });
+  extras.forEach(g => linhas.push(['Metas extras', g.name, '', '', '', '', '', '', '', '', valor(g.amount), '']));
+  const out = [head, ...linhas].map(line).join('\r\n');
+  download(`relatorio-${String(m).padStart(2, '0')}-${y}.csv`, '\ufeff' + out, 'text/csv;charset=utf-8');
+  toast(`Relatório de ${monthName(m)}/${y} baixado em CSV.`);
+}
+
 function resizePhoto(file, done) {
   const reader = new FileReader();
   reader.onload = () => {
@@ -523,16 +594,19 @@ function resizePhoto(file, done) {
    ------------------------------------------------------------ */
 function defaultSettings() {
   return {
-    year: 2027, monthlyFee: 60, dayFee: 20, fieldRent: 825,
+    year: new Date().getFullYear(), monthlyFee: 60, dayFee: 20, fieldRent: 825,
+    feePresidente: 0, feeVice: 0, feeDiretor: 0, feeConselheiro: 0,
     goalkeepers: 2, goalkeeperFee: 30, gamesPerMonth: 4,
     bbqEnabled: true, bbqCostPerPerson: 40, bbqPeople: 18, giftsReserve: 100, bbqPerYear: 3,
     ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
     ptsFarrapou: 3, ptsDesarme: 1, ptsAtrasado: 2,
+    ptsDefesas: 0, ptsParedoes: 0, ptsGolsSofridos: 0,
     dayPlayersPerGame: 6, plannedMembers: 18, maxPlayers: 0, initialCash: 300, refereeFee: 0,
     pixKey: '', pixMerchant: 'RACHA DO LOLO', pixCity: 'SAO PAULO', viewExpiresAt: '', paymentMode: 'manual',
     donationEnabled: true, donationText: 'Ajude a manter o racha: qualquer quantia é bem-vinda!',
     rachaName: 'Racha do Loló', rachaFounded: '', rachaLocation: '', rachaTime: '',
-    rachaDuration: '', rachaRules: '',
+    rachaDuration: '1h30', rachaRules: '',
+    sessions: [], sessionsSeeded: false,
     dailyPaymentEnabled: true,
     groupAccessMessage: GROUP_ACCESS_MESSAGE,
     reminderGroup: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
@@ -545,14 +619,17 @@ function emptyState() {
     version: 1,
     settings: defaultSettings(),
     players: [], payments: [], dayEntries: [], expenses: [], games: [],
-    benefits: [], scores: [], awards: [], confirmations: {}, arrivals: {}, drawHistory: [], audit: [], goals: [], bank: []
+    benefits: [], scores: [], awards: [], confirmations: {}, checkins: {}, arrivals: {}, drawHistory: [], audit: [], goals: [], bank: [],
+    timer: { minutes: 10, startTime: '', sessionId: '', current: null, history: [] }
   };
 }
 
 function makeDemoState() {
   const s = emptyState();
+  const demoYear = new Date().getFullYear();
+  s.settings.year = demoYear;
   const p = (id, name, type, position, phone, note, attrs = {}) => ({ id, name, type, position, phone, note, active: true, demo: true, ...attrs });
-  /* 18 mensalistas (meta) + 4 diaristas, todos os meses de 2027 quitados. */
+  /* 18 mensalistas (meta) + 4 diaristas, todos os meses do ano atual quitados. */
   const memberData = [
     ['Rafael Souza', 'Linha', 'Capitão', 34, 178, 78, 80, 82],
     ['Diego Alves', 'Meia', '', 27, 172, 70, 72, 88],
@@ -597,24 +674,24 @@ function makeDemoState() {
 
   for (let m = 1; m <= 12; m++) {
     members.forEach((pl) => {
-      s.payments.push({ id: uid(), playerId: pl.id, month: m, year: 2027, amount: s.settings.monthlyFee, paid: true, demo: true });
+      s.payments.push({ id: uid(), playerId: pl.id, month: m, year: demoYear, amount: s.settings.monthlyFee, paid: true, demo: true });
     });
     const days = [];
-    let d = 1 + ((4 - new Date(2027, m - 1, 1).getDay() + 7) % 7);
-    while (d <= new Date(2027, m, 0).getDate()) { days.push(d); d += 7; }
+    let d = 1 + ((4 - new Date(demoYear, m - 1, 1).getDay() + 7) % 7);
+    while (d <= new Date(demoYear, m, 0).getDate()) { days.push(d); d += 7; }
     days.forEach(day => {
-      const date = isoDate(2027, m, day);
+      const date = isoDate(demoYear, m, day);
       const gid = 'g' + m + '-' + day;
-      s.games.push({ id: gid, date, month: m, year: 2027, done: true, demo: true });
+      s.games.push({ id: gid, date, month: m, year: demoYear, done: true, demo: true });
       dailies.forEach((dp) => {
-        s.dayEntries.push({ id: uid(), gameId: gid, date, month: m, year: 2027, playerId: dp.id, amount: s.settings.dayFee, demo: true });
+        s.dayEntries.push({ id: uid(), gameId: gid, date, month: m, year: demoYear, playerId: dp.id, amount: s.settings.dayFee, demo: true });
       });
     });
-    s.expenses.push({ id: uid(), date: isoDate(2027, m, 5), month: m, year: 2027, category: 'Quadra', description: `Aluguel de ${monthName(m)}`, amount: s.settings.fieldRent, fixed: 'fieldRent', demo: true });
-    s.expenses.push({ id: uid(), date: isoDate(2027, m, 28), month: m, year: 2027, category: 'Goleiros', description: `2 goleiros × ${days.length} jogos`, amount: 240, fixed: 'goalkeepers', demo: true });
+    s.expenses.push({ id: uid(), date: isoDate(demoYear, m, 5), month: m, year: demoYear, category: 'Quadra', description: `Aluguel de ${monthName(m)}`, amount: s.settings.fieldRent, fixed: 'fieldRent', demo: true });
+    s.expenses.push({ id: uid(), date: isoDate(demoYear, m, 28), month: m, year: demoYear, category: 'Goleiros', description: `2 goleiros × ${days.length} jogos`, amount: 240, fixed: 'goalkeepers', demo: true });
     s.players.forEach((pl, i) => {
       s.scores.push({
-        id: uid(), month: m, year: 2027, playerId: pl.id,
+        id: uid(), month: m, year: demoYear, playerId: pl.id,
         goals: (i * 7 + m * 3) % 4, assists: (i * 3 + m) % 3,
         presence: 2 + ((i + m) % 3), fairPlay: (i + m) % 5 !== 0 ? 1 : 0,
         punctual: (i + m) % 4 !== 0 ? 1 : 0, cards: (i + m) % 7 === 0 ? 1 : 0, demo: true
@@ -622,10 +699,10 @@ function makeDemoState() {
     });
   }
   for (let m = 1; m <= 12; m++) {
-    const tops = rankScores(s.scores.filter(sc => sc.year === 2027 && sc.month === m), s.settings).slice(0, 3);
+    const tops = rankScores(s.scores.filter(sc => sc.year === demoYear && sc.month === m), s.settings).slice(0, 3);
     const baseGift = m === 12 ? 'Churrasco de encerramento' : (m % 3 === 0 ? 'Churrasco do trimestre' : 'Brinde do mês');
     s.awards.push({
-      id: uid(), month: m, year: 2027, demo: true, fixed: 'giftsReserve',
+      id: uid(), month: m, year: demoYear, demo: true, fixed: 'giftsReserve',
       places: AWARD_PLACES.map((meta, i) => ({
         place: meta.place,
         playerId: tops[i]?.playerId || '',
@@ -636,11 +713,11 @@ function makeDemoState() {
       }))
     });
   }
-  s.expenses.push({ id: uid(), date: '2027-02-16', month: 2, year: 2027, category: 'Material', description: 'Bola e coletes', amount: 120, demo: true });
+  s.expenses.push({ id: uid(), date: `${demoYear}-02-16`, month: 2, year: demoYear, category: 'Material', description: 'Bola e coletes', amount: 120, demo: true });
   [3, 6, 12].forEach(m => {
-    s.expenses.push({ id: uid(), date: isoDate(2027, m, 20), month: m, year: 2027, category: 'Churrasco', description: `Churrasco do racha — ${monthName(m)}`, amount: s.settings.bbqCostPerPerson * s.settings.bbqPeople, demo: true });
+    s.expenses.push({ id: uid(), date: isoDate(demoYear, m, 20), month: m, year: demoYear, category: 'Churrasco', description: `Churrasco do racha — ${monthName(m)}`, amount: s.settings.bbqCostPerPerson * s.settings.bbqPeople, demo: true });
   });
-  s.benefits.push({ id: uid(), date: '2027-01-14', month: 1, year: 2027, playerId: 'p1', type: 'Camisa/colete', amount: 45, fromCash: true, note: 'Primeiro uniforme', demo: true });
+  s.benefits.push({ id: uid(), date: `${demoYear}-01-14`, month: 1, year: demoYear, playerId: 'p1', type: 'Camisa/colete', amount: 45, fromCash: true, note: 'Primeiro uniforme', demo: true });
   return s;
 }
 
@@ -659,7 +736,9 @@ function normalizeState() {
   Object.keys(defaults).forEach(k => { if (state.settings[k] === undefined || state.settings[k] === null || state.settings[k] === '') state.settings[k] = defaults[k]; });
   if (state.settings.groupAccessMessage === LEGACY_GROUP_ACCESS_MESSAGE) state.settings.groupAccessMessage = GROUP_ACCESS_MESSAGE;
   ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
+  state.games.forEach(g => { if (g && typeof g === 'object') g.canceled = !!g.canceled; });
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
+  if (!state.checkins || typeof state.checkins !== 'object' || Array.isArray(state.checkins)) state.checkins = {};
   if (!state.arrivals || typeof state.arrivals !== 'object' || Array.isArray(state.arrivals)) state.arrivals = {};
   Object.keys(state.arrivals).forEach(k => {
     if (!Array.isArray(state.arrivals[k])) { delete state.arrivals[k]; return; }
@@ -668,6 +747,34 @@ function normalizeState() {
       .map(x => ({ id: String(x.id), at: String(x.at || '') }));
   });
   if (!Array.isArray(state.drawHistory)) state.drawHistory = [];
+  /* Quem já usava só um racha recebe uma sessão inicial sem perder nada. */
+  if (!Array.isArray(state.settings.sessions)) state.settings.sessions = [];
+  if (state.settings.sessionsSeeded !== true) {
+    if (!state.settings.sessions.length) state.settings.sessions.push({
+      id: 'sessao-1', name: String(state.settings.rachaName || 'Racha principal').slice(0, 60),
+      day: 4, time: String(state.settings.rachaTime || '19:00'),
+      duration: String(state.settings.rachaDuration || '1h30'),
+      location: String(state.settings.rachaLocation || '').slice(0, 140),
+      notes: '', active: true, withGoalkeepers: true, withReferee: true
+    });
+    state.settings.sessionsSeeded = true;
+  }
+  state.settings.sessions = state.settings.sessions.filter(s => s && typeof s === 'object').map(s => ({
+    id: String(s.id || uid()), name: String(s.name || 'Racha').slice(0, 60),
+    day: Math.min(6, Math.max(0, Math.round(num(s.day)))),
+    time: /^\d{2}:\d{2}$/.test(String(s.time || '')) ? String(s.time) : '19:00',
+    duration: String(s.duration || '1h30').slice(0, 20),
+    location: String(s.location || '').slice(0, 140),
+    notes: String(s.notes || '').slice(0, 240), active: s.active !== false,
+    withGoalkeepers: s.withGoalkeepers !== false, withReferee: s.withReferee !== false
+  }));
+  if (!state.timer || typeof state.timer !== 'object' || Array.isArray(state.timer)) state.timer = { minutes: 10, startTime: '', sessionId: '', current: null, history: [] };
+  state.timer.sessionId = String(state.timer.sessionId || '');
+  state.timer.minutes = Math.max(1, Math.round(num(state.timer.minutes) || 10));
+  state.timer.startTime = /^\d{2}:\d{2}$/.test(String(state.timer.startTime || '')) ? String(state.timer.startTime) : '';
+  if (!Array.isArray(state.timer.history)) state.timer.history = [];
+  if (state.timer.current && typeof state.timer.current !== 'object') state.timer.current = null;
+  pruneTimerHistory();
   if (!Number.isFinite(Number(state.settings.maxPlayers))) state.settings.maxPlayers = 0;
   if (typeof state.settings.bbqEnabled !== 'boolean') state.settings.bbqEnabled = true;
   if (!Array.isArray(state.audit)) state.audit = [];
@@ -695,10 +802,14 @@ function normalizeState() {
 function syncFixedExpenses() {
   const s = settings();
   const y = year();
+  /* Só realinha o ano de controle. Despesas de outros anos ficam como lançamentos históricos. */
+  const noAno = (e) => !num(e.year) || num(e.year) === y;
   const games = Math.max(0, num(s.gamesPerMonth));
+  const gkGames = costGames('withGoalkeepers');
+  const refGames = costGames('withReferee');
   const rent = num(s.fieldRent);
-  const keepers = num(s.goalkeepers) * num(s.goalkeeperFee) * games;
-  const referee = num(s.refereeFee) * games;
+  const keepers = num(s.goalkeepers) * num(s.goalkeeperFee) * gkGames;
+  const referee = num(s.refereeFee) * refGames;
   const bbqUnit = num(s.bbqCostPerPerson) * num(s.bbqPeople);
   const bbqCount = Math.min(12, Math.max(0, Math.round(num(s.bbqPerYear))));
   const bbqPool = [3, 6, 12, 9, 2, 5, 8, 11, 1, 4, 7, 10];
@@ -706,6 +817,7 @@ function syncFixedExpenses() {
 
   state.expenses.forEach((e) => {
     if (!e || typeof e !== 'object') return;
+    if (num(e.year) && !noAno(e)) return;
     const desc = String(e.description || '');
     if (e.category === 'Quadra' && (e.fixed === 'fieldRent' || e.demo || /^Aluguel de /i.test(desc))) {
       e.amount = rent;
@@ -715,15 +827,16 @@ function syncFixedExpenses() {
     if (e.category === 'Goleiros' && (e.fixed === 'goalkeepers' || e.demo || /goleiros/i.test(desc))) {
       e.amount = keepers;
       e.fixed = 'goalkeepers';
-      e.description = `${num(s.goalkeepers)} goleiros × ${games} jogos`;
+      e.description = `${num(s.goalkeepers)} goleiros × ${gamesLabel(gkGames)} jogos · ${monthName(e.month)}`;
     }
   });
+  if (keepers <= 0) state.expenses = state.expenses.filter(e => !(noAno(e) && e.category === 'Goleiros' && e.fixed === 'goalkeepers'));
 
   /* Cria/atualiza uma série mensal sem mexer em lançamentos manuais. */
   function syncSeries(category, key, amount, makeDescription, months, enabled) {
-    let rows = state.expenses.filter(e => e.category === category && e.fixed === key);
+    let rows = state.expenses.filter(e => noAno(e) && e.category === category && e.fixed === key);
     if (!rows.length) {
-      const adopt = state.expenses.filter(e => e.category === category && (e.demo || e.seriesId));
+      const adopt = state.expenses.filter(e => noAno(e) && e.category === category && (e.demo || e.seriesId));
       if (adopt.length && adopt.length <= months.length) rows = adopt;
       else if (!adopt.length && enabled && amount > 0) {
         rows = months.map(mo => {
@@ -735,7 +848,7 @@ function syncFixedExpenses() {
     }
     if (!rows.length) return;
     if (!enabled || amount <= 0) {
-      state.expenses = state.expenses.filter(e => e.fixed !== key);
+      state.expenses = state.expenses.filter(e => !(noAno(e) && e.fixed === key));
       return;
     }
     /* Se a premissa pedir mais churrascos do que os lançamentos atuais,
@@ -763,15 +876,15 @@ function syncFixedExpenses() {
     });
     if (rows.length > months.length) {
       const keep = new Set(rows.slice(0, months.length).map(e => e.id));
-      state.expenses = state.expenses.filter(e => e.fixed !== key || keep.has(e.id));
+      state.expenses = state.expenses.filter(e => !noAno(e) || e.fixed !== key || keep.has(e.id));
     }
   }
 
   syncSeries('Arbitragem', 'refereeFee', referee,
-    () => `${games} jogos × ${money(s.refereeFee)} de arbitragem`,
+    () => `${gamesLabel(refGames)} jogos × ${money(s.refereeFee)} de arbitragem`,
     Array.from({ length: 12 }, (_, i) => i + 1), num(s.refereeFee) > 0);
   syncSeries('Churrasco', 'bbq', bbqUnit,
-    (mo) => `Churrasco do racha — ${monthName(mo)}`,
+    (mo) => `Churrasco do racha — ${monthName(mo)} (automático)`,
     bbqMonths, bbqCount > 0 && bbqUnit > 0);
 
   state.awards.forEach(a => {
@@ -1041,7 +1154,7 @@ function publicSnapshot() {
       row.open += amount; open += amount;
       const pid = String(p.playerId || '');
       if (pid) {
-        const txid = txidFor(pid, num(p.month));
+        const txid = txidFor(pid, num(p.month), num(p.year));
         (dues[pid] || (dues[pid] = [])).push({
           month: num(p.month), year: num(p.year), amount, paid: false,
           pix: pixCode(amount, txid), txid, receiptId: p.receiptId || ''
@@ -1053,11 +1166,14 @@ function publicSnapshot() {
     publishedAt: new Date().toISOString(),
     settings: {
       year: num(settings().year), monthlyFee: num(settings().monthlyFee), dayFee: num(settings().dayFee),
+      feePresidente: playerFee({ type: 'Presidente' }), feeVice: playerFee({ type: 'Vice-Presidente' }),
+      feeDiretor: playerFee({ type: 'Diretor' }), feeConselheiro: playerFee({ type: 'Conselheiro' }),
       goalkeepers: num(settings().goalkeepers), gamesPerMonth: num(settings().gamesPerMonth),
       ptsGoal: num(settings().ptsGoal), ptsAssist: num(settings().ptsAssist), ptsPresence: num(settings().ptsPresence),
       ptsFairPlay: num(settings().ptsFairPlay), ptsPunctual: num(settings().ptsPunctual), ptsCard: num(settings().ptsCard),
       ptsFarrapou: num(settings().ptsFarrapou), ptsDesarme: num(settings().ptsDesarme),
       ptsAtrasado: num(settings().ptsAtrasado),
+      ptsDefesas: num(settings().ptsDefesas), ptsParedoes: num(settings().ptsParedoes), ptsGolsSofridos: num(settings().ptsGolsSofridos),
       plannedMembers: num(settings().plannedMembers), maxPlayers: num(settings().maxPlayers),
       dailyPaymentEnabled: settings().dailyPaymentEnabled !== false,
       paymentMode: settings().paymentMode === 'mp' ? 'mp' : 'manual',
@@ -1080,7 +1196,7 @@ function publicSnapshot() {
       age: num(p.age), height: num(p.height), weight: num(p.weight),
       strength: num(p.strength), speed: num(p.speed), photo: typeof p.photo === 'string' ? p.photo : ''
     })),
-    games: (state.games || []).map((g) => ({ id: g.id, date: g.date, month: num(g.month), year: num(g.year), done: !!g.done, name: String(g.name || '').slice(0, 90), time: String(g.time || '').slice(0, 10) })),
+    games: (state.games || []).map((g) => ({ id: g.id, date: g.date, month: num(g.month), year: num(g.year), done: !!g.done, canceled: !!g.canceled, name: String(g.name || '').slice(0, 90), time: String(g.time || '').slice(0, 10) })),
     confirmations: state.confirmations || {},
     drawHistory: (state.drawHistory || []).map((h) => ({
       id: h.id, createdAt: h.createdAt, gameKey: h.gameKey, gameLabel: h.gameLabel,
@@ -1090,7 +1206,8 @@ function publicSnapshot() {
       id: s.id, playerId: s.playerId, month: num(s.month), year: num(s.year),
       goals: num(s.goals), assists: num(s.assists), presence: num(s.presence),
       fairPlay: num(s.fairPlay), punctual: num(s.punctual), farrapou: num(s.farrapou),
-      desarmes: num(s.desarmes), atrasado: num(s.atrasado), cards: num(s.cards)
+      desarmes: num(s.desarmes), atrasado: num(s.atrasado), cards: num(s.cards),
+      defesas: num(s.defesas), paredoes: num(s.paredoes), golsSofridos: num(s.golsSofridos)
     })),
     finance: { paid, open, byMonth: Object.values(paidByMonth) },
     /* dues NÃO vai no retrato público: o get-view remove antes de servir.
@@ -1430,7 +1547,7 @@ function renderReminderText(template, ctx) {
 
 function reminderLinks() {
   const now = Date.now();
-  const games = (viewData?.snapshot?.games || []).filter(g => g.date && !g.done).slice(0, 20);
+  const games = (viewData?.snapshot?.games || []).filter(g => g.date && !g.done && !g.canceled).slice(0, 20);
   const entries = Object.entries(playerLinks || {});
   const out = [];
   games.forEach(g => {
@@ -1487,14 +1604,15 @@ async function publishLive(body) {
 function runLiveAction(action) {
   const gameId = $('#live-game')?.value || '';
   const playerId = $('#live-player')?.value || '';
-  const team = $('#live-team')?.value || 'A';
+  const selectedTeam = $('#live-team')?.value || ui.liveTeam;
+  const team = TEAM_KEYS.includes(selectedTeam) ? selectedTeam : 'A';
   if ((action === 'start' || action === 'goal' || action === 'assist' || action === 'card') && !$('#live-game')) return;
   if ((action === 'goal' || action === 'assist' || action === 'card') && !playerId) { toast('Escolha o jogador.', 'err'); return; }
   publishLive({ action, gameId, playerId, team });
 }
 
 function settings() { return state.settings; }
-function year() { return num(state.settings.year) || 2027; }
+function year() { return num(state.settings.year) || new Date().getFullYear(); }
 
 const ui = {
   page: 'dashboard',
@@ -1503,6 +1621,7 @@ const ui = {
   awardMonth: null,
   cashMonth: null,
   gameTab: 'games',
+  gameMonth: 0,
   rankFilter: 'year',
   sim: null,
   search: '',
@@ -1510,6 +1629,9 @@ const ui = {
   drawGame: null,
   drawMode: 'balanced',
   drawSize: 6,
+  editingDraw: false,
+  draftTeams: null,
+  liveTeam: 'A',
   bankRows: [],
   bankText: ''
 };
@@ -1520,6 +1642,50 @@ const ui = {
 function activePlayers() { return state.players.filter(p => p.active !== false); }
 function playerById(id) { return state.players.find(p => p.id === id) || null; }
 function playerName(id) { return playerById(id)?.name || 'Jogador removido'; }
+/* Diarista é o único que paga por jogo; todos os demais pagam mensalidade. */
+function isMonthlyPlayer(p) { return !!p && String(p.type || '') !== 'Diarista'; }
+function roleDef(type) { return BOARD_ROLES.find(r => r.type === type) || null; }
+function sessionsList() { return Array.isArray(settings().sessions) ? settings().sessions : []; }
+function activeSessions() { return sessionsList().filter(s => s && s.active !== false); }
+function sessionById(id) { return sessionsList().find(s => s.id === id) || null; }
+/* Quantos "jogos por mês" entram no custo de goleiros/arbitragem.
+   Cada racha ativo pode desligar o custo; sem rachas, vale gamesPerMonth. */
+function costGames(field) {
+  const base = Math.max(0, num(settings().gamesPerMonth));
+  const list = activeSessions();
+  if (!list.length) return base;
+  const on = list.filter(s => s[field] !== false).length;
+  if (!on) return 0;
+  return Math.round(base * on / list.length * 100) / 100;
+}
+function gamesLabel(n) {
+  return Number.isInteger(n) ? String(n) : String(n).replace('.', ',');
+}
+/* Valor do cargo nunca fica abaixo da mensalista: 0 ou vazio = usa a base. */
+function playerFee(p) {
+  const base = num(settings().monthlyFee), def = roleDef(p?.type);
+  return def ? Math.max(base, num(settings()[def.feeKey])) : base;
+}
+function feeForPlayerId(id) { return playerFee(playerById(id)); }
+function roleCount(type, exceptId) { return activePlayers().filter(p => p.type === type && p.id !== exceptId).length; }
+function roleLimitError(type, exceptId) {
+  const def = roleDef(type);
+  if (!def || !def.limit) return '';
+  return roleCount(type, exceptId) >= def.limit
+    ? `Já existe ${def.limit} ${def.type} cadastrado. Só pode haver ${def.limit}.`
+    : '';
+}
+function parsePlayerType(raw) {
+  const t = String(raw || '').trim().toLowerCase();
+  const exact = PLAYER_TYPES.find(x => x.toLowerCase() === t);
+  if (exact) return exact;
+  if (t.includes('diar')) return 'Diarista';
+  if (t.includes('vice')) return 'Vice-Presidente';
+  if (t.includes('presi')) return 'Presidente';
+  if (t.includes('diretor')) return 'Diretor';
+  if (t.includes('conselh')) return 'Conselheiro';
+  return 'Mensalista';
+}
 function bbqHidden() { return state.settings.bbqEnabled === false; }
 function visibleExpenseCats() { return bbqHidden() ? EXPENSE_CATS.filter(c => c !== 'Churrasco') : EXPENSE_CATS; }
 function visibleCashRows() { return bbqHidden() ? CASH_ROWS.filter(c => c !== 'Churrasco') : CASH_ROWS; }
@@ -1543,7 +1709,7 @@ function goalProgress(g) {
 
 function meta(month = currentMonth()) {
   const s = settings();
-  const fixed = num(s.fieldRent) + num(s.goalkeepers) * num(s.goalkeeperFee) * num(s.gamesPerMonth) + num(s.refereeFee) * num(s.gamesPerMonth);
+  const fixed = num(s.fieldRent) + num(s.goalkeepers) * num(s.goalkeeperFee) * costGames('withGoalkeepers') + num(s.refereeFee) * costGames('withReferee');
   const bbqAnnual = s.bbqEnabled === false ? 0 : num(s.bbqCostPerPerson) * num(s.bbqPeople) * num(s.bbqPerYear);
   const bbqMonthly = bbqAnnual / 12;
   const customMonthly = monthlyGoalFor(month);
@@ -1601,9 +1767,12 @@ function currentMonth() {
   if (ui.page === 'awards' && ui.awardMonth) return num(ui.awardMonth);
   if (ui.page === 'payments' && ui.payMonth) return num(ui.payMonth);
   const y = year();
+  const sameYear = (x) => (num(x.year) || y) === y;
   const candidates = [
-    ...state.payments.map(x => x.month), ...state.dayEntries.map(x => x.month),
-    ...state.expenses.map(x => x.month), ...state.scores.map(x => x.month)
+    ...state.payments.filter(sameYear).map(x => x.month),
+    ...state.dayEntries.filter(sameYear).map(x => x.month),
+    ...state.expenses.filter(sameYear).map(x => x.month),
+    ...state.scores.filter(sameYear).map(x => x.month)
   ].filter(m => m >= 1 && m <= 12);
   return candidates.length ? Math.max(...candidates) : (new Date().getMonth() + 1);
 }
@@ -1612,7 +1781,9 @@ function scorePointsWith(sc, cfg) {
   return num(sc.goals) * num(cfg.ptsGoal) + num(sc.assists) * num(cfg.ptsAssist) + num(sc.presence) * num(cfg.ptsPresence)
     + num(sc.fairPlay) * num(cfg.ptsFairPlay) + num(sc.punctual) * num(cfg.ptsPunctual)
     - num(sc.farrapou) * num(cfg.ptsFarrapou) - num(sc.atrasado) * num(cfg.ptsAtrasado)
-    + num(sc.desarmes) * num(cfg.ptsDesarme) + num(sc.cards) * num(cfg.ptsCard);
+    + num(sc.desarmes) * num(cfg.ptsDesarme) + num(sc.cards) * num(cfg.ptsCard)
+    + num(sc.defesas) * num(cfg.ptsDefesas) + num(sc.paredoes) * num(cfg.ptsParedoes)
+    + num(sc.golsSofridos) * num(cfg.ptsGolsSofridos);
 }
 function scorePoints(sc) { return scorePointsWith(sc, settings()); }
 
@@ -1681,11 +1852,12 @@ function empty(title, text, action = '') {
   return `<div class="empty"><div class="emoji">⚽</div><h3>${esc(title)}</h3><p class="small">${esc(text)}</p>${action ? `<div class="mt">${action}</div>` : ''}</div>`;
 }
 function section(title, sub = '', right = '') {
-  return `<div class="card-head"><div><h3>${esc(title)}</h3>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>${right ? `<div class="right">${right}</div>` : ''}</div>`;
+  return `<div class="card-head"><div><h2>${esc(title)}</h2>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>${right ? `<div class="right">${right}</div>` : ''}</div>`;
 }
 function selectMonths(id, value, all = false) {
   const opts = all ? `<option value="all" ${value === 'all' ? 'selected' : ''}>Ano todo</option>` : '';
-  return `<select id="${id}">${opts}${MONTHS.map((m, i) => `<option value="${i + 1}" ${num(value) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select>`;
+  const label = id === 'score-month' ? 'Mês da pontuação' : id === 'award-month' ? 'Mês das premiações' : id === 'pay-month' ? 'Mês das mensalidades' : 'Mês';
+  return `<select id="${id}" aria-label="${label}">${opts}${MONTHS.map((m, i) => `<option value="${i + 1}" ${num(value) === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select>`;
 }
 
 function svgBars(rows) {
@@ -1756,17 +1928,20 @@ function dashboardGroupLinkCard() {
 function pageDashboard() {
   const rows = cashRows(), m = currentMonth(), r = rows[m - 1], mm = meta();
   const membersPaid = state.payments.filter(p => p.year === year() && p.month === m && p.paid !== false).length;
-  const membersTotal = activePlayers().filter(p => p.type === 'Mensalista').length;
+  const membersTotal = activePlayers().filter(isMonthlyPlayer).length;
   const progress = Math.min(100, Math.max(0, r.rev.total / mm.withGifts * 100));
   const reservePct = mm.bbqAnnual ? Math.min(100, Math.max(0, r.reservePaid / mm.bbqAnnual * 100)) : 0;
 
-  const nextGames = state.games.filter(g => g.year === year()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
-  const pending = activePlayers().filter(p => p.type === 'Mensalista' && !state.payments.some(x => x.playerId === p.id && x.month === m && x.year === year() && x.paid !== false)).slice(0, 5);
+  const hoje = todayISO();
+  const nextGames = state.games.filter(g => g.year === year() && !g.canceled && String(g.date || '') >= hoje).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
+  const pending = activePlayers().filter(p => isMonthlyPlayer(p) && !state.payments.some(x => x.playerId === p.id && x.month === m && x.year === year() && x.paid !== false)).slice(0, 5);
 
   const activities = [];
-  state.expenses.forEach(e => activities.push({ date: e.date, text: `${e.description} · ${money(e.amount)}`, kind: 'Despesa', ico: '🧾' }));
-  state.payments.filter(p => p.paid !== false).forEach(p => activities.push({ date: `${year()}-${String(p.month).padStart(2, '0')}-01`, text: `Mensalidade de ${shortMonth(p.month)} · ${playerName(p.playerId)}`, kind: 'Receita', ico: '💳' }));
-  state.dayEntries.forEach(d => activities.push({ date: d.date, text: `Diária · ${playerName(d.playerId)}`, kind: 'Receita', ico: '🎟️' }));
+  const ay = year();
+  const sameYear = (x) => (num(x.year) || ay) === ay;
+  state.expenses.filter(sameYear).forEach(e => activities.push({ date: e.date, text: `${e.description} · ${money(e.amount)}`, kind: 'Despesa', ico: '🧾' }));
+  state.payments.filter(p => p.paid !== false && sameYear(p)).forEach(p => activities.push({ date: p.date || `${num(p.year) || ay}-${String(p.month).padStart(2, '0')}-01`, text: `Mensalidade de ${shortMonth(p.month)} · ${playerName(p.playerId)}`, kind: 'Receita', ico: '💳' }));
+  state.dayEntries.filter(sameYear).forEach(d => activities.push({ date: d.date, text: `Diária · ${playerName(d.playerId)}`, kind: 'Receita', ico: '🎟️' }));
   activities.sort((a, b) => b.date.localeCompare(a.date));
 
   return `
@@ -1776,7 +1951,7 @@ function pageDashboard() {
       <div class="card kpi ${r.acc < 0 ? 'red' : ''}"><div class="label">Saldo acumulado</div><div class="value ${r.acc < 0 ? 'negative' : 'positive'} mono">${money(r.acc)}</div><div class="foot">inclui saldo inicial de ${money(settings().initialCash)}</div></div>
       <div class="card kpi blue"><div class="label">Receita · ${shortMonth(m)}</div><div class="value mono">${money(r.rev.total)}</div><div class="foot">${money(r.rev.mens)} mensalidades · ${money(r.rev.dias)} diárias</div></div>
       <div class="card kpi amber"><div class="label">Despesas · ${shortMonth(m)}</div><div class="value mono">${money(r.exp.total)}</div><div class="foot">meta mensal ${money(mm.withGifts)}</div></div>
-      <div class="card kpi"><div class="label">Mensalistas pagantes</div><div class="value mono">${membersPaid}<span class="muted" style="font-size:15px">/${membersTotal}</span></div><div class="foot">planejado: ${settings().plannedMembers} jogadores</div></div>
+      <div class="card kpi"><div class="label">Mensalistas pagantes</div><div class="value mono">${membersPaid}<span class="muted" style="font-size:15px">/${membersTotal}</span></div><div class="foot">meta de jogadores: ${settings().plannedMembers}</div></div>
     </div>
 
     <div class="grid grid-dash mt">
@@ -1801,7 +1976,7 @@ function pageDashboard() {
             <hr style="border:0;border-top:1px solid var(--border-soft);margin:18px 0">
             <div class="spread small"><span>Reserva do churrasco</span><strong class="mono">${money(r.reservePaid)} / ${money(mm.bbqAnnual)}</strong></div>
             <div class="progress mt"><span style="width:${reservePct}%"></span></div>
-            <p class="tiny muted mt">Provisão mensal de ${money(mm.bbqMonthly)} · ${r.reserveDiff >= 0 ? '<span class="positive">reserva em dia</span>' : `<span class="warn">faltam ${money(-r.reserveDiff)}</span>`}</p>` : ''}
+            <p class="tiny muted mt">Provisão mensal de ${money(mm.bbqMonthly)} · ${r.reservePaid > mm.bbqAnnual ? `<span class="warn">${money(r.reservePaid - mm.bbqAnnual)} acima da reserva anual</span>` : r.reserveDiff >= 0 ? '<span class="positive">reserva em dia</span>' : `<span class="warn">faltam ${money(-r.reserveDiff)}</span>`}</p>` : ''}
           </div>
         </div>
         <div class="card">
@@ -1825,7 +2000,7 @@ function pageDashboard() {
       </div>
       <div class="card">
         ${section('Atividade recente', 'Últimos lançamentos')}
-        <div class="table-wrap">${activities.length ? `<table><tbody>${activities.slice(0, 6).map(a => `<tr><td style="width:30px">${a.ico}</td><td><strong class="small">${esc(a.text)}</strong><div class="tiny muted">${esc(a.kind)}</div></td><td class="right tiny muted">${fmtDate(a.date)}</td></tr>`).join('')}</tbody></table>` : empty('Sem atividades', 'Os lançamentos aparecerão aqui.')}</div>
+        <div class="table-wrap">${activities.length ? `<table><thead><tr><th scope="col">Tipo</th><th scope="col">Atividade</th><th scope="col" class="right">Data</th></tr></thead><tbody>${activities.slice(0, 6).map(a => `<tr><th scope="row" style="width:30px">${a.ico}</th><td><strong class="small">${esc(a.text)}</strong><div class="tiny muted">${esc(a.kind)}</div></td><td class="right tiny muted">${fmtDate(a.date)}</td></tr>`).join('')}</tbody></table>` : empty('Sem atividades', 'Os lançamentos aparecerão aqui.')}</div>
       </div>
     </div>`;
 }
@@ -1845,14 +2020,15 @@ function pagePlayers() {
         <select id="player-filter" style="width:130px">
           <option value="all" ${ui.playerFilter === 'all' ? 'selected' : ''}>Todos</option>
           <option value="Mensalista" ${ui.playerFilter === 'Mensalista' ? 'selected' : ''}>Mensalistas</option>
+          ${BOARD_ROLES.map(r => `<option value="${r.type}" ${ui.playerFilter === r.type ? 'selected' : ''}>${r.plural}</option>`).join('')}
           <option value="Diarista" ${ui.playerFilter === 'Diarista' ? 'selected' : ''}>Diaristas</option>
         </select>
         <button class="btn btn-primary" data-act="open-modal" data-modal="player">＋ Jogador</button>`)}
       <div class="table-wrap" id="players-table">
         ${list.length ? `<table><thead><tr><th>Jogador</th><th>Tipo</th><th>Posição</th><th>Contato</th><th class="right">Pontos</th><th class="right">Ações</th></tr></thead><tbody>
           ${list.map(p => { const r = rankMap.get(p.id); return `<tr>
-            <td>${playerCell(p, p.note || (p.type === 'Mensalista' ? 'Mensalista' : 'Diarista'))}</td>
-            <td>${badge(p.type, p.type === 'Mensalista' ? 'green' : 'blue')}</td>
+            <td>${playerCell(p, p.note || p.type)}</td>
+            <td>${badge(p.type, !isMonthlyPlayer(p) ? 'blue' : roleDef(p.type) ? 'amber' : 'green')}</td>
             <td class="small">${esc(p.position || '—')}</td>
             <td class="tiny muted">${esc(p.phone || '—')}</td>
             <td class="right mono"><strong>${r ? r.points : 0}</strong></td>
@@ -1871,6 +2047,10 @@ function pagePlayers() {
 /* ------------------------------------------------------------
    Sorteador de equipes
    ------------------------------------------------------------ */
+function playerCategory(p) {
+  return p?.type || (isMonthlyPlayer(p) ? 'Mensalista' : 'Diarista');
+}
+
 function playerRating(p) {
   if (!p) return 50;
   const s = p.strength == null ? null : num(p.strength);
@@ -1888,12 +2068,12 @@ function meterRow(label, value) {
 
 function drawGameOptions() {
   const y = year();
-  return state.games.filter(g => g.year === y).sort((a, b) => b.date.localeCompare(a.date));
+  return state.games.filter(g => g.year === y && !g.canceled).sort((a, b) => b.date.localeCompare(a.date));
 }
 function defaultDrawGameKey() {
   const y = year();
-  const inYear = state.games.filter(g => g.year === y).sort((a, b) => a.date.localeCompare(b.date));
-  const pool = inYear.length ? inYear : state.games.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const inYear = state.games.filter(g => g.year === y && !g.canceled).sort((a, b) => a.date.localeCompare(b.date));
+  const pool = inYear.length ? inYear : state.games.filter(g => !g.canceled).sort((a, b) => a.date.localeCompare(b.date));
   const today = todayISO();
   const next = pool.find(g => g.date >= today);
   if (next) return next.id;
@@ -1908,6 +2088,18 @@ function drawGameKey() {
 function confirmedIds(gameKey) {
   const list = state.confirmations[gameKey];
   return Array.isArray(list) ? list : [];
+}
+function gameConfirmedPlayers(g) {
+  if (!g) return [];
+  return sortByArrival(confirmedIds(g.id).map(playerById).filter(Boolean), g.id);
+}
+function gameCheckinIds(g) {
+  if (!g) return [];
+  const list = state.checkins?.[g.id];
+  return Array.isArray(list) ? list.filter(Boolean) : [];
+}
+function gameCheckinPlayers(g) {
+  return gameCheckinIds(g).map(playerById).filter(Boolean);
 }
 function drawGameLabel(key) {
   if (key === '__manual__') return 'Avulso';
@@ -2098,23 +2290,76 @@ function doDraw() {
 }
 
 function renderDrawResult(entry) {
-  const teams = (entry.teams || []).map(t => t.map(playerById).filter(Boolean));
+  const editing = ui.editingDraw && Array.isArray(ui.draftTeams);
+  const teams = (editing ? ui.draftTeams : entry.teams || []).map(t => t.map(playerById).filter(Boolean));
+  const acoes = editing
+    ? `<button class="btn btn-sm btn-primary" data-act="save-last-draw" type="button">💾 Salvar ajuste</button> <button class="btn btn-sm btn-ghost" data-act="cancel-last-draw" type="button">Cancelar</button>`
+    : `<button class="btn btn-sm btn-ghost" data-act="edit-last-draw" type="button">✏️ Ajustar times</button> <button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="team">📤 WhatsApp</button> <button class="btn btn-sm btn-ghost" data-act="copy-whatsapp" data-kind="team">📋 Copiar p/ WhatsApp</button>`;
   return `<div class="card mt">
-    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), drawModeLabel(entry.mode) + ' · ' + teams.length + ' equipes', `<button class="btn btn-sm btn-ghost" data-act="share-whatsapp" data-kind="team">📤 WhatsApp</button> <button class="btn btn-sm btn-ghost" data-act="copy-whatsapp" data-kind="team">📋 Copiar p/ WhatsApp</button> <span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
+    ${section('Equipes · ' + (entry.gameLabel || 'Avulso'), drawModeLabel(entry.mode) + ' · ' + teams.length + ' equipes', `${acoes} <span class="tiny muted">${new Date(entry.createdAt).toLocaleString('pt-BR')}</span>`)}
     <div class="card-body">
+      ${editing ? `<p class="tiny muted" style="margin-bottom:12px"><strong>Ajustando as equipes deste sorteio.</strong> Toque em “Mover” para escolher outro time. Salvar altera apenas este resultado — não cria novo sorteio nem mexe em pagamento.</p>` : ''}
       <div class="grid grid-3">
         ${teams.map((t, i) => `
           <div class="card card-pad team-card">
             <div class="spread"><strong>Equipe ${i + 1}</strong><span class="badge ${['green', 'blue', 'amber', 'purple'][i % 4]}">${t.length} jogadores</span></div>
             <div class="tiny muted" style="margin:4px 0 10px">Nota média ${avgRating(t)}</div>
             <ul class="team-list">
-              ${t.map(p => `<li>${avatarHTML(p, true)}<span class="team-name">${esc(p.name)}</span><span class="tiny muted">${esc(p.position || '—')} · ${playerRating(p)}</span></li>`).join('')}
+              ${t.map(p => `<li>${avatarHTML(p, true)}<span class="team-name">${esc(p.name)}</span><span class="tiny muted">${esc(playerCategory(p))} · ${esc(p.position || '—')} · ${playerRating(p)}</span>${editing ? `<button type="button" class="btn btn-sm btn-ghost" data-act="move-draw-player" data-player="${esc(p.id)}" data-from="${i}" title="Mover para outra equipe" style="margin-left:auto">Mover</button>` : ''}</li>`).join('')}
             </ul>
           </div>`).join('')}
       </div>
       ${entry.mode === 'arrival' && (entry.arrivals || []).length ? `<p class="tiny muted mt">Ordem de chegada: ${entry.arrivals.map((pid, i) => `${i + 1}º ${playerName(pid)}`).join(' · ')}</p>` : ''}
     </div>
   </div>`;
+}
+
+function openDrawEditor(entry) {
+  ui.draftTeams = (entry.teams || []).map(t => t.slice());
+  ui.editingDraw = true;
+  render(true);
+  toast('Escolha os times e salve o ajuste.');
+}
+
+function moveDrawPlayer(playerId, from) {
+  if (!ui.editingDraw || !Array.isArray(ui.draftTeams)) return;
+  const teams = ui.draftTeams;
+  const destinos = teams.map((_, i) => i).filter(i => i !== from);
+  if (!destinos.length) { toast('É preciso ter pelo menos 2 equipes.', 'err'); return; }
+  openModal('Mover jogador', 'Escolha a equipe de destino', `<div class="stack">
+    ${destinos.map(i => `<button class="btn btn-ghost btn-block" type="button" data-act="pick-draw-team" data-to="${i}" data-player="${esc(playerId)}" data-from="${from}">Equipe ${i + 1} →</button>`).join('')}
+    <button class="btn btn-ghost btn-block" data-act="close-modal" type="button">Cancelar</button>
+  </div>`);
+}
+
+function pickDrawTeam(playerId, from, to) {
+  if (!ui.editingDraw || !Array.isArray(ui.draftTeams)) return;
+  const teams = ui.draftTeams;
+  const idx = (teams[from] || []).indexOf(playerId);
+  if (idx < 0 || !teams[to] || from === to) return;
+  teams[from].splice(idx, 1);
+  teams[to].push(playerId);
+  closeModal();
+  render(true);
+  toast(`${playerName(playerId)} movido para a equipe ${to + 1}.`);
+}
+
+function saveDrawEditor() {
+  const entry = state.drawHistory[0];
+  if (!entry || !ui.editingDraw || !Array.isArray(ui.draftTeams)) return;
+  const teams = ui.draftTeams.filter(t => t.length).map(t => t.slice());
+  if (teams.length < 2 || teams.some(t => !t.length)) { toast('Deixe pelo menos 2 equipes com jogadores.', 'err'); return; }
+  const total = teams.reduce((n, t) => n + t.length, 0);
+  const original = (entry.teams || []).reduce((n, t) => n + t.length, 0);
+  if (total !== original) { toast('Nenhum jogador pode ser perdido no ajuste.', 'err'); return; }
+  entry.teams = teams;
+  entry.teamSigs = teams.map(t => t.slice().sort().join('+'));
+  entry.adjustedAt = new Date().toISOString();
+  ui.editingDraw = false;
+  ui.draftTeams = null;
+  save('ajustou equipes do sorteio', drawGameLabel(entry.gameKey));
+  render(true);
+  toast('Ajuste salvo no sorteio!');
 }
 
 function renderDrawHistory() {
@@ -2129,6 +2374,12 @@ function renderDrawHistory() {
       </tr>`).join('')}
     </tbody></table></div>
   </div>`;
+}
+
+function cancelDrawEditor() {
+  ui.editingDraw = false;
+  ui.draftTeams = null;
+  render(true);
 }
 
 function renderGroupResponses(key) {
@@ -2213,7 +2464,7 @@ function pageSorteador() {
     <div style="border-top:1px solid var(--border-soft);padding-top:12px;margin-bottom:14px">
       <div class="spread" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <strong class="small">🎲 Montagem das equipes</strong>
-        <span class="tiny muted">formato e sorteio antes da lista de nomes</span>
+        <span class="tiny muted">Escolha o formato e sortee antes de ver a lista de nomes.</span>
       </div>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap">
         <label class="field" style="max-width:170px">Jogadores por equipe<input id="draw-size" type="number" min="2" max="20" value="${num(ui.drawSize) || 6}" /></label>
@@ -2232,7 +2483,7 @@ function pageSorteador() {
         <button class="btn btn-sm btn-ghost" data-act="confirm-all">Marcar todos</button>
         <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>`)}
       <div class="card-body">
-        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. O número no selo é a ordem de chegada. A nota é a média de força e velocidade.</p>
+        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. O número no selo é a ordem de chegada. A nota usa força ou velocidade quando informada; sem os dois, é 50.</p>
         ${renderArrivalOrder(key)}
         ${drawControls}
         ${players.length ? `<div class="chip-grid">
@@ -2240,7 +2491,7 @@ function pageSorteador() {
             const at = ordem.get(p.id);
             return `<button class="chip ${ids.has(p.id) ? 'on' : ''}" data-act="toggle-confirm" data-id="${esc(p.id)}" type="button">
               ${at ? `<span class="badge green">${at}º</span>` : ''}
-              ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-rating">${playerRating(p)}</span></button>`;
+              ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-cat">${esc(playerCategory(p))}</span><span class="chip-rating">${playerRating(p)}</span></button>`;
           }).join(''); })()}
         </div>` : empty('Sem jogadores', 'Cadastre jogadores para poder sortear as equipes.')}
         ${!manual && confirmed.length >= 2 ? `<div class="row mt" style="justify-content:flex-end"><button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button></div>` : ''}
@@ -2255,25 +2506,264 @@ function pageSorteador() {
     ${state.drawHistory.length > 1 ? renderDrawHistory() : ''}`;
 }
 
+/* ------------------------------------------------------------
+   Cronômetro das partidas (local, sem depender do link do grupo)
+   ------------------------------------------------------------ */
+function parseDurationMinutes(raw) {
+  const s = String(raw || '').toLowerCase().trim();
+  if (!s) return 90;
+  let h = 0, m = 0;
+  const colon = s.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (colon) {
+    h = num(colon[1]); m = num(colon[2]);
+  } else {
+    const hh = s.match(/(\d+(?:[.,]\d+)?)\s*(?:h|hora|horas)/i);
+    if (hh) h = num(hh[1].replace(',', '.'));
+    const afterH = s.match(/h\s*(?:e\s*)?(\d+(?:[.,]\d+)?)/i);
+    if (afterH) m = num(afterH[1].replace(',', '.'));
+    const onlyMin = s.match(/(\d+(?:[.,]\d+)?)\s*(?:min|minuto|minutos|m)\b/i);
+    if (onlyMin && !afterH) m = num(onlyMin[1].replace(',', '.'));
+    if (!hh && !afterH && !onlyMin) {
+      const n = Number(s.replace(/[^\d.,]/g, '').replace(',', '.'));
+      if (Number.isFinite(n)) m = n;
+    }
+  }
+  const total = Math.round(h * 60 + m);
+  return total > 0 ? total : 90;
+}
+function timerSession() { return sessionById(state.timer?.sessionId || '') || null; }
+function timerDurationRaw() { return timerSession()?.duration || String(settings().rachaDuration || '1h30'); }
+function timerMinutes() { return Math.max(1, Math.round(num(state.timer?.minutes) || 10)); }
+function timerStartTime() {
+  const own = String(state.timer?.startTime || '');
+  return /^\d{2}:\d{2}$/.test(own) ? own : (timerSession()?.time || String(settings().rachaTime || '') || '19:00');
+}
+function timerStartISO() {
+  const [h, m] = timerStartTime().split(':').map(Number);
+  const d = new Date();
+  d.setHours(h || 0, m || 0, 0, 0);
+  return d.toISOString();
+}
+function timerPlanned(no) {
+  const min = timerMinutes(), start = Date.parse(timerStartISO()) + (Math.max(1, num(no)) - 1) * min * 60000;
+  return { start: new Date(start).toISOString(), end: new Date(start + min * 60000).toISOString() };
+}
+function pruneTimerHistory() {
+  if (!state?.timer || !Array.isArray(state.timer.history)) return 0;
+  const cut = Date.now() - TIMER_RETENTION_MS;
+  const antes = state.timer.history.length;
+  state.timer.history = state.timer.history.filter(h => {
+    const t = Date.parse(String(h?.endedAt || h?.startedAt || ''));
+    return Number.isFinite(t) && t > cut;
+  });
+  return antes - state.timer.history.length;
+}
+function fmtClock(ms) {
+  const total = Math.max(0, Math.ceil(num(ms) / 1000));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  const pad = (v) => String(v).padStart(2, '0');
+  return h ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+function fmtHour(iso) {
+  const d = new Date(String(iso || ''));
+  return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+function timerRemaining(cur) {
+  if (!cur) return 0;
+  if (cur.pausedAt) return Math.max(0, num(cur.remainingMs));
+  const end = Date.parse(String(cur.plannedEnd || ''));
+  return Number.isFinite(end) ? Math.max(0, end - Date.now()) : 0;
+}
+function timerBeep() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    [0, 220, 440].forEach((delay) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + delay / 1000);
+      gain.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + delay / 1000 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay / 1000 + 0.16);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + delay / 1000);
+      osc.stop(ctx.currentTime + delay / 1000 + 0.18);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 1200);
+  } catch (err) { /* áudio é opcional */ }
+}
+function timerTeamLines(teams) {
+  if (!Array.isArray(teams) || !teams.length) return '<p class="tiny muted">Sem times salvos nesta partida.</p>';
+  return teams.map((t, i) => `<div class="tiny"><strong>Time ${i ? 'B' : 'A'}:</strong> ${(t || []).map(id => esc(playerName(id))).join(', ') || '—'}</div>`).join('');
+}
+function timerGoalLine(goals) {
+  if (!Array.isArray(goals) || !goals.length) return '—';
+  return goals.map(g => `${esc(g.playerName || playerName(g.playerId) || 'Jogador')} (Time ${esc(g.team || 'A')}${num(g.minute) ? ` · ${num(g.minute)}'` : ''})`).join(' · ');
+}
+function pageTimer() {
+  pruneTimerHistory();
+  const t = state.timer, total = parseDurationMinutes(timerDurationRaw()), min = timerMinutes();
+  const count = Math.max(1, Math.floor(total / min));
+  const used = new Set((t.history || []).map(h => num(h.no)));
+  if (t.current) used.add(num(t.current.no));
+  const schedule = Array.from({ length: count }, (_, i) => {
+    const no = i + 1, p = timerPlanned(no);
+    return `<tr><td class="mono">${no}</td><td>${fmtHour(p.start)}</td><td>${fmtHour(p.end)}</td><td>${used.has(no)
+      ? '<span class="tiny muted">Já usada</span>'
+      : `<button class="btn btn-sm btn-ghost" type="button" data-act="timer-start" data-no="${no}">▶ Iniciar</button>`}</td></tr>`;
+  }).join('');
+  const cur = t.current;
+  const status = !cur ? 'Nenhuma partida em andamento.' : (cur.pausedAt ? '⏸ Pausada' : (cur.alarmFired ? '⏰ Tempo esgotado — encerre e salve' : '🔴 Em andamento'));
+  const history = (t.history || []).slice().sort((a, b) => String(b.endedAt || '').localeCompare(String(a.endedAt || ''))).map(h => `
+    <div class="card mt">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+        <strong>Partida ${num(h.no)} · ${num(h.scoreA)} × ${num(h.scoreB)}</strong>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="timer-delete" data-id="${esc(h.id)}">🗑️ Excluir</button>
+      </div>
+      <p class="tiny muted">Início real: ${fmtDateTime(h.startedAt)} · Fim real: ${fmtDateTime(h.endedAt)} · Previsto: ${fmtHour(h.plannedStart)} → ${fmtHour(h.plannedEnd)} · Pausa: ${fmtClock(h.pausedMs)} · ${num(h.minutes)} min/partida</p>
+      <div class="grid grid-2">${Array.isArray(h.teamNames) && h.teamNames.some(n => String(n || '').trim())
+        ? h.teamNames.map((n, i) => `<div class="tiny"><strong>Time ${i ? 'B' : 'A'}:</strong> ${esc(n || '—')}</div>`).join('')
+        : timerTeamLines(h.teams)}</div>
+      <p class="tiny">⚽ Gols: ${timerGoalLine(h.goals)}</p>
+    </div>`).join('');
+  return `
+    <div class="grid grid-2">
+      <div class="card">
+        ${section('Tempo das partidas', 'Sugestão a partir da duração cadastrada em Configurações')}
+        <div class="card-body stack">
+          <p class="small">${timerSession() ? `Racha: <strong>${esc(timerSession().name)}</strong>${timerSession().notes ? ` · ${esc(timerSession().notes)}` : ''}<br>` : ''}Duração: <strong>${esc(timerDurationRaw() || '—')}</strong> (${total} min). Com <strong>${min} min</strong> por partida, cabem <strong>${count}</strong> partidas.</p>
+          <form data-form="timer-config" class="form-grid one">
+            <label class="field">Racha da semana<select name="sessionId"><option value="">— usar perfil de Configurações —</option>${activeSessions().map(s => `<option value="${esc(s.id)}" ${state.timer.sessionId === s.id ? 'selected' : ''}>${esc(s.name)} · ${esc(WEEKDAYS[num(s.day)] || '')} ${esc(s.time)}</option>`).join('')}</select></label>
+            <label class="field">Minutos por partida<input name="minutes" type="number" min="1" max="240" step="1" value="${min}" required /></label>
+            <label class="field">Início previsto<input name="startTime" type="time" value="${esc(timerStartTime())}" required /></label>
+            <div class="form-actions"><button class="btn btn-primary" type="submit">💾 Salvar tempo</button></div>
+          </form>
+          <p class="tiny muted">Troque os minutos se quiser partidas mais curtas ou mais longas. O horário inicial também pode ser alterado aqui, sem mexer em Configurações.</p>
+        </div>
+      </div>
+      <div class="card">
+        ${section('Controle', 'Inicie, pause, retome e encerre', cur ? `<span class="tiny muted">Partida ${num(cur.no)}</span>` : '')}
+        <div class="card-body center">
+          <div class="timer-display mono" id="timer-display">${cur ? fmtClock(timerRemaining(cur)) : '--:--'}</div>
+          <p class="small" id="timer-status">${status}</p>
+          ${cur ? `
+            <p class="tiny muted">Início real: ${fmtDateTime(cur.startedAt)} · Previsto: ${fmtHour(cur.plannedStart)} → ${fmtHour(cur.plannedEnd)} · Pausa acumulada: ${fmtClock(cur.pausedMs)}</p>
+            <div class="timer-teams">${timerTeamLines(cur.teams)}</div>
+            <div class="row mt" style="justify-content:center;flex-wrap:wrap">
+              <button class="btn btn-primary" type="button" data-act="timer-${cur.pausedAt ? 'resume' : 'pause'}">${cur.pausedAt ? '▶ Retomar' : '⏸ Pausar'}</button>
+              <button class="btn btn-ghost" type="button" data-act="timer-finish">⏹ Encerrar e salvar</button>
+            </div>`
+            : '<p class="small muted">Escolha uma partida prevista ao lado e toque em “Iniciar”.</p>'}
+        </div>
+      </div>
+    </div>
+    <div class="card mt">
+      ${section('Partidas previstas', `${count} partidas de ${min} min a partir de ${timerStartTime()}`)}
+      <div class="table-wrap"><table><thead><tr><th>Nº</th><th>Início previsto</th><th>Término previsto</th><th></th></tr></thead><tbody>${schedule}</tbody></table></div>
+    </div>
+    <div class="card mt">
+      ${section('Histórico das partidas', `Registros salvos por 24h · ${(t.history || []).length} partida(s)`, `<button class="btn btn-sm btn-ghost" type="button" data-act="timer-clear-history" ${(t.history || []).length ? '' : 'disabled'}>🧹 Limpar histórico</button>`)}
+      ${history || '<p class="small muted center">Nenhuma partida encerrada nas últimas 24 horas.</p>'}
+    </div>`;
+}
+
+function startTimerMatch(no) {
+  if (state.timer.current) { toast('Já há uma partida em andamento.', 'err'); return; }
+  const n = Math.max(1, Math.round(num(no) || 1));
+  const used = new Set((state.timer.history || []).map(h => num(h.no)));
+  if (used.has(n)) { toast(`A partida ${n} já foi encerrada hoje.`, 'err'); return; }
+  const now = new Date(), p = timerPlanned(n), last = state.drawHistory[0];
+  state.timer.current = {
+    id: uid(), no: n, startedAt: now.toISOString(), plannedStart: p.start, plannedEnd: p.end,
+    pausedAt: '', pausedMs: 0, remainingMs: 0, alarmFired: false,
+    minutes: timerMinutes(), teams: (last?.teams || []).map(t => Array.isArray(t) ? t.slice() : [])
+  };
+  save('iniciou partida no cronômetro', `Partida ${n}`);
+  render(); toast(`Partida ${n} iniciada. Bom jogo!`);
+}
+function pauseTimerMatch() {
+  const cur = state.timer.current;
+  if (!cur || cur.pausedAt) return;
+  cur.remainingMs = timerRemaining(cur);
+  cur.pausedAt = new Date().toISOString();
+  save('pausou o cronômetro', `Partida ${cur.no}`);
+  render(); toast('Cronômetro pausado.');
+}
+function resumeTimerMatch() {
+  const cur = state.timer.current;
+  if (!cur || !cur.pausedAt) return;
+  const pausedAt = Date.parse(String(cur.pausedAt));
+  if (Number.isFinite(pausedAt)) cur.pausedMs = num(cur.pausedMs) + Math.max(0, Date.now() - pausedAt);
+  const restante = num(cur.remainingMs);
+  cur.plannedEnd = new Date(Date.now() + restante).toISOString();
+  cur.pausedAt = ''; cur.remainingMs = 0;
+  if (restante > 0) cur.alarmFired = false;
+  save('retomou o cronômetro', `Partida ${cur.no}`);
+  render(); toast('Cronômetro retomado.');
+}
+function tickTimer() {
+  if (pruneTimerHistory() && ui.page === 'timer') render(true);
+  const cur = state.timer?.current;
+  if (!cur || cur.pausedAt) return;
+  const rest = timerRemaining(cur);
+  const display = $('#timer-display');
+  if (display) display.textContent = fmtClock(rest);
+  const status = $('#timer-status');
+  if (status) status.textContent = rest <= 0 ? '⏰ Tempo esgotado — encerre e salve' : '🔴 Em andamento';
+  if (rest <= 0 && !cur.alarmFired) {
+    cur.alarmFired = true;
+    save('tempo da partida esgotou', `Partida ${cur.no}`);
+    timerBeep(); toast(`⏰ Fim do tempo da partida ${cur.no}!`);
+  }
+}
+function modalFinishMatch() {
+  const cur = state.timer?.current;
+  if (!cur) return;
+  const opcoes = activePlayers().map(p => `<option value="${esc(p.id)}" data-name="${esc(p.name)}">${esc(p.name)}</option>`).join('');
+  const linhaGol = () => `<div class="row goal-row" style="flex-wrap:wrap">
+    <label class="field" style="flex:2;min-width:150px">Jogador<select name="goalPlayer">${opcoes}</select></label>
+    <label class="field" style="flex:1;min-width:90px">Time<select name="goalTeam"><option value="A">A</option><option value="B">B</option></select></label>
+    <label class="field" style="flex:1;min-width:80px">Minuto<input name="goalMinute" type="number" min="1" max="120" placeholder="Ex.: 12" /></label>
+    <button class="btn btn-sm btn-ghost" type="button" data-act="timer-remove-goal" title="Remover gol">✕</button>
+  </div>`;
+  openModal('Encerrar partida', `Partida ${num(cur.no)} · informe placar e gols`, `
+    <form data-form="timer-finish" class="form-grid one">
+      <div class="row" style="flex-wrap:wrap">
+        <label class="field" style="flex:1">Gols Time A<input name="scoreA" type="number" min="0" step="1" value="0" required /></label>
+        <label class="field" style="flex:1">Gols Time B<input name="scoreB" type="number" min="0" step="1" value="0" required /></label>
+      </div>
+      <div class="row" style="flex-wrap:wrap">
+        <label class="field" style="flex:1">Time A<input name="teamA" value="${esc((cur.teams?.[0] || []).map(id => playerName(id)).join(', '))}" placeholder="Jogadores separados por vírgula" /></label>
+        <label class="field" style="flex:1">Time B<input name="teamB" value="${esc((cur.teams?.[1] || []).map(id => playerName(id)).join(', '))}" placeholder="Jogadores separados por vírgula" /></label>
+      </div>
+      <div class="mt"><strong class="small">Quem marcou os gols</strong><div id="timer-goals">${linhaGol()}</div></div>
+      <div class="row"><button class="btn btn-sm btn-ghost" type="button" data-act="timer-add-goal">＋ Adicionar gol</button></div>
+      <label class="field">Duração desta partida<input name="duration" type="number" min="1" max="240" step="1" value="${num(cur.minutes) || timerMinutes()}" /></label>
+      <p class="tiny muted">Início real ${fmtDateTime(cur.startedAt)} · término previsto ${fmtHour(cur.plannedEnd)} · pausa ${fmtClock(cur.pausedMs)}. Se mudar a duração aqui, o horário previsto e o relógio são ajustados antes de salvar.</p>
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="close-modal">Cancelar</button><button class="btn btn-primary" type="submit">💾 Salvar partida</button></div>
+    </form>`, true);
+}
+
 function pageLive() {
   const reason = viewBlockReason();
   if (reason) return `<div class="card">${empty('Placar ao vivo indisponível', reason)}</div>`;
   if (!viewToken) return `<div class="card">${empty('Crie o link do grupo primeiro', 'Vá em Configurações → Link para o grupo e depois volte aqui.')}</div>`;
 
   const snap = viewData?.snapshot || {};
-  const games = (snap.games || []).filter(g => !g.done).sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 8);
+  const games = (snap.games || []).filter(g => !g.done && !g.canceled).sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(0, 8);
   const players = (snap.players || []).filter(p => p.active !== false);
   const live = liveState;
-  const score = live?.score || { A: 0, B: 0 };
   const events = (live?.events || []).slice(-12).reverse();
   const ico = { goal: '⚽', assist: '🅰️', card: '🟨' };
   const lastDraw = (snap.drawHistory || [])[0];
+  const teamCount = Math.min(TEAM_KEYS.length, Math.max(2, (lastDraw?.teams || []).length || 2));
+  const teamKeys = TEAM_KEYS.slice(0, teamCount);
+  const score = Object.assign({ A: 0, B: 0 }, live?.score || {});
+  const selectedTeam = TEAM_KEYS.includes(ui.liveTeam) && teamKeys.includes(ui.liveTeam) ? ui.liveTeam : 'A';
 
   const board = live ? `
     <div class="live-board">
-      <div class="live-side"><span class="tiny muted">Equipe A</span><strong>${num(score.A)}</strong></div>
-      <div class="live-x">×</div>
-      <div class="live-side"><span class="tiny muted">Equipe B</span><strong>${num(score.B)}</strong></div>
+      ${teamKeys.map((k, i) => `<div class="live-side"><span class="tiny muted">Equipe ${k}</span><strong>${num(score[k])}</strong></div>${i < teamKeys.length - 1 ? '<span class="live-x">×</span>' : ''}`).join('')}
     </div>
     <p class="tiny muted center">Iniciado em ${live.startedAt ? new Date(live.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}${live.endedAt ? ' · encerrado' : ''}</p>
     ${events.length ? `<div class="mt">${events.map(ev => {
@@ -2284,7 +2774,7 @@ function pageLive() {
 
   return `
     <div class="card">
-      ${section('Comandos do placar', 'Cada lance atualiza a página do grupo em segundos', `
+      ${section('Comandos do placar', 'Cada lance é publicado para o grupo; a página atualiza a cada 15 s com a aba aberta', `
         <button class="btn btn-sm btn-ghost" data-act="open-live-link">🔗 Abrir no grupo</button>`)}
       <div class="card-body">
         <div class="row" style="flex-wrap:wrap">
@@ -2296,7 +2786,7 @@ function pageLive() {
             <option value="">— escolha —</option>
             ${players.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
           </select></label>
-          <label class="field" style="max-width:120px">Equipe<select id="live-team"><option value="A">A</option><option value="B">B</option></select></label>
+          <label class="field" style="max-width:120px">Equipe<select id="live-team">${teamKeys.map(k => `<option value="${k}" ${k === selectedTeam ? 'selected' : ''}>${k}</option>`).join('')}</select></label>
         </div>
         <div class="row mt">
           <button class="btn btn-primary" data-act="live-start" type="button">▶ Iniciar</button>
@@ -2306,7 +2796,7 @@ function pageLive() {
           <button class="btn btn-ghost" data-act="live-undo" type="button">↩ Desfazer</button>
           <button class="btn btn-danger" data-act="live-stop" type="button">⏹ Encerrar</button>
         </div>
-        ${lastDraw ? `<p class="tiny muted mt">Times do último sorteio: ${(lastDraw.teams || []).map((t, i) => `<strong>${i ? 'B' : 'A'}:</strong> ${t.map(id => esc(playerName(id))).slice(0, 5).join(', ')}`).join(' · ')}</p>` : ''}
+        ${lastDraw ? `<p class="tiny muted mt">Times do último sorteio: ${(lastDraw.teams || []).map((t, i) => `<strong>${TEAM_KEYS[i] || i + 1}:</strong> ${t.map(id => esc(playerName(id))).slice(0, 5).join(', ')}`).join(' · ')}</p>` : ''}
       </div>
     </div>
     <div class="card mt">${section('Placar', 'Somente leitura para o grupo', `<button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar</button>`)}
@@ -2315,16 +2805,17 @@ function pageLive() {
 }
 
 function pagePayments() {
-  const m = currentMonth(), players = activePlayers().filter(p => p.type === 'Mensalista');
-  const y = year();
+  const m = currentMonth(), players = activePlayers().filter(isMonthlyPlayer);
+  const y = year(), base = num(settings().monthlyFee);
   const totals = MONTHS.map((_, i) => {
     const list = state.payments.filter(p => p.year === y && p.month === i + 1 && p.paid !== false);
     return { received: sum(list, p => p.amount), count: list.length };
   });
-  const expected = num(settings().monthlyFee) * players.length;
+  const expected = sum(players, p => playerFee(p));
+  const cargos = BOARD_ROLES.map(r => `${r.type} ${money(playerFee({ type: r.type }))}`).join(' · ');
   return `
     <div class="card">
-      ${section('Mensalidades ' + y, `${players.length} mensalistas · ${money(settings().monthlyFee)} por mês`, `
+      ${section('Mensalidades ' + y, `${players.length} pagantes · base ${money(base)}${cargos ? ' · ' + cargos : ''}`, `
         ${selectMonths('pay-month', m)}
         <button class="btn btn-sm btn-ghost" data-act="pay-all">Marcar ${shortMonth(m)} para todos</button>
         <button class="btn btn-sm btn-ghost" data-act="clear-month">Limpar ${shortMonth(m)}</button>`)}
@@ -2338,7 +2829,7 @@ function pagePayments() {
               if (rec) total += num(rec.amount);
               return `<td><button class="pay-cell ${rec ? 'paid' : ''}" data-act="edit-payment" data-player="${p.id}" data-month="${i + 1}" title="${rec ? 'Pago: ' + money(rec.amount) + ' (clique para editar)' : 'Marcar como pago'}">${rec ? '✓' : '—'}</button></td>`;
             }).join('');
-            return `<tr><td>${playerCell(p)}</td>${cells}<td class="num"><strong>${money(total)}</strong></td></tr>`;
+            return `<tr><td>${playerCell(p, roleDef(p.type) && num(playerFee(p)) !== base ? `${p.type} · ${money(playerFee(p))}/mês` : '')}</td>${cells}<td class="num"><strong>${money(total)}</strong></td></tr>`;
           }).join('')}
         </tbody>
         <tfoot>
@@ -2351,27 +2842,69 @@ function pagePayments() {
     </div>`;
 }
 
+function generateSessionGames(months) {
+  const y = year();
+  let created = 0;
+  months.forEach(m => {
+    const lastDay = new Date(y, m, 0).getDate();
+    activeSessions().forEach(s => {
+      let d = 1 + ((num(s.day) - new Date(y, m - 1, 1).getDay() + 7) % 7);
+      while (d <= lastDay) {
+        const date = isoDate(y, m, d);
+        if (!state.games.some(g => g.date === date && g.year === y && g.sessionId === s.id)) {
+          state.games.push({ id: uid(), date, month: m, year: y, done: false, sessionId: s.id, sessionName: s.name, name: s.name, time: s.time, location: s.location || '', notes: s.notes || '' });
+          created++;
+        }
+        d += 7;
+      }
+    });
+  });
+  return created;
+}
+
+function toggleGameCancel(gameId) {
+  const g = state.games.find(x => x.id === gameId);
+  if (!g) return;
+  if (g.canceled) {
+    g.canceled = false;
+    save('reativou jogo', fmtDate(g.date)); render(); toast('Jogo reativado.');
+    return;
+  }
+  confirmAction(`Cancelar o jogo de ${fmtDate(g.date)}? Ele continuará na agenda com status Cancelado.`, () => {
+    g.canceled = true;
+    save('cancelou jogo', fmtDate(g.date)); render(); toast('Jogo cancelado.');
+  });
+}
+
 function pageGames() {
   const y = year();
-  const games = state.games.filter(g => g.year === y).sort((a, b) => a.date.localeCompare(b.date));
+  const gamesYear = state.games.filter(g => g.year === y).sort((a, b) => a.date.localeCompare(b.date));
+  const games = ui.gameMonth ? gamesYear.filter(g => num(g.month) === ui.gameMonth) : gamesYear;
   const tabs = `<div class="row" style="margin-bottom:16px">
-      <button class="btn ${ui.gameTab === 'games' ? 'btn-primary' : 'btn-ghost'}" data-act="game-tab" data-tab="games">📅 Jogos (${games.length})</button>
+      <button class="btn ${ui.gameTab === 'games' ? 'btn-primary' : 'btn-ghost'}" data-act="game-tab" data-tab="games">📅 Jogos (${gamesYear.length})</button>
       <button class="btn ${ui.gameTab === 'days' ? 'btn-primary' : 'btn-ghost'}" data-act="game-tab" data-tab="days">🎟️ Diárias (${state.dayEntries.filter(d => d.year === y).length})</button>
     </div>`;
   if (ui.gameTab === 'games') {
     return tabs + `<div class="card">
-      ${section('Agenda de jogos', 'Quintas-feiras do racha', `
+      ${section('Agenda de jogos', `${gamesYear.length} jogo(s) em ${y} · rachas cadastrados em Configurações`, `
+        <label class="field" style="max-width:140px">Ver<select id="game-filter-month"><option value="all" ${ui.gameMonth ? '' : 'selected'}>Ano todo</option>${MONTHS.map((m, i) => `<option value="${i + 1}" ${ui.gameMonth === i + 1 ? 'selected' : ''}>${m}</option>`).join('')}</select></label>
         ${selectMonths('gen-month', currentMonth())}
-        <button class="btn btn-sm btn-ghost" data-act="generate-games">Gerar quintas do mês</button>
+        <button class="btn btn-sm btn-ghost" data-act="generate-sessions">Gerar rachas do mês</button>
+        <button class="btn btn-sm btn-ghost" data-act="generate-sessions-year">Gerar ano todo</button>
         <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="game">＋ Jogo</button>`)}
-      <div class="table-wrap">${games.length ? `<table><thead><tr><th>Data</th><th>Mês</th><th>Status</th><th class="right">Diaristas</th><th class="right">Receita</th><th class="right">Ações</th></tr></thead><tbody>
-        ${games.map(g => { const ds = state.dayEntries.filter(d => d.gameId === g.id); return `<tr>
-          <td><strong>${fmtDate(g.date)}</strong>${g.time ? `<div class="tiny muted">${esc(g.time)}</div>` : ''}${g.name ? `<div class="tiny muted">${esc(g.name)}</div>` : ''}</td><td>${shortMonth(g.month)}</td>
-          <td>${badge(g.done ? 'Realizado' : 'Agendado', g.done ? 'green' : 'amber')}</td>
+      <div class="table-wrap">${games.length ? `<table><thead><tr><th>Data</th><th>Mês</th><th>Status</th><th>Presença</th><th class="right">Diaristas</th><th class="right">Receita</th><th class="right">Ações</th></tr></thead><tbody>
+        ${games.map(g => { const ds = state.dayEntries.filter(d => d.gameId === g.id); const conf = gameConfirmedPlayers(g); const pres = gameCheckinPlayers(g); return `<tr>
+          <td><strong>${fmtDate(g.date)}</strong>${g.time ? `<div class="tiny muted">${esc(g.time)}</div>` : ''}${g.name ? `<div class="tiny muted">${esc(g.name)}</div>` : ''}${g.location ? `<div class="tiny muted">📍 ${esc(g.location)}</div>` : ''}${g.notes ? `<div class="tiny muted">${esc(g.notes)}</div>` : ''}</td><td>${shortMonth(g.month)}</td>
+          <td>${g.canceled ? badge('Cancelado', 'red') : g.done ? badge('Realizado', 'green') : badge('Agendado', 'amber')}</td>
+          <td><button class="btn btn-sm btn-ghost" type="button" data-act="game-presence" data-id="${g.id}">👥 ${conf.length} confirm. · ${pres.length} check-in</button>
+            ${conf.length ? `<div class="tiny muted">${conf.slice(0, 3).map(p => esc(p.name)).join(', ')}${conf.length > 3 ? '…' : ''}</div>` : ''}</td>
           <td class="right mono">${ds.length}</td><td class="right mono">${money(sum(ds, d => d.amount))}</td>
-          <td class="right"><button class="btn btn-sm ${g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${g.id}">${g.done ? 'Editar presença' : 'Fazer check-in'}</button>
-          <button class="icon-btn danger" data-act="delete-game" data-id="${g.id}">🗑️</button></td></tr>`; }).join('')}
-      </tbody></table>` : empty('Nenhum jogo agendado', 'Gere as quintas do mês ou cadastere um jogo manualmente.')}</div>
+          <td class="right"><div class="stack" style="gap:6px;align-items:flex-end">
+            <button class="btn btn-sm ${g.canceled ? 'btn-ghost' : g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${g.id}" ${g.canceled ? 'disabled title="Reative o jogo para fazer check-in"' : ''}>${g.canceled ? 'Check-in indisponível' : g.done ? 'Editar presença' : 'Fazer check-in'}</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-act="game-cancel" data-id="${g.id}">${g.canceled ? '↩ Reativar' : '🚫 Cancelar'}</button>
+            <button class="icon-btn danger" data-act="delete-game" data-id="${g.id}" title="Excluir jogo">🗑️</button>
+          </div></td></tr>`; }).join('')}
+      </tbody></table>` : empty('Nenhum jogo neste filtro', 'Gere os rachas do ano ou cadastre um jogo manualmente.')}</div>
     </div>`;
   }
   const days = state.dayEntries.filter(d => d.year === y).sort((a, b) => b.date.localeCompare(a.date));
@@ -2398,11 +2931,11 @@ function pageExpenses() {
     </div>
     <div class="card mt">
       ${section(`${all.length} despesas em ${y}`, `Total: ${money(sum(all, e => e.amount))}`, `
-        <button class="btn btn-sm btn-ghost" data-act="quick-expense" data-cat="Quadra">＋ Aluguel</button>
-        <button class="btn btn-sm btn-ghost" data-act="quick-expense" data-cat="Goleiros">＋ Goleiros</button>
-        <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="expense">＋ Despesa</button>`)}
-      <div class="table-wrap">${all.length ? `<table><thead><tr><th>Data</th><th>Categoria</th><th>Descrição</th><th>Mês</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
-        ${all.map(e => `<tr><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}${e.fixed ? '<span class="tiny muted"> · fixo</span>' : ''}${e.seriesId ? '<span class="tiny muted"> · repetição</span>' : ''}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}" title="Excluir este lançamento">🗑️</button>${e.seriesId ? ` <button class="icon-btn danger" data-act="delete-expense-series" data-series="${esc(e.seriesId)}" title="Excluir toda esta repetição">🧹</button>` : ''}</td></tr>`).join('')}
+        <button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="expense">＋ Despesa</button>
+        <button class="btn btn-sm btn-ghost" data-act="expense-clear-selected" type="button" ${all.length ? '' : 'disabled'}>🧹 Limpar selecionados</button>
+        <button class="btn btn-sm btn-danger" data-act="clear-expenses" type="button" ${state.expenses.length ? '' : 'disabled'} title="Apagar todas as despesas de todos os anos">🧹 Limpar todas</button>`)}
+      <div class="table-wrap">${all.length ? `<table><thead><tr><th style="width:34px"><input type="checkbox" id="expense-all" data-act="expense-select-all" title="Selecionar todas" style="width:16px" /></th><th>Data</th><th>Categoria</th><th>Descrição</th><th>Mês</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
+        ${all.map(e => `<tr><td><input type="checkbox" class="expense-check" value="${esc(e.id)}" style="width:16px" /></td><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}${e.fixed ? '<span class="tiny muted"> · fixo</span>' : ''}${e.seriesId ? '<span class="tiny muted"> · repetição</span>' : ''}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}" title="Excluir este lançamento">🗑️</button>${e.seriesId ? ` <button class="icon-btn danger" data-act="delete-expense-series" data-series="${esc(e.seriesId)}" title="Excluir toda esta repetição">🧹</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : empty('Sem despesas', 'Lance o aluguel da quadra e os goleiros para começar.')}</div>
     </div>`;
 }
@@ -2458,12 +2991,12 @@ function pageCash() {
       </div>
     </div>` : ''}
     <div class="card mt">
-      ${section('Fluxo de caixa · ' + year(), 'Tudo automático a partir dos lançamentos', `
+      ${section('Fluxo de caixa · ' + year(), 'Valores automáticos a partir dos lançamentos; progresso das metas é digitado', `
         <select id="report-month" aria-label="Mês do relatório" style="max-width:120px">
           ${MONTHS.map((n, i) => `<option value="${i + 1}" ${i + 1 === currentMonth() ? 'selected' : ''}>${n}</option>`).join('')}
         </select>
         <button class="btn btn-sm btn-ghost" type="button" data-act="monthly-report">🖨 Relatório PDF</button>
-        <button class="btn btn-sm btn-ghost" data-act="export-cash">⬇ Exportar CSV</button>`)}
+        <button class="btn btn-sm btn-ghost" type="button" data-act="report-month-csv" title="Baixa um CSV com receitas, despesas, mensalidades, pontuação e ranking do mês escolhido">⬇ Relatório do mês (CSV)</button>`)}
       <div class="table-wrap"><table>
         <thead><tr><th>Item</th>${MONTHS.map(x => `<th class="right">${x}</th>`).join('')}<th class="right">Total</th></tr></thead>
         <tbody>
@@ -2572,7 +3105,7 @@ function pageSimulator() {
           ${slider('dayFee', 'Diária (R$)', 10, 60, 5, 'R$ ')}
           ${slider('games', 'Jogos por mês', 1, 8, 1)}
           <button class="btn btn-primary" data-act="apply-sim">Aplicar ao planejamento</button>
-          <p class="tiny muted">Ao aplicar, mensalidade, diária, diaristas por jogo e jogos por mês passam a valer nas premissas do app.</p>
+          <p class="tiny muted">Ao aplicar, mensalidade, diária, diaristas por jogo, jogos por mês e meta de jogadores passam a valer nas premissas do app.</p>
         </div>
       </div>
       <div class="card">
@@ -2589,16 +3122,17 @@ function pageSimulator() {
 function pageScores() {
   const m = currentMonth(), y = year(), players = activePlayers();
   const existing = new Map(state.scores.filter(s => s.year === y && s.month === m).map(s => [s.playerId, s]));
+  const scoreLabels = { goals: 'Gols', assists: 'Assistências', presence: 'Presenças', desarmes: 'Desarmes', defesas: 'Defesas', paredoes: 'Paredões', golsSofridos: 'Gols sofridos', fairPlay: 'Fair play', punctual: 'Pontual', farrapou: 'Farrapou', atrasado: 'Atrasado', cards: 'Cartões' };
   return `
     <div class="card">
-      ${section('Pontuação · ' + shortMonth(m) + '/' + y, 'Digite a quantidade de cada item. Farrapou/Faltou tira pontos. Os pontos são calculados automaticamente.', selectMonths('score-month', m))}
-      <div class="table-wrap"><table><thead><tr><th>Jogador</th><th class="right">Gols</th><th class="right">Assist.</th><th class="right">Presenças</th><th class="right">Desarmes</th><th class="right">Fair play</th><th class="right">Pontual</th><th class="right">Farrapou / Faltou</th><th class="right">Atrasado</th><th class="right">Cartões</th><th class="right">Pontos</th></tr></thead><tbody>
+      ${section('Pontuação · ' + shortMonth(m) + '/' + y, 'Digite a quantidade de cada item. Farrapou/Faltou tira pontos. Defesas, paredões e gols sofridos valem 0 até você configurar os pontos em Configurações.', selectMonths('score-month', m))}
+      <div class="table-wrap"><table><thead><tr><th>Jogador</th><th class="right">Gols</th><th class="right">Assist.</th><th class="right">Presenças</th><th class="right">Desarmes</th><th class="right">Defesas</th><th class="right">Paredões</th><th class="right">Gols sofridos</th><th class="right">Fair play</th><th class="right">Pontual</th><th class="right">Farrapou / Faltou</th><th class="right">Atrasado</th><th class="right">Cartões</th><th class="right">Pontos</th></tr></thead><tbody>
         ${players.map(p => {
-          const s = existing.get(p.id) || { goals: 0, assists: 0, presence: 0, desarmes: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
+          const s = existing.get(p.id) || { goals: 0, assists: 0, presence: 0, desarmes: 0, defesas: 0, paredoes: 0, golsSofridos: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
           const pts = scorePoints(s);
           return `<tr data-score-row="${p.id}">
             <td>${playerCell(p)}</td>
-            ${['goals', 'assists', 'presence', 'desarmes', 'fairPlay', 'punctual', 'farrapou', 'atrasado', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${p.id}" style="width:66px;text-align:right" /></td>`).join('')}
+            ${['goals', 'assists', 'presence', 'desarmes', 'defesas', 'paredoes', 'golsSofridos', 'fairPlay', 'punctual', 'farrapou', 'atrasado', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${p.id}" aria-label="${esc(playerName(p.id))} — ${scoreLabels[k] || k}" style="width:66px;text-align:right" /></td>`).join('')}
             <td class="right mono"><strong id="pts-${p.id}">${pts}</strong></td>
           </tr>`;
         }).join('')}
@@ -2740,7 +3274,7 @@ function dailyPaymentsHtml() {
   const map = Object.create(null);
   rows.forEach((r) => { if (r && r.id) map[r.id] = r; });
   const games = (state.games || []).slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-  const upcoming = games.filter((g) => !g.done).slice(0, 60);
+  const upcoming = games.filter((g) => !g.done && !g.canceled).slice(0, 60);
   const options = (upcoming.length ? upcoming : games.slice(-40)).map((g) => {
     const r = map[g.id];
     const info = r ? ` · ${r.paid} pago(s)${r.pending ? ` · ${r.pending} aguardando` : ''}` : '';
@@ -2780,7 +3314,7 @@ function manualConfirmHtml() {
     `<option value="${esc(p.id)}">${esc(p.name || p.id)} · ${esc(p.type || '')}</option>`).join('');
   const games = (state.games || []).slice()
     .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))
-    .filter((g) => !g.done)
+    .filter((g) => !g.done && !g.canceled)
     .map((g) => `<option value="${esc(g.id)}">${esc(fmtDate(g.date))}${g.name ? ' · ' + esc(g.name) : ''}</option>`).join('');
   const can = !!viewToken && !viewBlockReason() && !!window.RachaLicense?.canUseServer() && linked.length > 0;
   const summary = dailySummary || {};
@@ -2826,6 +3360,22 @@ function manualConfirmHtml() {
   `;
 }
 
+function sessionRowsHtml() {
+  const rows = sessionsList();
+  if (!rows.length) return '<p class="small muted">Nenhum racha cadastrado.</p>';
+  return `<div class="table-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" id="session-all" data-act="session-select-all" title="Selecionar todos" style="width:16px" /></th><th>Racha</th><th>Dia</th><th>Horário</th><th>Duração</th><th>Local</th><th>Status</th><th>Custos</th><th class="right">Ações</th></tr></thead><tbody>
+    ${rows.map(s => `<tr>
+      <td><input type="checkbox" class="session-check" value="${esc(s.id)}" style="width:16px" /></td>
+      <td><strong>${esc(s.name)}</strong>${s.notes ? `<div class="tiny muted">${esc(s.notes)}</div>` : ''}</td><td>${esc(WEEKDAYS[num(s.day)] || '—')}</td><td class="mono">${esc(s.time)}</td>
+      <td>${esc(s.duration || '—')}</td><td class="small muted">${esc(s.location || '—')}</td>
+      <td>${badge(s.active !== false ? 'Ativo' : 'Inativo', s.active !== false ? 'green' : 'amber')}</td>
+      <td class="small muted">Goleiros: ${s.withGoalkeepers !== false ? 'sim' : 'não'} · Árbitro: ${s.withReferee !== false ? 'sim' : 'não'}</td>
+      <td class="right"><button class="icon-btn" type="button" data-act="session-edit" data-id="${esc(s.id)}" title="Editar racha">✏️</button>
+      <button class="icon-btn danger" type="button" data-act="session-delete" data-id="${esc(s.id)}" title="Excluir racha">🗑️</button></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
 function pageSettings() {
   const s = settings();
   const f = (name, label, step = '0.01', hidden = false) => `<label class="field"${hidden ? ' style="display:none"' : ''}>${esc(label)}<input name="${name}" type="number" step="${step}" value="${num(s[name])}" /></label>`;
@@ -2855,10 +3405,25 @@ function pageSettings() {
           </div>
         </div>
         <div class="card">
+          ${section('Horários da semana', 'Mais de um horário no mesmo racha', `
+            <button class="btn btn-sm btn-primary" type="button" data-act="session-new">＋ Novo horário</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-act="session-clear-selected">🧹 Limpar selecionados</button>
+            <button class="btn btn-sm btn-danger" type="button" data-act="session-clear-all" ${sessionsList().length ? '' : 'disabled'}>🧹 Limpar todos</button>`)}
+          <div class="card-body stack">
+            ${sessionRowsHtml()}
+            <p class="tiny muted">Cadastre, por exemplo, a <strong>Segunda às 19h</strong> e a <strong>Quinta às 20h</strong>, cada uma com nome, duração e local. Ao criar um jogo, escolha qual horário da semana é; o horário, o local e a duração vêm junto. O Cronômetro também usa a duração do horário escolhido.</p>
+          </div>
+        </div>
+        <div class="card">
           ${section('Financeiro', 'Valores base usados nas simulações', `<button class="btn btn-sm btn-ghost" type="button" data-act="open-reconcile">Conciliar extrato</button>`)}
           <div class="card-body form-grid">
             ${f('year', 'Ano de controle', '1')}
             ${f('monthlyFee', 'Mensalidade (R$/mês)')}
+            ${f('feePresidente', 'Presidente (R$/mês)')}
+            ${f('feeVice', 'Vice-Presidente (R$/mês)')}
+            ${f('feeDiretor', 'Diretor (R$/mês)')}
+            ${f('feeConselheiro', 'Conselheiro (R$/mês)')}
+            <p class="tiny muted" style="grid-column:1/-1">Deixe <strong>0</strong> para o cargo cobrar igual ao mensalista. Para cobrar mais, digite o valor (ex.: 100). O app nunca cobra menos que a mensalidade base: se você digitar um valor menor, ele é ajustado automaticamente ao salvar.</p>
             ${f('dayFee', 'Diária (R$/jogo)')}
             <label class="field" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px"><input name="dailyPaymentEnabled" type="checkbox" ${s.dailyPaymentEnabled !== false ? 'checked' : ''} style="width:16px" /> Exigir PIX antecipado dos diaristas no link individual</label>
             ${f('fieldRent', 'Aluguel mensal do campo (R$)')}
@@ -2866,7 +3431,7 @@ function pageSettings() {
             ${f('goalkeeperFee', 'Valor por goleiro por jogo (R$)')}
             ${f('refereeFee', 'Arbitragem por jogo (R$)')}
             ${f('gamesPerMonth', 'Jogos por mês', '1')}
-            <p class="tiny muted" style="grid-column:1/-1">Despesas fixas: ao salvar, Quadra, Goleiros e Arbitragem são recalculados com aluguel, goleiros, valor por goleiro, arbitragem por jogo e jogos por mês. Churrasco acompanha custo por pessoa, número de pessoas e quantidade por ano; Brindes divide a reserva mensal em 50% / 30% / 20% entre 1º, 2º e 3º lugares. Lançamentos e premiações salvos manualmente não são alterados.</p>
+            <p class="tiny muted" style="grid-column:1/-1">Despesas fixas: ao salvar, Quadra, Goleiros e Arbitragem são recalculados com aluguel, goleiros, valor por goleiro, arbitragem por jogo e jogos por mês. Em <strong>Horários da semana</strong> você decide, horário por horário, se há goleiros pagos e arbitragem paga; horários desligados saem desses custos. Churrasco acompanha custo por pessoa, número de pessoas e quantidade por ano; Brindes divide a reserva mensal em 50% / 30% / 20% entre 1º, 2º e 3º lugares. Lançamentos e premiações salvos manualmente não são alterados.</p>
             ${f('initialCash', 'Saldo inicial do caixa (R$)')}
             <label class="field" style="grid-column:1/-1">Chave PIX do administrador (PIX manual e doações)<input name="pixKey" value="${esc(s.pixKey || '')}" placeholder="CPF, e-mail, telefone ou chave aleatória" /></label>
             <label class="field">Nome do favorecido<input name="pixMerchant" value="${esc(s.pixMerchant || '')}" placeholder="RACHA DO LOLO" /></label>
@@ -2887,6 +3452,8 @@ function pageSettings() {
             ${f('bbqCostPerPerson', 'Churrasco: custo por pessoa (R$)', '0.01', s.bbqEnabled === false)}
             ${f('bbqPeople', 'Churrasco: nº de pessoas', '1', s.bbqEnabled === false)}
             ${f('bbqPerYear', 'Churrascos por ano', '1', s.bbqEnabled === false)}
+            <button class="btn btn-sm btn-ghost" type="button" data-act="launch-bbq" ${s.bbqEnabled === false || num(s.bbqCostPerPerson) <= 0 || num(s.bbqPeople) <= 0 ? 'disabled' : ''} title="Lança um churrasco na aba Despesas com estes valores">＋ Lançar churrasco em Despesas</button>
+            <p class="tiny muted" style="grid-column:1/-1">O botão lança <strong>um</strong> churrasco no mês atual com “custo por pessoa × nº de pessoas”. Os churrascos da reserva aparecem em Despesas como “(automático)” e não são duplicados por este botão. Para um segundo churrasco no mesmo mês, lance em Despesas com outro nome.</p>
             ${f('giftsReserve', 'Reserva mensal p/ brindes (R$)')}
           </div>
         </div>
@@ -2920,6 +3487,9 @@ function pageSettings() {
             ${f('ptsFarrapou', 'Pontos perdidos por cada farrapada / falta', '1')}
             ${f('ptsAtrasado', 'Pontos perdidos por cada atraso', '1')}
             ${f('ptsDesarme', 'Por desarme / interceptação', '1')}
+            ${f('ptsDefesas', 'Por defesa difícil (goleiro)', '0')}
+            ${f('ptsParedoes', 'Por paredão / jogo sem sofrer gol', '0')}
+            ${f('ptsGolsSofridos', 'Por gol sofrido (use número negativo)', '0')}
             ${f('ptsCard', 'Por cartão / entrada violenta', '1')}
           </div>
         </div>
@@ -2938,7 +3508,7 @@ function pageSettings() {
           </div>
         </div>
         <div class="card">
-          ${section('Link para o grupo', 'Benefício para assinantes · somente leitura')}
+          ${section('Link para o grupo', 'Benefício para assinantes · mensagem e links editáveis')}
           <div class="card-body stack">
             <p class="small muted"><strong>Este é o link que vai ao grupo.</strong> Ele abre direto na aba <strong>👥 Jogadores</strong>: cada membro encontra o nome, informa os últimos 4 dígitos do telefone e já pode fazer check-in/pagamento. Depois o aparelho lembra o perfil por 180 dias. Eles não conseguem editar nada e não precisam assinar. O link é secreto — envie apenas ao grupo.</p>
             <div class="row" style="justify-content:space-between;align-items:center">
@@ -3000,7 +3570,7 @@ function pageSettings() {
         <div class="card">
           ${section('Dados', 'Backup, importação e limpeza')}
           <div class="card-body stack">
-            <p class="small muted">Os dados ficam salvos apenas neste navegador. Faça backup regularmente e guarde o arquivo em local seguro.</p>
+            <p class="small muted">Os dados de gestão ficam salvos neste navegador; link do grupo e licença usam o servidor. Faça backup regularmente e guarde o arquivo em local seguro.</p>
             <div class="row">
               <button class="btn btn-primary" type="button" data-act="export-json">⬇ Baixar backup</button>
               <button class="btn btn-ghost" type="button" data-act="import-json">⬆ Importar backup</button>
@@ -3095,8 +3665,8 @@ function pageSubscription() {
               <ul class="plan-list">
                 <li>Tudo do Básico</li>
                 <li><strong>Presença confirmada pelo jogador (ADM):</strong> ele toca em “Vou jogar”; a baixa do pagamento continua com o administrador (ou com o webhook no Mercado Pago)</li>
-                <li>Cópia de segurança na nuvem e restauração em 1 clique</li>
-                <li>Link do grupo sem validade e renovação automática</li>
+                <li>Backup JSON local e cópias automáticas no aparelho</li>
+                <li>Link do grupo com validade configurável e renovação automática da assinatura</li>
                 <li>Lembretes automáticos e relatório mensal guardado</li>
                 <li>Logo, nome e cores na área do jogador e histórico completo</li>
               </ul>
@@ -3215,17 +3785,17 @@ function renderPaymentPage() {
   const pp = ui.paymentPage;
   if (!pp) return;
   const p = playerById(pp.playerId);
-  const rec = state.payments.find(x => x.playerId === pp.playerId && x.month === pp.month && x.year === year() && x.paid !== false);
+  const rec = state.payments.find(x => x.playerId === pp.playerId && x.month === pp.month && x.year === num(pp.year) && x.paid !== false);
   const paid = !!rec;
   if (rec && !rec.receiptId) { ensureReceipt(rec); save(); }
-  const code = pixCode(pp.amount, txidFor(pp.playerId, pp.month));
+  const code = pixCode(pp.amount, txidFor(pp.playerId, pp.month, pp.year));
   $('#content').innerHTML = `
     <div class="payment-center">
       <div class="card card-pad">
         <div class="center">
           ${avatarHTML(p, false).replace('class="avatar', 'class="avatar big')}
           <h2 style="margin-top:12px">${esc(p?.name || 'Jogador')}</h2>
-          <p class="muted small">Mensalidade de ${monthName(pp.month)}/${year()}</p>
+          <p class="muted small">Mensalidade de ${monthName(pp.month)}/${num(pp.year)}</p>
           <div class="value mono" style="font-size:34px;font-weight:850;margin:14px 0">${money(pp.amount)}</div>
         </div>
         ${paid ? `
@@ -3272,7 +3842,9 @@ function handleHash() {
   }
   const m = location.hash.match(/^#cobranca\/([^/]+)\/(\d{1,2})(?:\/(\d+(?:\.\d+)?))?/);
   if (m) {
-    ui.paymentPage = { playerId: decodeURIComponent(m[1]), month: num(m[2]), amount: m[3] ? num(m[3]) : num(settings().monthlyFee) };
+    const pid = decodeURIComponent(m[1]);
+    const due = state.payments.find(x => x.playerId === pid && x.month === num(m[2]) && x.paid !== false);
+    ui.paymentPage = { playerId: pid, month: num(m[2]), year: num(due?.year) || year(), amount: m[3] ? num(m[3]) : num(due?.amount) || feeForPlayerId(pid) };
     document.body.classList.add('payment-mode');
     renderPaymentPage();
   } else if (ui.paymentPage) {
@@ -3288,8 +3860,37 @@ function handleHash() {
 const PAGE_FNS = {
   dashboard: pageDashboard, players: pagePlayers, payments: pagePayments, games: pageGames,
   expenses: pageExpenses, benefits: pageBenefits, cash: pageCash, simulator: pageSimulator, scores: pageScores,
-  sorteador: pageSorteador, live: pageLive, ranking: pageRanking, awards: pageAwards, subscription: pageSubscription, settings: pageSettings
+  sorteador: pageSorteador, timer: pageTimer, live: pageLive, ranking: pageRanking, awards: pageAwards, subscription: pageSubscription,
+  settings: pageSettings, comunidade: pageComunidade
 };
+
+/* A página Comunidade vive em comunidade.html (para o Netlify Forms detectar
+   os formulários), mas é mostrada aqui dentro, sem abrir outra janela. */
+let comunidadeLoadId = 0;
+function pageComunidade() {
+  return '<div class="legal-page"><div id="comunidade-root" class="legal-card">'
+    + '<p class="muted">Carregando comunidade...</p></div></div>';
+}
+
+async function carregarComunidade() {
+  const id = ++comunidadeLoadId;
+  try {
+    const res = await fetch('./comunidade.html');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const card = doc.getElementById('comunidade-root');
+    const root = $('#comunidade-root');
+    if (!card || !root || id !== comunidadeLoadId || ui.page !== 'comunidade') return;
+    root.innerHTML = card.innerHTML;
+    if (window.initComunidade) window.initComunidade(root);
+  } catch (e) {
+    const root = $('#comunidade-root');
+    if (root && id === comunidadeLoadId) {
+      root.innerHTML = '<p class="muted">Não foi possível carregar a comunidade agora.</p><p class="mt"><button class="btn btn-sm btn-ghost" type="button" data-act="comunidade-retry">🔄 Tentar de novo</button></p>';
+    }
+  }
+}
 
 function renderNav() {
   $('#nav').innerHTML = NAV.map(g => `
@@ -3306,6 +3907,7 @@ function render(keepScroll) {
   $('#page-title').textContent = p.title;
   $('#page-subtitle').textContent = p.sub;
   $('#content').innerHTML = PAGE_FNS[ui.page]();
+  if (ui.page === 'comunidade') carregarComunidade();
   if (window.RachaLicense) window.RachaLicense.renderBanner();
   window.scrollTo({ top: keepScroll ? y : 0, behavior: 'instant' });
 }
@@ -3350,6 +3952,39 @@ function confirmAction(message, fn) {
 function confirmActionTwice(message, finalMessage, fn) {
   confirmAction(message, () => confirmAction(finalMessage, fn));
 }
+/* Excluir racha pode, opcionalmente, apagar os jogos gerados por ele.
+   A caixa vem desmarcada: nada é apagado sem decisão explícita. */
+function gamesFromSessions(ids) {
+  const set = new Set(ids);
+  return state.games.filter(g => set.has(g.sessionId));
+}
+function deleteGamesByIds(ids) {
+  const set = new Set(ids);
+  if (!set.size) return 0;
+  state.games = state.games.filter(g => !set.has(g.id));
+  state.dayEntries = state.dayEntries.filter(d => !set.has(d.gameId));
+  set.forEach(id => {
+    delete state.checkins[id];
+    delete state.confirmations[id];
+    delete state.arrivals[id];
+  });
+  if (set.has(ui.drawGame)) ui.drawGame = null;
+  return set.size;
+}
+function confirmSessionDelete(message, ids, fn, finalMessage = '') {
+  const jogos = gamesFromSessions(ids);
+  const n = jogos.length;
+  const option = n ? `<label class="field" style="flex-direction:row;align-items:flex-start;gap:8px;margin-top:10px">
+      <input type="checkbox" id="delete-session-games" style="width:16px;margin-top:2px" />
+      <span>Apagar também <strong>${n}</strong> jogo(s) gerado(s) por este racha? Isso remove também check-in, diárias, confirmações e ordem de chegada desses jogos.</span>
+    </label>` : '<p class="tiny muted mt">Não há jogos gerados por este racha.</p>';
+  pendingConfirm = (capturado) => {
+    const apagar = typeof capturado === 'boolean' ? capturado : !!$('#delete-session-games')?.checked;
+    if (!finalMessage) { fn(apagar); return; }
+    confirmAction(`${finalMessage} ${apagar ? 'Os jogos selecionados também serão apagados.' : 'Os jogos já criados serão mantidos.'} Deseja apagar mesmo assim?`, () => fn(apagar));
+  };
+  openModal('Confirmar ação', '', `<p class="small">${esc(message)}</p>${option}<div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Cancelar</button><button class="btn btn-danger" data-act="confirm-yes">Confirmar</button></div>`);
+}
 
 function modalPlayer(id) {
   const p = id ? playerById(id) : { name: '', type: 'Mensalista', position: '', phone: '', note: '', age: null, height: null, weight: null, strength: null, speed: null, active: true };
@@ -3358,10 +3993,11 @@ function modalPlayer(id) {
   openModal(id ? 'Editar jogador' : 'Novo jogador', 'Campos marcados são opcionais', `
     <form data-form="player" data-id="${id || ''}" class="form-grid">
       <label class="field" style="grid-column:1/-1">Nome *<input name="name" required value="${esc(p.name)}" placeholder="Nome completo ou apelido" /></label>
-      <label class="field">Tipo<select name="type"><option ${p.type === 'Mensalista' ? 'selected' : ''}>Mensalista</option><option ${p.type === 'Diarista' ? 'selected' : ''}>Diarista</option></select></label>
+      <label class="field">Tipo<select name="type">${PLAYER_TYPES.map(t => `<option ${p.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="field">Posição<select name="position">${['Linha', 'Meia', 'Zaga', 'Ataque', 'Goleiro'].map(x => `<option ${p.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
       <label class="field">Telefone / WhatsApp<input name="phone" value="${esc(p.phone || '')}" placeholder="11999999999" /></label>
       <label class="field">Observação<input name="note" value="${esc(p.note || '')}" placeholder="Ex.: capitão,VICE..." /></label>
+      <p class="tiny muted" style="grid-column:1/-1;margin:0">Cargos pagam mensalidade como os mensalistas. Presidente e Vice-Presidente: apenas 1 cada. Diretor e Conselheiro: sem limite. Valores atuais — ${BOARD_ROLES.map(r => `${r.type} ${money(playerFee({ type: r.type }))}`).join(' · ')}. Ajuste em Configurações.</p>
       <div class="fieldset-title">Características (usadas no sorteio equilibrado)</div>
       <label class="field">Idade<input name="age" type="number" min="0" max="120" value="${nv(p.age)}" placeholder="Ex.: 30" /></label>
       <label class="field">Altura (cm)<input name="height" type="number" min="0" max="260" value="${nv(p.height)}" placeholder="Ex.: 175" /></label>
@@ -3380,9 +4016,9 @@ function modalPayment(playerId, month) {
   openModal('Mensalidade · ' + shortMonth(month), p?.name || '', `
     <form data-form="payment" class="form-grid">
       <input type="hidden" name="playerId" value="${playerId}" /><input type="hidden" name="month" value="${month}" />
-      <label class="field">Jogador<select name="playerSelect" disabled>${activePlayers().filter(x => x.type === 'Mensalista').map(x => `<option ${x.id === playerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <label class="field">Jogador<select name="playerSelect" disabled>${activePlayers().filter(isMonthlyPlayer).map(x => `<option ${x.id === playerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
       <label class="field">Mês<select disabled><option>${shortMonth(month)}/${y}</option></select></label>
-      <label class="field">Valor pago (R$)<input name="amount" type="number" step="0.01" value="${rec ? num(rec.amount) : num(settings().monthlyFee)}" /></label>
+      <label class="field">Valor pago (R$)<input name="amount" type="number" step="0.01" value="${rec ? num(rec.amount) : playerFee(p)}" /></label>
       <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="paid" type="checkbox" ${!rec || rec.paid !== false ? 'checked' : ''} style="width:16px" /> Pagamento realizado</span></label>
       <p class="tiny muted" style="grid-column:1/-1;margin:0">Use o valor que entrou no caixa do racha. A taxa do cartão do Mercado Pago fica entre o jogador e o Mercado Pago; se você colar o valor bruto, o app registra apenas o líquido.</p>
       <div class="form-actions" style="grid-column:1/-1">
@@ -3394,12 +4030,33 @@ function modalPayment(playerId, month) {
     </form>`);
 }
 
+function modalSession(id) {
+  const s = sessionById(id) || { name: '', day: 4, time: '19:00', duration: '1h30', location: '', notes: '', active: true, withGoalkeepers: true, withReferee: true };
+  openModal(id ? 'Editar horário da semana' : 'Novo horário da semana', 'Cada horário tem seu dia, horário, duração e local', `
+    <form data-form="session" data-id="${esc(id || '')}" class="form-grid one">
+      <label class="field">Nome do horário<input name="name" maxlength="60" value="${esc(s.name)}" placeholder="Ex.: Racha de quinta" required /></label>
+      <div class="row" style="flex-wrap:wrap">
+        <label class="field" style="flex:1;min-width:170px">Dia da semana<select name="day">${WEEKDAYS.map((d, i) => `<option value="${i}" ${num(s.day) === i ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+        <label class="field" style="flex:1;min-width:130px">Horário<input name="time" type="time" value="${esc(s.time)}" required /></label>
+      </div>
+      <label class="field">Duração<input name="duration" value="${esc(s.duration)}" placeholder="Ex.: 1h30 ou 90 min" required /></label>
+      <label class="field">Local<input name="location" maxlength="140" value="${esc(s.location)}" placeholder="Ex.: Quadra do clube, centro" /></label>
+      <label class="field">Regras ou observações (opcional)<input name="notes" maxlength="240" value="${esc(s.notes || '')}" placeholder="Ex.: 7 jogadores por time, goleiro fixo" /></label>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input name="active" type="checkbox" ${s.active !== false ? 'checked' : ''} style="width:16px" /> Horário ativo (entra na agenda e no Cronômetro)</label>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input name="withGoalkeepers" type="checkbox" ${s.withGoalkeepers !== false ? 'checked' : ''} style="width:16px" /> Neste horário há goleiros pagos (entra na despesa Goleiros)</label>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input name="withReferee" type="checkbox" ${s.withReferee !== false ? 'checked' : ''} style="width:16px" /> Neste horário há arbitragem paga (entra na despesa Arbitragem)</label>
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="close-modal">Cancelar</button><button class="btn btn-primary" type="submit">💾 Salvar horário</button></div>
+    </form>`);
+}
+
 function modalGame() {
   openModal('Novo jogo', 'Informe a data; nome e horário são opcionais', `
     <form data-form="game" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${controlDateISO()}" required /></label>
+      <label class="field">Racha da semana (opcional)<select name="sessionId"><option value="">— nenhum —</option>${activeSessions().map(s => `<option value="${esc(s.id)}">${esc(s.name)} · ${esc(WEEKDAYS[num(s.day)] || '')} ${esc(s.time)}</option>`).join('')}</select></label>
       <label class="field">Nome do jogo (opcional)<input name="name" maxlength="90" placeholder="Ex.: Racha de sábado" /></label>
       <label class="field">Horário (opcional)<input name="time" type="time" /></label>
+      <label class="field">Local (opcional)<input name="location" maxlength="140" placeholder="Ex.: Quadra do clube" /></label>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Criar jogo</button></div>
     </form>`);
 }
@@ -3408,6 +4065,7 @@ function modalCheckin(gameId) {
   const g = state.games.find(x => x.id === gameId);
   if (!g) return;
   const entries = state.dayEntries.filter(d => d.gameId === gameId);
+  const presentes = gameCheckinIds(g);
   const players = activePlayers();
   openModal('Check-in · ' + fmtDate(g.date), 'Marque quem jogou e o valor recebido de cada um', `
     <form data-form="checkin" data-id="${gameId}" class="form-grid one">
@@ -3415,7 +4073,7 @@ function modalCheckin(gameId) {
         <table><thead><tr><th>Jogador</th><th>Tipo</th><th class="right">Valor (R$)</th><th class="center">Presente</th></tr></thead><tbody>
           ${players.map(p => {
             const e = entries.find(x => x.playerId === p.id);
-            const checked = e ? true : p.type === 'Diarista';
+            const checked = presentes.length ? presentes.includes(p.id) : (e ? true : p.type === 'Diarista');
             return `<tr><td>${playerCell(p)}</td><td>${badge(p.type, p.type === 'Mensalista' ? 'green' : 'blue')}</td>
               <td class="right"><input type="number" step="0.01" name="amount-${p.id}" value="${e ? num(e.amount) : p.type === 'Diarista' ? num(settings().dayFee) : 0}" style="width:92px;text-align:right" /></td>
               <td class="center"><input type="checkbox" name="present-${p.id}" ${checked ? 'checked' : ''} style="width:17px;height:17px" /></td></tr>`;
@@ -3424,6 +4082,42 @@ function modalCheckin(gameId) {
       </div>
       <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button><button class="btn btn-primary" type="submit">Salvar check-in</button></div>
     </form>`, true);
+}
+
+function modalGamePresence(gameId) {
+  const g = state.games.find(x => x.id === gameId);
+  if (!g) return;
+  const confirmados = gameConfirmedPlayers(g);
+  const presentes = gameCheckinPlayers(g);
+  const entradas = state.dayEntries.filter(d => d.gameId === g.id);
+  const faltam = activePlayers().filter(p => !confirmados.some(c => c.id === p.id));
+  const listaConfirmados = confirmados.length
+    ? `<div class="row" style="flex-wrap:wrap;gap:6px">${confirmados.map((p, i) => `<span class="badge">${i + 1}º · ${esc(p.name)}</span>`).join('')}</div>`
+    : '<p class="small muted">Ninguém foi marcado como confirmado neste jogo no Sorteador.</p>';
+  const listaPresentes = presentes.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Jogador</th><th>Tipo</th><th class="right">Valor lançado</th></tr></thead><tbody>
+        ${presentes.map(p => { const e = entradas.find(x => x.playerId === p.id); return `<tr><td>${playerCell(p)}</td><td>${badge(p.type, p.type === 'Mensalista' ? 'green' : 'blue')}</td><td class="right mono">${e ? money(e.amount) : '—'}</td></tr>`; }).join('')}
+      </tbody></table></div>`
+    : '<p class="small muted">Nenhum check-in salvo neste jogo.</p>';
+  openModal('Presença · ' + fmtDate(g.date), `${g.name || 'Jogo'}${g.time ? ' · ' + esc(g.time) : ''}`, `
+    <div class="stack">
+      <div class="card"><div class="card-body">
+        <strong>Confirmados no Sorteador (${confirmados.length})</strong>
+        <p class="tiny muted">Ordem de chegada, quando foi registrada.</p>
+        ${listaConfirmados}
+      </div></div>
+      <div class="card"><div class="card-body">
+        <strong>Check-in (${presentes.length})</strong>
+        <p class="tiny muted">Jogadores marcados como presentes no check-in deste jogo.</p>
+        ${listaPresentes}
+      </div></div>
+      ${faltam.length ? `<div class="card"><div class="card-body">
+        <strong class="small">Ainda não confirmaram (${faltam.length})</strong>
+        <p class="tiny muted">${faltam.map(p => esc(p.name)).join(' · ')}</p>
+      </div></div>` : ''}
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="close-modal">Fechar</button>
+        <button class="btn btn-primary" type="button" data-act="checkin" data-id="${g.id}">✏️ Editar check-in</button></div>
+    </div>`, true);
 }
 
 function modalDay() {
@@ -3436,13 +4130,44 @@ function modalDay() {
     </form>`);
 }
 
+function suggestedExpenseAmount(cat) {
+  const s = settings();
+  if (cat === 'Quadra') return num(s.fieldRent);
+  if (cat === 'Goleiros') return num(s.goalkeepers) * num(s.goalkeeperFee) * costGames('withGoalkeepers');
+  if (cat === 'Arbitragem') return num(s.refereeFee) * costGames('withReferee');
+  return null;
+}
+
+function suggestedExpenseDescription(cat) {
+  if (cat === 'Quadra') return `Aluguel de ${monthName(currentMonth())}`;
+  if (cat === 'Goleiros') return `${num(settings().goalkeepers)} goleiros × ${gamesLabel(costGames('withGoalkeepers'))} jogos`;
+  if (cat === 'Arbitragem') return `${gamesLabel(costGames('withReferee'))} jogos × ${money(num(settings().refereeFee))} de arbitragem`;
+  return '';
+}
+
+function monthlyExpenseDescription(cat, descricao, mes) {
+  const nomeMes = monthName(mes);
+  if (cat === 'Quadra') {
+    return !descricao || /^aluguel de /i.test(descricao) ? `Aluguel de ${nomeMes}` : `${descricao} · ${nomeMes}`;
+  }
+  if (cat === 'Goleiros') {
+    const auto = suggestedExpenseDescription('Goleiros');
+    return `${!descricao || descricao === auto ? auto : descricao} · ${nomeMes}`;
+  }
+  return descricao;
+}
+
 function modalExpense(cat) {
+  const categorias = visibleExpenseCats();
+  const escolhida = categorias.includes(cat) ? cat : (categorias[0] || 'Quadra');
+  const valor = suggestedExpenseAmount(escolhida);
+  const descricao = suggestedExpenseDescription(escolhida);
   openModal('Nova despesa', 'Valor que sai do caixa · data dentro do ano de controle', `
     <form data-form="expense" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${controlDateISO()}" required /></label>
-      <label class="field">Categoria<select name="category">${visibleExpenseCats().map(c => `<option ${c === cat ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-      <label class="field">Descrição<input name="description" placeholder="Ex.: arbitragem, fita, premiação" /></label>
-      <label class="field">Valor (R$)<input name="amount" type="number" step="0.01" required /></label>
+      <label class="field">Categoria<select name="category" data-prev-cat="${esc(escolhida)}">${categorias.map(c => `<option ${c === escolhida ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field">Descrição<input name="description" value="${esc(descricao)}" placeholder="Ex.: arbitragem, fita, premiação" /></label>
+      <label class="field">Valor (R$)<input name="amount" type="number" step="0.01" value="${valor != null && valor > 0 ? valor : ''}" required /></label>
       <label class="field">Repetir<select name="repeat">
         <option value="once">Não repetir — só esta data</option>
         <option value="game">Por jogo — valor é por jogo</option>
@@ -3489,12 +4214,15 @@ function modalPhoto(id) {
 function modalCobranca(playerId) {
   const p = playerById(playerId);
   if (!p) return;
-  const m = ui.cobrancaMonth || currentMonth(), amount = num(settings().monthlyFee), y = year();
+  const m = ui.cobrancaMonth || currentMonth();
+  const pendente = state.payments.find(x => x.playerId === playerId && x.month === m && x.paid !== false);
+  const y = num(pendente?.year) || year();
+  const amount = num(pendente?.amount) || playerFee(p);
   ui.cobrancaPlayer = playerId;
   ui.cobrancaMonth = m;
   const paid = state.payments.some(x => x.playerId === playerId && x.month === m && x.year === y && x.paid !== false);
   const link = paymentLink(playerId, m, amount);
-  const code = pixCode(amount, txidFor(playerId, m));
+  const code = pixCode(amount, txidFor(playerId, m, y));
   openModal('Cobrança · ' + p.name, `Mensalidade de ${monthName(m)}/${y}`, `
     <div class="row" style="justify-content:flex-end;margin-bottom:14px"><label class="select-wrap">Mês ${selectMonths('cobranca-month', m)}</label></div>
     <div class="grid grid-3">
@@ -3735,6 +4463,12 @@ function modalProfile(id) {
       <div class="card kpi"><div class="label">Posição</div><div class="value">${rank ? '#' + rank.pos : '—'}</div></div>
     </div>
     <div class="grid grid-4 mt">
+      ${info('Defesas difíceis', sum(scores, s => s.defesas))}
+      ${info('Paredões', sum(scores, s => s.paredoes))}
+      ${info('Gols sofridos', sum(scores, s => s.golsSofridos))}
+      ${info('Desarmes', sum(scores, s => s.desarmes))}
+    </div>
+    <div class="grid grid-4 mt">
       ${info('Idade', p.age == null ? '—' : num(p.age) + ' anos')}
       ${info('Altura', p.height == null ? '—' : num(p.height) + ' cm')}
       ${info('Peso', p.weight == null ? '—' : num(p.weight) + ' kg')}
@@ -3778,9 +4512,9 @@ function modalProfile(id) {
 function cobrar(playerId) {
   const p = playerById(playerId);
   if (!p?.phone) { toast('Este jogador não tem telefone cadastrado.', 'err'); return; }
-  const m = currentMonth();
-  const link = paymentLink(p.id, m, settings().monthlyFee);
-  const msg = `Olá ${p.name.split(' ')[0]}! Falta a mensalidade de ${monthName(m)}/${year()} do Racha do Loló (${money(settings().monthlyFee)}). Pode pagar? ⚽\n\nLink: ${link}`;
+  const m = currentMonth(), amount = playerFee(p);
+  const link = paymentLink(p.id, m, amount);
+  const msg = `Olá ${p.name.split(' ')[0]}! Falta a mensalidade de ${monthName(m)}/${year()} do Racha do Loló (${money(amount)}). Pode pagar? ⚽\n\nLink: ${link}`;
   window.open(waDirect(p.phone, msg), '_blank', 'noopener');
 }
 
@@ -3788,7 +4522,7 @@ function upsertScore(playerId, key, value) {
   const m = currentMonth(), y = year();
   let sc = state.scores.find(s => s.playerId === playerId && s.month === m && s.year === y);
   if (!sc) {
-    sc = { id: uid(), playerId, month: m, year: y, goals: 0, assists: 0, presence: 0, desarmes: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
+    sc = { id: uid(), playerId, month: m, year: y, goals: 0, assists: 0, presence: 0, desarmes: 0, defesas: 0, paredoes: 0, golsSofridos: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
     state.scores.push(sc);
   }
   sc[key] = num(value);
@@ -3856,11 +4590,14 @@ function importCSV(entity, text) {
   if (!rows.length) { toast('CSV vazio ou sem linhas de dados.', 'err'); return; }
   let n = 0;
   const findPlayer = (name) => state.players.find(p => p.name.toLowerCase() === String(name || '').toLowerCase());
+  let cargosIgnorados = 0;
   if (entity === 'players') {
     rows.forEach(r => {
       const name = r['nome'] || r['jogador'];
       if (!name) return;
-      state.players.push({ id: uid(), name, type: String(r['tipo'] || '').toLowerCase().includes('diar') ? 'Diarista' : 'Mensalista', position: r['posicao'] || 'Linha', phone: r['telefone'] || r['contato'] || '', note: r['observacao'] || '', active: true, age: num(r['idade']) || null, height: num(r['altura']) || null, weight: num(r['peso']) || null, strength: num(r['forca']) || null, speed: num(r['velocidade']) || null });
+      const type = parsePlayerType(r['tipo']);
+      if (roleLimitError(type, '')) { cargosIgnorados++; return; }
+      state.players.push({ id: uid(), name, type, position: r['posicao'] || 'Linha', phone: r['telefone'] || r['contato'] || '', note: r['observacao'] || '', active: true, age: num(r['idade']) || null, height: num(r['altura']) || null, weight: num(r['peso']) || null, strength: num(r['forca']) || null, speed: num(r['velocidade']) || null });
       n++;
     });
   } else if (entity === 'payments') {
@@ -3900,7 +4637,8 @@ function importCSV(entity, text) {
     });
   }
   save(); render();
-  toast(n ? `${n} registros importados.` : 'Nenhum registro válido encontrado.', n ? 'ok' : 'err');
+  if (cargosIgnorados) toast(`${n} registros importados. ${cargosIgnorados} cargo(s) ignorado(s): só 1 Presidente e 1 Vice-Presidente.`, 'err');
+  else toast(n ? `${n} registros importados.` : 'Nenhum registro válido encontrado.', n ? 'ok' : 'err');
 }
 
 /* ------------------------------------------------------------
@@ -3910,6 +4648,9 @@ document.addEventListener('click', (e) => {
   const root = $('#modal-root');
   if (e.target === root) { closeModal(); return; }
   const el = e.target.closest('[data-act]');
+  if (document.body.classList.contains('menu-open') && !e.target.closest('.sidebar') && !e.target.closest('[data-act="toggle-sidebar"]')) {
+    document.body.classList.remove('menu-open');
+  }
   if (!el) return;
   const act = el.dataset.act, id = el.dataset.id;
 
@@ -3917,7 +4658,8 @@ document.addEventListener('click', (e) => {
 
   switch (act) {
     case 'toggle-sidebar': document.body.classList.toggle('menu-open'); break;
-    case 'nav': navigate(el.dataset.page); break;
+    case 'nav': document.body.classList.remove('menu-open'); navigate(el.dataset.page); break;
+    case 'comunidade-retry': carregarComunidade(); break;
     case 'theme': {
       const light = document.body.dataset.theme !== 'light';
       document.body.dataset.theme = light ? 'light' : 'dark';
@@ -3968,7 +4710,13 @@ document.addEventListener('click', (e) => {
       }
       break;
     case 'close-modal': closeModal(); break;
-    case 'confirm-yes': { const fn = pendingConfirm; closeModal(); if (fn) fn(); break; }
+    case 'confirm-yes': {
+      const fn = pendingConfirm;
+      const apagarJogos = !!$('#delete-session-games')?.checked;
+      closeModal();
+      if (fn) fn(apagarJogos);
+      break;
+    }
 
     case 'open-subscription': navigate('subscription'); break;
     case 'subscribe': modalSubscribe(el.dataset.plan); break;
@@ -4003,7 +4751,7 @@ document.addEventListener('click', (e) => {
       else if (m === 'quick-add') modalQuickAdd();
       else if (m === 'settings') navigate('settings');
       else if (m === 'payment') {
-        const first = activePlayers().find(p => p.type === 'Mensalista');
+        const first = activePlayers().find(isMonthlyPlayer);
         if (first) modalPayment(first.id, currentMonth()); else toast('Cadastre um mensalista primeiro.', 'err');
       }
       break;
@@ -4018,7 +4766,7 @@ document.addEventListener('click', (e) => {
       else if (t === 'benefit') modalBenefit();
       else if (t === 'settings') navigate('settings');
       else if (t === 'payment') {
-        const first = activePlayers().find(p => p.type === 'Mensalista');
+        const first = activePlayers().find(isMonthlyPlayer);
         if (first) modalPayment(first.id, currentMonth()); else toast('Cadastre um mensalista primeiro.', 'err');
       }
       break;
@@ -4088,8 +4836,8 @@ document.addEventListener('click', (e) => {
     case 'confirm-payment-link': {
       const pp = ui.paymentPage;
       if (!pp) break;
-      state.payments = state.payments.filter(x => !(x.playerId === pp.playerId && x.month === pp.month && x.year === year()));
-      const rec = ensureReceipt({ id: uid(), playerId: pp.playerId, month: pp.month, year: year(), amount: num(pp.amount), paid: true, txid: $('#txid-input')?.value || '', paidAt: new Date().toISOString(), origem: 'link' });
+      state.payments = state.payments.filter(x => !(x.playerId === pp.playerId && x.month === pp.month && x.year === num(pp.year)));
+      const rec = ensureReceipt({ id: uid(), playerId: pp.playerId, month: pp.month, year: num(pp.year), amount: num(pp.amount), paid: true, txid: $('#txid-input')?.value || '', paidAt: new Date().toISOString(), origem: 'link' });
       state.payments.push(rec);
       save(); renderPaymentPage(); toast('Pagamento confirmado! Baixa registrada automaticamente.');
       break;
@@ -4112,17 +4860,17 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'pay-all': {
-      const m = currentMonth(), y = year();
-      activePlayers().filter(p => p.type === 'Mensalista').forEach(p => {
+      const m = num(ui.payMonth) || currentMonth(), y = year();
+      activePlayers().filter(isMonthlyPlayer).forEach(p => {
         if (!state.payments.some(x => x.playerId === p.id && x.month === m && x.year === y)) {
-          state.payments.push({ id: uid(), playerId: p.id, month: m, year: y, amount: num(settings().monthlyFee), paid: true });
+          state.payments.push({ id: uid(), playerId: p.id, month: m, year: y, amount: playerFee(p), paid: true });
         }
       });
       save(); render(); toast(`Mensalidades de ${shortMonth(m)} marcadas.`);
       break;
     }
     case 'clear-month': {
-      const m = currentMonth(), y = year();
+      const m = num(ui.payMonth) || currentMonth(), y = year();
       confirmAction(`Remover todos os pagamentos de ${monthName(m)}/${y}?`, () => {
         state.payments = state.payments.filter(x => !(x.month === m && x.year === y));
         save(); render(); toast('Mês limpo.');
@@ -4133,8 +4881,11 @@ document.addEventListener('click', (e) => {
 
     case 'game-tab': ui.gameTab = el.dataset.tab; render(); break;
     case 'checkin': modalCheckin(id); break;
+    case 'game-presence': modalGamePresence(id); break;
+    case 'game-cancel': toggleGameCancel(id); break;
     case 'delete-game': confirmAction('Excluir este jogo e todas as diárias associadas?', () => {
       state.dayEntries = state.dayEntries.filter(d => d.gameId !== id);
+      delete state.checkins[id];
       state.games = state.games.filter(g => g.id !== id);
       save(); render(); toast('Jogo excluído.');
     }); break;
@@ -4152,6 +4903,60 @@ document.addEventListener('click', (e) => {
         first += 7;
       }
       save(); render(); toast(created ? `${created} jogos criados.` : 'Já existem jogos para todas as quintas do mês.');
+      break;
+    }
+    case 'session-new': modalSession(''); break;
+    case 'session-edit': modalSession(id); break;
+    case 'session-select-all': $$('.session-check').forEach(c => { c.checked = !!el.checked; }); break;
+    case 'session-delete': {
+      const sess = sessionById(id), ids = [id];
+      confirmSessionDelete(`Excluir o racha "${sess?.name || id}" da semana?`, ids, (apagar) => {
+        const removidos = apagar ? deleteGamesByIds(gamesFromSessions(ids).map(g => g.id)) : 0;
+        state.settings.sessions = sessionsList().filter(s => !ids.includes(s.id));
+        if (ids.includes(state.timer.sessionId)) state.timer.sessionId = '';
+        syncFixedExpenses();
+        save('excluiu racha da semana', `${sess?.name || id}${apagar ? ` · ${removidos} jogo(s)` : ''}`);
+        render(); toast(apagar ? `Racha excluído e ${removidos} jogo(s) apagado(s).` : 'Racha excluído. Os jogos já criados foram mantidos.');
+      });
+      break;
+    }
+    case 'session-clear-selected': {
+      const ids = $$('.session-check:checked').map(c => c.value);
+      if (!ids.length) { toast('Selecione pelo menos um racha.', 'err'); break; }
+      confirmSessionDelete(`Excluir ${ids.length} racha(s) selecionado(s)?`, ids, (apagar) => {
+        const removidos = apagar ? deleteGamesByIds(gamesFromSessions(ids).map(g => g.id)) : 0;
+        state.settings.sessions = sessionsList().filter(s => !ids.includes(s.id));
+        if (ids.includes(state.timer.sessionId)) state.timer.sessionId = '';
+        syncFixedExpenses();
+        save('excluiu rachas selecionados', `${ids.length} racha(s)${apagar ? ` · ${removidos} jogo(s)` : ''}`);
+        render(); toast(apagar ? `${ids.length} racha(s) e ${removidos} jogo(s) apagado(s).` : `${ids.length} racha(s) excluído(s). Os jogos foram mantidos.`);
+      });
+      break;
+    }
+    case 'session-clear-all': {
+      const ids = sessionsList().map(s => s.id);
+      if (!ids.length) { toast('Não há rachas para apagar.', 'err'); break; }
+      confirmSessionDelete(`Apagar todos os ${ids.length} rachas da semana?`, ids, (apagar) => {
+        const removidos = apagar ? deleteGamesByIds(gamesFromSessions(ids).map(g => g.id)) : 0;
+        state.settings.sessions = [];
+        state.timer.sessionId = '';
+        syncFixedExpenses();
+        save('excluiu todos os rachas da semana', `${ids.length} racha(s)${apagar ? ` · ${removidos} jogo(s)` : ''}`);
+        render(); toast(apagar ? `Todos os rachas e ${removidos} jogo(s) foram apagados.` : 'Todos os rachas foram apagados. Os jogos foram mantidos.');
+      }, 'Isso não pode ser desfeito.');
+      break;
+    }
+    case 'generate-sessions': {
+      const m = num($('#gen-month')?.value || currentMonth()), y = year();
+      const created = generateSessionGames([m]);
+      save('gerou jogos dos rachas da semana', `${created} jogo(s) · ${m}/${y}`);
+      render(); toast(created ? `${created} jogos criados a partir dos rachas da semana.` : 'Já existem jogos para todos os rachas deste mês.');
+      break;
+    }
+    case 'generate-sessions-year': {
+      const y = year(), created = generateSessionGames(Array.from({ length: 12 }, (_, i) => i + 1));
+      save('gerou jogos do ano dos rachas da semana', `${created} jogo(s) · ${y}`);
+      render(); toast(created ? `${created} jogos criados para o ano de ${y}.` : `Os jogos de ${y} já estavam na agenda.`);
       break;
     }
     case 'delete-day': confirmAction('Excluir esta diária?', () => {
@@ -4246,6 +5051,35 @@ document.addEventListener('click', (e) => {
       save('aplicou confirmações do grupo', key); render(true); toast('Confirmações do grupo aplicadas!');
       break;
     }
+    case 'edit-last-draw': openDrawEditor(state.drawHistory[0]); break;
+    case 'timer-start': startTimerMatch(num(el.dataset.no)); break;
+    case 'timer-pause': pauseTimerMatch(); break;
+    case 'timer-resume': resumeTimerMatch(); break;
+    case 'timer-finish': modalFinishMatch(); break;
+    case 'timer-add-goal': {
+      const box = $('#timer-goals');
+      if (box) box.insertAdjacentHTML('beforeend', `<div class="row goal-row" style="flex-wrap:wrap">
+        <label class="field" style="flex:2;min-width:150px">Jogador<select name="goalPlayer">${activePlayers().map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}</select></label>
+        <label class="field" style="flex:1;min-width:90px">Time<select name="goalTeam"><option value="A">A</option><option value="B">B</option></select></label>
+        <label class="field" style="flex:1;min-width:80px">Minuto<input name="goalMinute" type="number" min="1" max="120" placeholder="Ex.: 12" /></label>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="timer-remove-goal" title="Remover gol">✕</button>
+      </div>`);
+      break;
+    }
+    case 'timer-remove-goal': el.closest('.goal-row')?.remove(); break;
+    case 'timer-delete': confirmAction('Excluir esta partida do histórico?', () => {
+      state.timer.history = (state.timer.history || []).filter(h => h.id !== id);
+      save('excluiu partida do cronômetro', id); render(); toast('Partida excluída do histórico.');
+    }); break;
+    case 'timer-clear-history': confirmActionTwice('Apagar todo o histórico de partidas das últimas 24h?', 'Isso não pode ser desfeito. Deseja apagar mesmo assim?', () => {
+      const n = (state.timer.history || []).length;
+      state.timer.history = [];
+      save('limpou histórico do cronômetro', `${n} partida(s)`); render(); toast('Histórico apagado.');
+    }); break;
+    case 'move-draw-player': moveDrawPlayer(el.dataset.player, num(el.dataset.from)); break;
+    case 'pick-draw-team': pickDrawTeam(el.dataset.player, num(el.dataset.from), num(el.dataset.to)); break;
+    case 'save-last-draw': saveDrawEditor(); break;
+    case 'cancel-last-draw': cancelDrawEditor(); break;
     case 'save-manual-draw': {
       const key = drawGameKey();
       const players = confirmedIds(key).map(playerById).filter(Boolean);
@@ -4415,12 +5249,18 @@ document.addEventListener('click', (e) => {
       break;
     }
 
-    case 'quick-expense': {
-      const cat = el.dataset.cat, m = currentMonth(), y = year();
-      const amount = cat === 'Quadra' ? num(settings().fieldRent) : num(settings().goalkeepers) * num(settings().goalkeeperFee) * num(settings().gamesPerMonth);
-      const date = isoDate(y, m, cat === 'Quadra' ? 5 : 28);
-      state.expenses.push({ id: uid(), date, month: m, year: y, category: cat, description: cat === 'Quadra' ? `Aluguel de ${monthName(m)}` : `${settings().goalkeepers} goleiros × ${settings().gamesPerMonth} jogos`, amount, fixed: cat === 'Quadra' ? 'fieldRent' : 'goalkeepers' });
-      save(); render(); toast('Despesa lançada.');
+    case 'launch-bbq': {
+      const s = settings(), m = currentMonth(), y = year();
+      const unit = num(s.bbqCostPerPerson) * num(s.bbqPeople);
+      if (s.bbqEnabled === false || unit <= 0) { toast('Ative o churrasco e informe custo e pessoas em Configurações.', 'err'); break; }
+      const desc = `Churrasco do racha — ${monthName(m)}`;
+      const date = isoDate(y, m, 20);
+      if (state.expenses.some(e => e && e.category === 'Churrasco' && e.month === m && e.year === y && (e.fixed === 'bbq' || String(e.description || '') === desc))) {
+        toast(`Já existe um churrasco em ${monthName(m)}. Para um segundo, lance em Despesas com outro nome.`, 'err'); break;
+      }
+      state.expenses.push({ id: uid(), date, month: m, year: y, category: 'Churrasco', description: desc, amount: unit, repeat: 'once' });
+      save('lançou churrasco', `${desc} · ${money(unit)}`);
+      render(); toast(`Churrasco de ${monthName(m)} lançado em Despesas: ${money(unit)}.`);
       break;
     }
     case 'delete-expense': confirmAction('Excluir esta despesa?', () => {
@@ -4428,6 +5268,32 @@ document.addEventListener('click', (e) => {
       state.expenses = state.expenses.filter(x => x.id !== id);
       save('excluiu despesa', exp ? `${fmtDate(exp.date)} · ${exp.description || exp.category}` : id); render(); toast('Despesa excluída.');
     }); break;
+    case 'expense-select-all': $$('.expense-check').forEach(c => { c.checked = !!el.checked; }); break;
+    case 'expense-clear-selected': {
+      const ids = $$('.expense-check:checked').map(c => c.value);
+      if (!ids.length) { toast('Selecione pelo menos uma despesa.', 'err'); break; }
+      const rows = state.expenses.filter(e => ids.includes(e.id));
+      if (!rows.length) { toast('Nenhuma despesa selecionada foi encontrada.', 'err'); break; }
+      const total = sum(rows, e => e.amount);
+      confirmAction(`Excluir ${rows.length} despesa(s) selecionada(s) (${money(total)})?`, () => {
+        const set = new Set(rows.map(e => e.id));
+        state.expenses = state.expenses.filter(e => !set.has(e.id));
+        save('excluiu despesas selecionadas', `${rows.length} lançamentos · ${money(total)}`);
+        render(); toast(`${rows.length} despesa(s) excluída(s).`);
+      });
+      break;
+    }
+    case 'clear-expenses': {
+      const n = state.expenses.length;
+      if (!n) { toast('Não há despesas para limpar.', 'err'); break; }
+      const total = sum(state.expenses, e => e.amount);
+      confirmActionTwice(`Apagar todas as ${n} despesas (${money(total)})?`, 'Isso não pode ser desfeito. Deseja apagar mesmo assim?', () => {
+        state.expenses = [];
+        save('limpou todas as despesas', `${n} lançamentos · ${money(total)}`);
+        render(); toast(`${n} despesas apagadas.`);
+      });
+      break;
+    }
     case 'delete-expense-series': {
       const sid = String(el.dataset.series || '');
       const rows = state.expenses.filter(x => x.seriesId === sid);
@@ -4469,6 +5335,7 @@ document.addEventListener('click', (e) => {
     case 'import-csv': modalImportCSV(); break;
     case 'export-cash': exportCashCSV(); break;
     case 'monthly-report': printMonthlyReport(num($('#report-month')?.value) || currentMonth()); break;
+    case 'report-month-csv': downloadMonthlyReportCSV(num($('#report-month')?.value) || currentMonth()); break;
     case 'export-players': exportPlayersCSV(); break;
     case 'load-demo': confirmAction('Substituir todos os dados atuais pelo exemplo?', () => {
       photoClear(); state = makeDemoState(); ui.sim = null; save('carregou dados de exemplo'); render(); toast('Exemplo carregado.');
@@ -4575,8 +5442,11 @@ document.addEventListener('submit', async (e) => {
 
   if (type === 'player') {
     const attr = (k) => v(k) === '' ? null : num(v(k));
+    const chosenType = PLAYER_TYPES.includes(v('type')) ? v('type') : 'Mensalista';
+    const limite = roleLimitError(chosenType, form.dataset.id || '');
+    if (limite) { toast(limite, 'err'); return; }
     const data = {
-      id: form.dataset.id || uid(), name: v('name'), type: v('type'), position: v('position'),
+      id: form.dataset.id || uid(), name: v('name'), type: chosenType, position: v('position'),
       phone: v('phone'), note: v('note'),
       age: attr('age'), height: attr('height'), weight: attr('weight'),
       strength: attr('strength'), speed: attr('speed'),
@@ -4591,26 +5461,36 @@ document.addEventListener('submit', async (e) => {
     const playerId = v('playerId'), month = num(v('month')), y = year();
     /* Pendência antiga mantém o valor original, mesmo que a mensalidade tenha mudado. */
     const anterior = state.payments.find(x => x.playerId === playerId && x.month === month && x.year === y);
-    const esperado = anterior ? num(anterior.amount) : num(settings().monthlyFee);
+    const esperado = anterior ? num(anterior.amount) : feeForPlayerId(playerId);
     state.payments = state.payments.filter(x => !(x.playerId === playerId && x.month === month && x.year === y));
     if (fd.get('paid') !== null) state.payments.push({ id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: true });
     save(fd.get('paid') !== null ? 'recebeu mensalidade' : 'removeu mensalidade', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast('Pagamento salvo.');
   }
   else if (type === 'game') {
     const date = v('date'), [y, m] = date.split('-').map(Number);
-    state.games.push({ id: uid(), date, month: m, year: y, done: false, name: v('name'), time: v('time') });
-    save('criou jogo', `${fmtDate(date)}${v('name') ? ' · ' + v('name') : ''}`); closeModal(); render(); toast('Jogo criado.');
+    const sess = sessionById(v('sessionId'));
+    state.games.push({
+      id: uid(), date, month: m, year: y, done: false,
+      sessionId: sess?.id || '', sessionName: sess?.name || '',
+      name: v('name') || (sess?.name || ''), time: v('time') || (sess?.time || ''),
+      location: v('location') || (sess?.location || ''), notes: sess?.notes || ''
+    });
+    save('criou jogo', `${fmtDate(date)}${sess ? ' · ' + sess.name : ''}${v('name') ? ' · ' + v('name') : ''}`);
+    closeModal(); render(); toast('Jogo criado.');
   }
   else if (type === 'checkin') {
     const gid = form.dataset.id;
     const g = state.games.find(x => x.id === gid);
     state.dayEntries = state.dayEntries.filter(d => d.gameId !== gid);
+    const presentes = [];
     activePlayers().forEach(p => {
       if (fd.get('present-' + p.id) === null) return;
+      presentes.push(p.id);
       const amount = num(v('amount-' + p.id));
       if (amount <= 0) return;
       state.dayEntries.push({ id: uid(), gameId: gid, date: g.date, month: g.month, year: g.year, playerId: p.id, amount });
     });
+    state.checkins[gid] = presentes;
     if (g) g.done = true;
     save('registrou presenças', g ? fmtDate(g.date) : gid); closeModal(); render(); toast('Check-in salvo.');
   }
@@ -4628,7 +5508,7 @@ document.addEventListener('submit', async (e) => {
     let rows = [];
 
     if (repeat === 'game') {
-      const games = state.games.filter(g => g && g.year === y).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+      const games = state.games.filter(g => g && g.year === y && !g.canceled).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
       if (!games.length) {
         toast('Não há jogos cadastrados neste ano para repetir por jogo.', 'err');
         return;
@@ -4640,7 +5520,7 @@ document.addEventListener('submit', async (e) => {
       rows = Array.from({ length: 12 }, (_, i) => {
         const mo = i + 1;
         const safeDay = Math.min(day || 1, new Date(y, mo, 0).getDate());
-        return { ...base, id: uid(), seriesId, date: isoDate(y, mo, safeDay), month: mo, year: y };
+        return { ...base, id: uid(), seriesId, date: isoDate(y, mo, safeDay), month: mo, year: y, description: monthlyExpenseDescription(category, description, mo) };
       });
     } else if (repeat === 'year') {
       rows = [{ ...base, id: uid(), seriesId }];
@@ -4682,8 +5562,62 @@ document.addEventListener('submit', async (e) => {
     importCSV(v('entity'), v('content'));
     closeModal();
   }
+  else if (type === 'session') {
+    const id = form.dataset.id || uid();
+    const data = {
+      id, name: v('name') || 'Racha', day: Math.min(6, Math.max(0, Math.round(num(v('day'))))),
+      time: /^\d{2}:\d{2}$/.test(v('time')) ? v('time') : '19:00',
+      duration: v('duration') || '1h30', location: v('location'), notes: v('notes'), active: fd.get('active') !== null,
+      withGoalkeepers: fd.get('withGoalkeepers') !== null, withReferee: fd.get('withReferee') !== null
+    };
+    const idx = sessionsList().findIndex(s => s.id === id);
+    if (idx >= 0) state.settings.sessions[idx] = data;
+    else state.settings.sessions.push(data);
+    state.settings.sessionsSeeded = true;
+    syncFixedExpenses();
+    save(idx >= 0 ? 'editou racha da semana' : 'cadastrou racha da semana', data.name);
+    closeModal(); render(); toast('Racha salvo. Goleiros e arbitragem foram recalculados.');
+  }
+  else if (type === 'timer-config') {
+    state.timer.minutes = Math.max(1, Math.min(240, Math.round(num(v('minutes')) || 10)));
+    state.timer.sessionId = sessionById(v('sessionId'))?.id || '';
+    state.timer.startTime = /^\d{2}:\d{2}$/.test(v('startTime')) ? v('startTime') : timerStartTime();
+    save('ajustou o cronômetro', `${state.timer.minutes} min/partida · início ${state.timer.startTime}`);
+    render(); toast(`Cronômetro salvo: ${state.timer.minutes} minutos por partida.`);
+  }
+  else if (type === 'timer-finish') {
+    const cur = state.timer.current;
+    if (!cur) { closeModal(); return; }
+    const goals = [];
+    $$('#timer-goals .goal-row').forEach(row => {
+      const playerId = row.querySelector('[name="goalPlayer"]')?.value || '';
+      if (!playerId) return;
+      const player = playerById(playerId);
+      goals.push({ playerId, playerName: player?.name || '', team: row.querySelector('[name="goalTeam"]')?.value || 'A', minute: Math.max(0, Math.round(num(row.querySelector('[name="goalMinute"]')?.value))) });
+    });
+    const endedAt = new Date().toISOString();
+    const scoreA = Math.max(0, Math.round(num(v('scoreA')))), scoreB = Math.max(0, Math.round(num(v('scoreB'))));
+    state.timer.history.push({
+      id: uid(), no: num(cur.no), startedAt: cur.startedAt, endedAt,
+      plannedStart: cur.plannedStart, plannedEnd: cur.plannedEnd,
+      pausedMs: num(cur.pausedMs), minutes: num(cur.minutes) || timerMinutes(),
+      teams: (cur.teams || []).map(t => Array.isArray(t) ? t.slice() : []),
+      teamNames: [v('teamA'), v('teamB')].map(t => String(t || '').slice(0, 500)),
+      scoreA, scoreB, goals
+    });
+    const novaDuracao = Math.max(1, Math.min(240, Math.round(num(v('duration')) || num(cur.minutes) || timerMinutes())));
+    if (novaDuracao !== num(cur.minutes)) {
+      cur.minutes = novaDuracao;
+      cur.plannedEnd = new Date(Date.parse(cur.startedAt) + novaDuracao * 60000).toISOString();
+      cur.remainingMs = 0; cur.alarmFired = false;
+    }
+    state.timer.current = null;
+    pruneTimerHistory();
+    save('encerrou partida no cronômetro', `Partida ${cur.no} · ${scoreA} × ${scoreB}`);
+    closeModal(); render(); toast('Partida salva no histórico por 24 horas.');
+  }
   else if (type === 'settings') {
-    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsCard']);
+    const numeric = new Set(['year', 'monthlyFee', 'dayFee', 'fieldRent', 'goalkeepers', 'goalkeeperFee', 'refereeFee', 'gamesPerMonth', 'initialCash', 'plannedMembers', 'maxPlayers', 'dayPlayersPerGame', 'bbqCostPerPerson', 'bbqPeople', 'bbqPerYear', 'giftsReserve', 'feePresidente', 'feeVice', 'feeDiretor', 'feeConselheiro', 'ptsGoal', 'ptsAssist', 'ptsPresence', 'ptsFairPlay', 'ptsPunctual', 'ptsFarrapou', 'ptsAtrasado', 'ptsDesarme', 'ptsDefesas', 'ptsParedoes', 'ptsGolsSofridos', 'ptsCard']);
     Object.keys(defaultSettings()).forEach(k => {
       if (k === 'bbqEnabled') { state.settings.bbqEnabled = fd.get('bbqEnabled') !== null; return; }
       if (k === 'dailyPaymentEnabled') { state.settings.dailyPaymentEnabled = fd.get('dailyPaymentEnabled') !== null; return; }
@@ -4691,8 +5625,20 @@ document.addEventListener('submit', async (e) => {
       if (!fd.has(k)) return;
       state.settings[k] = numeric.has(k) ? num(v(k)) : v(k);
     });
+    const base = num(state.settings.monthlyFee);
+    const ajustados = [];
+    BOARD_ROLES.forEach(r => {
+      const atual = num(state.settings[r.feeKey]);
+      if (atual !== 0 && atual < base) {
+        state.settings[r.feeKey] = base;
+        ajustados.push(r.type);
+      }
+    });
     syncFixedExpenses();
-    ui.sim = null; save('alterou premissas'); render(); toast('Premissas salvas. Quadra e Goleiros foram recalculados.');
+    ui.sim = null;
+    save('alterou premissas');
+    render();
+    toast('Premissas salvas. Quadra e Goleiros foram recalculados.' + (ajustados.length ? ` Cargos ajustados para ${money(base)}: ${ajustados.join(', ')}.` : ''));
   }
 });
 
@@ -4714,7 +5660,14 @@ function sanitizeBackupStrings(value) {
 
 document.addEventListener('change', async (e) => {
   const el = e.target;
-  if (licenseLocked() && (['year-select', 'import-file', 'bank-file', 'pay-month', 'score-month', 'award-month'].includes(el.id) || el.dataset.goalProgress)) { warnLocked(); return; }
+  /* Filtros continuam consultáveis com a assinatura vencida. O ano é o único
+     filtro que mexe no estado salvo; nesse caso ele muda só na tela. */
+  if (licenseLocked() && el.id === 'year-select') {
+    state.settings.year = num(el.value); ui.sim = null; render();
+    toast('Ano trocado para consulta. A edição continua bloqueada até a renovação.', 'err');
+    return;
+  }
+  if (licenseLocked() && (['import-file', 'bank-file', 'racha-logo-file'].includes(el.id) || el.dataset.goalProgress)) { warnLocked(); return; }
   if (el.id === 'bank-file' && el.files?.[0]) {
     const file = el.files[0];
     const reader = new FileReader();
@@ -4743,9 +5696,11 @@ document.addEventListener('change', async (e) => {
     if (g) { g.progress = num(el.value); save('atualizou meta', g.name); render(); }
     return;
   }
+  if (el.id === 'game-filter-month') { ui.gameMonth = el.value === 'all' ? 0 : num(el.value); render(); return; }
   if (el.id === 'year-select') { state.settings.year = num(el.value); ui.sim = null; save(); render(); return; }
   if (el.id === 'pay-month') { ui.payMonth = num(el.value); render(); return; }
   if (el.id === 'score-month') { ui.scoreMonth = num(el.value); render(); return; }
+  if (el.id === 'live-team') { ui.liveTeam = TEAM_KEYS.includes(el.value) ? el.value : 'A'; return; }
   if (el.id === 'award-month') { ui.awardMonth = num(el.value); render(); return; }
   if (el.id === 'player-filter') { ui.playerFilter = el.value; render(); return; }
   if (el.id === 'import-file' && el.files?.[0]) {
@@ -4766,6 +5721,29 @@ document.addEventListener('change', async (e) => {
     return;
   }
   if (el.id === 'cobranca-month') { ui.cobrancaMonth = num(el.value); if (ui.cobrancaPlayer) modalCobranca(ui.cobrancaPlayer); return; }
+  if (el.name === 'sessionId' && el.closest('form[data-form="game"]')) {
+    const form = el.closest('form[data-form="game"]'), sess = sessionById(el.value);
+    if (sess) {
+      const time = form.querySelector('[name="time"]'), name = form.querySelector('[name="name"]'), location = form.querySelector('[name="location"]');
+      if (time && !time.value) time.value = sess.time;
+      if (name && !name.value) name.value = sess.name;
+      if (location && !location.value) location.value = sess.location || '';
+      toast(`${sess.name}: ${WEEKDAYS[num(sess.day)]} às ${sess.time}.`);
+    }
+    return;
+  }
+  if (el.name === 'sessionId' && el.closest('form[data-form="timer-config"]')) {
+    const form = el.closest('form[data-form="timer-config"]'), sess = sessionById(el.value);
+    if (sess) {
+      const start = form.querySelector('[name="startTime"]');
+      if (start) start.value = sess.time;
+      const total = parseDurationMinutes(sess.duration);
+      const minutes = form.querySelector('[name="minutes"]');
+      if (minutes && !minutes.dataset.touched) minutes.value = '10';
+      toast(`${sess.name}: ${sess.duration} (${total} min) · sugestão de 10 min por partida.`);
+    }
+    return;
+  }
   if (el.id === 'draw-game') { ui.drawGame = el.value; render(); return; }
   if (el.id === 'draw-mode') { ui.drawMode = el.value; return; }
   if (el.id === 'draw-size') { ui.drawSize = Math.max(2, Math.min(20, Math.round(num(el.value)) || 6)); return; }
@@ -4778,6 +5756,22 @@ document.addEventListener('change', async (e) => {
       const prev = $('#photo-preview');
       if (prev) prev.innerHTML = avatarHTML({ photo: data, name: 'Foto' }, false).replace('class="avatar', 'class="avatar big');
     });
+    return;
+  }
+  if (el.name === 'category' && el.closest('form[data-form="expense"]')) {
+    const form = el.closest('form[data-form="expense"]');
+    const anterior = el.dataset.prevCat || '';
+    el.dataset.prevCat = el.value;
+    const valor = suggestedExpenseAmount(el.value);
+    if (valor != null && valor > 0) {
+      const amount = form.querySelector('[name="amount"]');
+      if (amount) amount.value = valor;
+      const desc = form.querySelector('[name="description"]');
+      const texto = suggestedExpenseDescription(el.value);
+      const textoAnterior = suggestedExpenseDescription(anterior);
+      if (desc && texto && (!String(desc.value).trim() || String(desc.value).trim() === textoAnterior)) desc.value = texto;
+      toast(`Valor de ${el.value} preenchido: ${money(valor)}.`);
+    }
     return;
   }
   if (el.dataset.score) {
@@ -4838,6 +5832,17 @@ async function boot() {
   handleHash();
 }
 boot();
+
+/* Cronômetro: atualiza só os números na tela, sem redesenhar formulários. */
+setInterval(tickTimer, 1000);
+document.addEventListener('input', (e) => {
+  if (e.target?.name === 'minutes' && e.target.closest('form[data-form="timer-config"]')) e.target.dataset.touched = '1';
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || ui.page !== 'timer') return;
+  if ($('#modal-root')?.classList.contains('open')) return;
+  tickTimer(); render(true);
+});
 
 /* Painel do admin acompanha respostas, notas e placar do mesmo retrato do grupo. */
 if (viewToken) {

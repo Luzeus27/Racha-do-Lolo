@@ -22,7 +22,7 @@
 
       <h2>1. O que é o aplicativo</h2>
       <p>O Racha do Loló é uma ferramenta de gestão para controlar caixa, jogadores, mensalidades, jogos, despesas, benefícios, pontuação, ranking e premiações de um racha de futebol. Ele substitui a planilha original <strong>Racha_do_Lolo_Controle.xlsx</strong> por uma interface única, instalável no celular e utilizável offline.</p>
-      <p>O aplicativo funciona como <strong>PWA</strong> ( Progressive Web App ): depois de aberto uma vez com internet, ele continua funcionando sem conexão. Os dados de gestão são salvos no navegador do seu dispositivo, e não em nossos servidores.</p>
+      <p>O aplicativo funciona como <strong>PWA</strong> ( Progressive Web App ): depois de aberto uma vez com internet, ele continua funcionando sem conexão. Os dados de gestão ficam salvos no navegador do seu dispositivo; ao publicar o link do grupo, uma cópia limitada é enviada ao Netlify, conforme a Política de Privacidade.</p>
 
       <h2>2. Período gratuito</h2>
       <p>Todo novo usuário tem <strong>14 dias grátis</strong>, contados a partir do primeiro acesso. Durante esse período, todos os recursos ficam liberados e <strong>não é solicitado cartão de crédito</strong>.</p>
@@ -30,15 +30,16 @@
 
       <h2>3. Planos e cobrança</h2>
       <ul>
-        <li><strong>Plano mensal:</strong> cobrança recorrente uma vez por mês.</li>
-        <li><strong>Plano anual:</strong> cobrança recorrente uma vez por ano, com desconto em relação ao plano mensal.</li>
+        <li><strong>Plano mensal:</strong> Básico R$ 9,90/mês ou PRO R$ 19,90/mês, cobrança recorrente uma vez por mês.</li>
+        <li><strong>Plano anual:</strong> Básico R$ 99,00/ano ou PRO R$ 199,00/ano, cobrança recorrente uma vez por ano.</li>
+        <li><strong>Teste grátis:</strong> 14 dias com todos os recursos liberados, sem pedido de cartão para começar.</li>
       </ul>
-      <p>Os valores vigentes são exibidos na tela <strong>Assinatura</strong> dentro do aplicativo no momento da contratação. O pagamento é processado pelo <strong>Mercado Pago</strong>, que é o responsável pela cobrança, pelo método de pagamento e pelo débito automático das parcelas seguintes.</p>
-      <p>A assinatura é <strong>renovável automaticamente</strong> até ser cancelada. O cancelamento pode ser feito a qualquer momento no painel do Mercado Pago ou solicitando ao administrador do serviço. O cancelamento encerra as cobranças futuras; não há multa.</p>
+      <p>Os valores vigentes também são exibidos na tela <strong>Assinatura</strong> dentro do aplicativo no momento da contratação. O pagamento é processado pelo <strong>Mercado Pago</strong>, que é o responsável pela cobrança, pelo método de pagamento e pelo débito automático das parcelas seguintes. Eventuais impostos sobre a assinatura e sobre a receita do racha são de responsabilidade do contratante; a emissão de nota fiscal, quando aplicável, segue as regras da plataforma de pagamento.</p>
+      <p>Os valores acima são em reais (BRL). A assinatura é <strong>renovável automaticamente</strong> até ser cancelada. O cancelamento pode ser feito a qualquer momento pelo botão <strong>Cancelar assinatura</strong> na tela Assinatura do app, pelo painel do Mercado Pago ou solicitando ao administrador. O cancelamento encerra as cobranças futuras e o acesso permanece até o fim do período já pago; não há multa. Devoluções, quando cabíveis, seguem as regras do Mercado Pago, inclusive quanto a eventuais taxas.</p>
       <p>O titular do <strong>Plano Básico</strong> pode subir para o <strong>Plano PRO</strong> pela opção <strong>⚡ Fazer upgrade para o PRO</strong> na tela Assinatura. O upgrade altera o valor da assinatura existente no Mercado Pago: a mesma chave de licença e a mesma data de cobrança são mantidas, sem criar uma segunda assinatura e sem cobrança dupla. Só é permitido o upgrade dentro do mesmo ciclo (mensal para mensal, anual para anual); para trocar o ciclo, é necessário cancelar a renovação e assinar novamente.</p>
 
       <h2>4. Confirmação da licença</h2>
-      <p>Ao iniciar uma assinatura, o aplicativo gera uma <strong>chave de licença</strong> (por exemplo, <code>RL-1A2B3C4D5E6F</code>). Essa chave é o comprovante do seu direito de uso. Ela aparece na tela Assinatura e deve ser guardada.</p>
+      <p>Ao iniciar uma assinatura, o servidor gera uma <strong>chave de licença</strong> durante o checkout e o aplicativo a exibe (por exemplo, <code>RL-1A2B3C4D5E6F</code>). Essa chave é o comprovante do seu direito de uso. Ela aparece na tela Assinatura e deve ser guardada.</p>
       <p>A confirmação do pagamento chega ao servidor por uma notificação automática do Mercado Pago. Se você estiver offline, o aplicativo mantém a licença válida por até <strong>3 dias</strong> como tolerância; depois disso, será necessário se conectar à internet para validar novamente.</p>
       <p>Em caso de troca de celular ou reinstalação, use a mesma chave de licença na tela Assinatura para recuperar o acesso.</p>
 
@@ -55,7 +56,7 @@
       </ul>
 
       <h2>7. Limitações</h2>
-      <p>O aplicativo é uma ferramenta de organização e cálculo. Os comprovantes gerados por ele são <strong>registros internos</strong>, não recibos bancários. A confirmação de pagamento feita dentro do app para os jogadores é de responsabilidade de quem administra o racha.</p>
+      <p>O aplicativo é uma ferramenta de organização e cálculo. Os comprovantes gerados por ele são <strong>registros internos</strong>, não recibos bancários. A confirmação de pagamento feita dentro do app para os jogadores é de responsabilidade de quem administra o racha. O aplicativo não garante a realização do jogo, a escalação nem acordos entre administrador e jogadores, e não media disputas de jogo ou pagamento.</p>
       <p>O serviço é fornecido "como está". Embora busquemos funcionamento contínuo, não garantimos disponibilidade absoluta, nem a compatibilidade com todos os navegadores e dispositivos.</p>
 
       <h2>8. Propriedade intelectual</h2>
@@ -65,10 +66,11 @@
       <p>Podemos atualizar estes termos para refletir mudanças legais ou melhorias no serviço. A versão mais recente estará sempre disponível nesta página, com a data de atualização.</p>
 
       <h2>10. Lei aplicável</h2>
-      <p>Estes termos são regidos pela legislação brasileira, em especial pelo Código de Defesa do Consumidor e pela Lei Geral de Proteção de Dados (LGPD). Fica eleito o foro da comarca do titular do serviço para dirimir dúvidas, sem prejuízo dos direitos do consumidor.</p>
+      <p>Estes termos são regidos pela legislação brasileira, em especial pelo Código de Defesa do Consumidor e pela Lei Geral de Proteção de Dados (LGPD). Fica eleito o foro da comarca de Maceió/AL para dirimir dúvidas, sem prejuízo dos direitos do consumidor.</p>
 
       <h2>11. Contato</h2>
       <p>Para dúvidas sobre a assinatura, cancelamento, reembolso ou sobre estes termos, use o botão <strong>✉️ Falar com o Administrador</strong> na tela Assinatura do app: você escreve o texto e pode anexar uma foto de até 7 MB. Também pode falar pelo WhatsApp: <a href="https://wa.me/5582996595767" target="_blank" rel="noopener">(82) 99659-5767</a>. E-mail: <a href="mailto:rachadololo@gmail.com">rachadololo@gmail.com</a>.</p>
+      <p>Na aba <strong>Comunidade</strong>, as capitais já têm grupo e o pedido de acesso é direto; para outras cidades, o assinante informa <strong>cidade - UF</strong> e pede a criação. Ambos os pedidos são analisados pelo administrador. O grupo é fechado: o convite não aparece no app e o administrador pode recusar ou remover participantes que não estejam alinhados ao objetivo do racha.</p>
 
       <p class="legal-updated">Leia também a <a href="privacidade.html">Política de Privacidade</a>.</p>
     </div>

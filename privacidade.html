@@ -50,13 +50,14 @@
       <p>Para viabilizar a assinatura recorrente, tratamos também os seguintes dados no servidor do Netlify:</p>
       <ul>
         <li><strong>E-mail informado no checkout</strong>: usado para identificar a assinatura no Mercado Pago e enviado apenas à plataforma de pagamento.</li>
-        <li><strong>Chave de licença</strong>: identificador aleatório gerado no seu dispositivo. É a forma como o servidor consulta o status da sua assinatura.</li>
+        <li><strong>Chave de licença</strong>: identificador aleatório gerado no servidor durante o checkout e exibido no app. É a forma como o servidor consulta o status da sua assinatura.</li>
         <li><strong>Identificador do aparelho</strong>: código aleatório sem dados pessoais, criado no seu navegador. Fica associado à chave para impedir que uma mesma assinatura seja usada em vários dispositivos. Se você trocar de aparelho, o vínculo é movido depois de confirmado o e-mail usado no checkout.</li>
         <li><strong>Status da assinatura, plano, valor, datas de cobrança e último pagamento</strong>: recebidos automaticamente do Mercado Pago por notificação (webhook).</li>
         <li><strong>Registros técnicos de acesso</strong>: endereço IP e horário das requisições, gerados automaticamente pela infraestrutura do Netlify para segurança e diagnóstico.</li>
       </ul>
       <p>O botão <strong>✉️ Falar com o Administrador</strong> abre uma página com um formulário. Se você preenchê-lo, o <strong>texto, o e-mail para resposta e a foto opcional</strong> são enviados pelo formulário do Netlify e chegam ao e-mail do administrador. Eles não entram no backup do aplicativo nem na licença; a foto deve ter no máximo 7 MB.</p>
-      <p>O aplicativo não solicita CPF, cartão de crédito, endereço ou dados bancários. Essas informações, se necessárias, são tratadas exclusivamente pelo <strong>Mercado Pago</strong>, conforme a política de privacidade da plataforma.</p>
+      <p>A aba <strong>🌍 Comunidade</strong> permite pedir acesso ao grupo da capital do estado escolhido ou, para qualquer outra cidade, pedir a criação do grupo. No primeiro caso você informa estado, capital, nome do racha e, opcionalmente, os <strong>4 últimos dígitos</strong> da chave; no segundo, informa a cidade no formato <strong>cidade - UF</strong>, o nome do racha e uma mensagem. O envio vai pelo formulário do Netlify para <strong>rachadololo@gmail.com</strong>; nenhum link de grupo fica publicado na página e o administrador decide quem entra.</p>
+      <p>O aplicativo não armazena CPF, cartão de crédito, endereço ou dados bancários. O checkout do Mercado Pago pode solicitar essas informações, tratadas exclusivamente pela plataforma, conforme a política de privacidade dela.</p>
 
       <h2>3. Finalidade e base legal</h2>
       <p>Usamos os dados para: (a) criar e manter a assinatura; (b) confirmar pagamentos e liberar o acesso; (c) vincular a licença ao aparelho de origem, evitando compartilhamento indevido; (d) processar pedidos de cancelamento; (e) mostrar a visão do grupo, a área do jogador e o placar ao vivo a partir do retrato publicado; (f) cumprir obrigações legais e de defesa do consumidor. A base legal é a <strong>execução do contrato</strong> de licença de uso e, quando aplicável, o <strong>cumprimento de obrigação legal</strong>.</p>
@@ -71,7 +72,7 @@
       <p>Não vendemos, alugamos ou divulgamos dados pessoais a terceiros para publicidade. Os links individuais <code>VP-</code> devem ser enviados somente ao dono de cada aparelho.</p>
 
       <h2>5. Armazenamento e retenção</h2>
-      <p>O status da licença fica armazenado nos servidores do Netlify enquanto a assinatura estiver ativa e pelo tempo necessário ao cumprimento de obrigações legais e contábeis. No navegador, os dados do racha permanecem até você excluí-los pelo botão <strong>🗑️ Apagar tudo</strong> (que pede <strong>duas confirmações</strong>) ou limpar os dados do site nas configurações do navegador. Se você publicou o link, a cópia enviada ao Netlify continua no servidor enquanto o link estiver ativo; para pedir a exclusão dessa cópia, use o contato no fim desta página.</p>
+      <p>O status da licença fica armazenado nos servidores do Netlify enquanto a assinatura estiver ativa e pelo tempo necessário ao cumprimento de obrigações legais e contábeis. No navegador, os dados do racha permanecem até você excluí-los pelo botão <strong>🗑️ Apagar tudo</strong> (que pede <strong>duas confirmações</strong>) ou limpar os dados do site nas configurações do navegador. Se você publicou o link, a cópia enviada ao Netlify continua no servidor enquanto o link estiver ativo; após revogação ou vencimento, a cópia é removida, salvo retenção legal. Para pedir exclusão antes disso, use o contato no fim desta página.</p>
 
       <h2>6. Cookies e tecnologias semelhantes</h2>
       <p>O aplicativo <strong>não usa cookies de publicidade ou rastreamento</strong>. Utilizamos apenas armazenamento local (<code>localStorage</code>) para salvar suas preferências, dados de gestão e estado da licença. O service worker usa um cache local para permitir o funcionamento offline.</p>
@@ -80,7 +81,7 @@
       <p>Adotamos medidas como HTTPS em todo o site, validação da assinatura das notificações recebidas do Mercado Pago, restrição de acesso às funções de servidor e armazenamento no Netlify Blobs. Ainda assim, nenhum sistema é absolutamente seguro. Recomendamos manter o navegador atualizado e proteger o aparelho com senha.</p>
       <p>A <strong>área do jogador não tem senha</strong>. A pessoa é identificada pelos últimos 4 dígitos do telefone mais o nome no link do grupo, ou pelo link individual <code>VP-</code> enviado em particular. Isso <strong>não é uma prova forte de identidade</strong>: o link individual deve ser entregue somente ao dono do aparelho. O servidor limita o número de tentativas de identificação para dificultar tentativas em massa.</p>
       <p>No <strong>PIX manual</strong>, nenhum clique do jogador baixa o pagamento: quem dá a baixa é sempre o administrador, inclusive no PRO. No <strong>Mercado Pago</strong>, a baixa vem pelo webhook. Os segredos <code>MP_ACCESS_TOKEN</code>, <code>MP_CLIENT_SECRET</code>, <code>MP_WEBHOOK_SECRET</code>, <code>MASTER_SETUP_SECRET</code>, <code>REMINDER_SECRET</code> e <code>RECONCILE_SECRET</code> ficam só nas variáveis do Netlify, nunca no navegador. A chave <code>MASTER_SETUP_SECRET</code> é obrigatória para criar a conta master e não reaproveita mais a chave do webhook.</p>
-      <p>Se houver suspeita de vazamento ou acesso indevido, avise-nos pelo contato no fim desta página. Investigaremos, corrigiremos a causa e, quando o incidente for confirmado, comunicaremos a <strong>Autoridade Nacional de Proteção de Dados (ANPD)</strong> em prazo razoável — normalmente de até <strong>3 dias úteis</strong> — e também as pessoas afetadas, conforme a LGPD.</p>
+      <p>Se houver suspeita de vazamento ou acesso indevido, avise-nos pelo contato no fim desta página. Investigaremos, corrigiremos a causa e, quando o incidente for confirmado, comunicaremos a <strong>Autoridade Nacional de Proteção de Dados (ANPD)</strong> em prazo razoável, conforme a LGPD e a regulamentação da ANPD, e também as pessoas afetadas, conforme a LGPD.</p>
 
       <h2>8. Seus direitos</h2>
       <p>Você pode, a qualquer momento:</p>
@@ -91,7 +92,7 @@
         <li>cancelar a assinatura e pedir a exclusão da chave de licença;</li>
         <li>revogar o consentimento, quando este for a base de algum tratamento.</li>
       </ul>
-      <p>Para exercer esses direitos, use os canais de contato abaixo. Responderemos dentro do prazo legal.</p>
+      <p>Para exercer esses direitos, use os canais de contato abaixo. Responderemos em até 15 dias, prazo previsto para exercício de direitos do titular.</p>
 
       <h2>9. Alterações nesta política</h2>
       <p>Podemos atualizar esta política para refletir mudanças no serviço ou na legislação. A versão atual estará sempre disponível nesta página.</p>

@@ -19,7 +19,7 @@
       <p class="legal-updated">Escreva sua mensagem. Se precisar, anexe uma foto.</p>
 
       <div class="legal-note">
-        <strong>Como funciona:</strong> preencha o texto, escolha uma imagem de até 7 MB e toque em <strong>Enviar mensagem</strong>. Texto e foto chegam ao e-mail do administrador. Se o envio pelo site não funcionar, use o link de e-mail no fim desta página e anexe a foto manualmente.
+        <strong>Como funciona:</strong> preencha o texto, escolha uma imagem de até 7 MB e toque em <strong>Enviar mensagem</strong>. Quando o formulário estiver configurado, texto e foto chegam ao e-mail do administrador. Se o envio pelo site não funcionar, use o link de e-mail no fim desta página e anexe a foto manualmente.
       </div>
 
       <form id="form-contato" name="contato-admin" method="POST" enctype="multipart/form-data" data-netlify="true" data-netlify-honeypot="bot-field" class="stack">
@@ -125,7 +125,7 @@
           form.reset();
           info.textContent = 'Nenhuma foto escolhida. Limite: 7 MB.';
           atualizarMailto();
-          status.textContent = 'Mensagem enviada! O administrador recebeu o seu texto'
+          status.textContent = 'Registro enviado! O administrador receberá o seu texto'
             + (teveFoto ? ' e a foto.' : '.');
           status.hidden = false;
         } catch (err) {

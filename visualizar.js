@@ -90,7 +90,7 @@
   function renderNextGames(s, byId) {
     const today = new Date().toISOString().slice(0, 10);
     const upcoming = (s.games || [])
-      .filter((g) => g && g.date && g.date >= today)
+      .filter((g) => g && g.date && g.date >= today && !g.canceled)
       .sort((a, b) => String(a.date).localeCompare(String(b.date)))
       .slice(0, 6);
     if (!upcoming.length) {
@@ -108,7 +108,7 @@
 
   function renderConfirmations(s, byId) {
     const entries = Object.keys((publicData?.responses) || (s.confirmations) || {})
-      .filter((k) => confirmedFor(k).length);
+      .filter((k) => confirmedFor(k).length && !(s.games || []).some(g => g.id === k && g.canceled));
     if (!entries.length) return card('Confirmados', 'Presença por jogo', '<p class="small muted">Nenhuma confirmação registrada.</p>');
     const game = (s.games || []).find((g) => g.id === entries[0]);
     const label = game ? fmtDate(game.date) : 'Jogo';
@@ -123,12 +123,14 @@
     const live = publicData?.live;
     if (!live) return '';
     const score = live.score || { A: 0, B: 0 };
+    const teams = Object.keys(score).filter((k) => /^[A-F]$/.test(k)).sort();
+    const teamKeys = teams.length ? teams : ['A', 'B'];
     const events = (live.events || []).slice(-5).reverse();
     const ico = { goal: '⚽', assist: '🅰️', card: '🟨' };
     const byId = {};
     (current?.players || []).forEach((p) => { if (p && p.id) byId[p.id] = p; });
     return card('Ao vivo', live.endedAt ? 'Partida encerrada' : 'Placar em tempo real', `
-      <div class="live-score"><strong>${num(score.A)}</strong><span>×</span><strong>${num(score.B)}</strong></div>
+      <div class="live-board">${teamKeys.map((k, i) => `<div class="live-side"><span class="tiny muted">Equipe ${k}</span><strong>${num(score[k])}</strong></div>${i < teamKeys.length - 1 ? '<span class="live-x">×</span>' : ''}`).join('')}</div>
       ${events.length ? `<div class="mt">${events.map((ev) => `<div class="person"><span>${ico[ev.type] || '•'}</span><span style="flex:1"><strong>${esc((byId[ev.playerId] || {}).name || 'Jogador')}</strong> <span class="tiny muted">· equipe ${esc(ev.team || 'A')}</span></span></div>`).join('')}</div>` : ''}
       <a class="btn btn-ghost mt" href="./ao-vivo.html?v=${encodeURIComponent(token)}">🔴 Abrir placar completo</a>`);
   }
@@ -152,7 +154,8 @@
     const pts = {
       goal: num(st.ptsGoal), assist: num(st.ptsAssist), presence: num(st.ptsPresence),
       fairPlay: num(st.ptsFairPlay), punctual: num(st.ptsPunctual), farrapou: num(st.ptsFarrapou),
-      atrasado: num(st.ptsAtrasado), desarme: num(st.ptsDesarme), card: num(st.ptsCard)
+      atrasado: num(st.ptsAtrasado), desarme: num(st.ptsDesarme), card: num(st.ptsCard),
+      defesas: num(st.ptsDefesas), paredoes: num(st.ptsParedoes), golsSofridos: num(st.ptsGolsSofridos)
     };
     const totals = {};
     (s.scores || []).forEach((sc) => {
@@ -162,7 +165,8 @@
       t.assists += num(sc.assists);
       t.points += num(sc.goals) * pts.goal + num(sc.assists) * pts.assist + num(sc.presence) * pts.presence +
         num(sc.fairPlay) * pts.fairPlay + num(sc.punctual) * pts.punctual - num(sc.farrapou) * pts.farrapou -
-        num(sc.atrasado) * pts.atrasado + num(sc.desarmes) * pts.destrarme + num(sc.cards) * pts.card;
+        num(sc.atrasado) * pts.atrasado + num(sc.desarmes) * pts.desarme + num(sc.cards) * pts.card +
+        num(sc.defesas) * pts.defesas + num(sc.paredoes) * pts.paredoes + num(sc.golsSofridos) * pts.golsSofridos;
     });
     const top = Object.keys(totals)
       .map((id) => ({ ...totals[id], player: byId[id] }))
@@ -234,7 +238,9 @@
     let saved = savedProfile();
     if (saved && !list.some((p) => p.id === saved.id)) { clearProfile(); saved = null; }
     const rows = list.map((p) => {
-      const type = String(p.type || '').toLowerCase() === 'diarista' ? 'Diarista' : 'Mensalista';
+      const rawType = String(p.type || '').trim();
+      const type = rawType.toLowerCase() === 'diarista' ? 'Diarista'
+        : ['Presidente', 'Vice-Presidente', 'Diretor', 'Conselheiro'].includes(rawType) ? rawType : 'Mensalista';
       const remembered = saved && saved.id === p.id
         ? '<span class="pill" style="margin-left:6px">✅ Salvo aqui</span>' : '';
       const action = saved && saved.id === p.id ? 'Abrir meu perfil →' : 'Acessar meu perfil →';
