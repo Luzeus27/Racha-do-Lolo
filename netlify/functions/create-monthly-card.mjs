@@ -17,7 +17,7 @@ function newPaymentId() {
 
 function payerEmail(view, playerId) {
   const hash = createHash('sha256').update(view + '|' + playerId).digest('hex').slice(0, 14);
-  return 'mensalista.' + hash + '@example.com';
+  return 'test@testuser.com';
 }
 
 function autoHistory(row, event, at) {
