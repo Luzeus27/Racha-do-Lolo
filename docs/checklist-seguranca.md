@@ -5,7 +5,7 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 
 ## Bloqueante — não vender antes disso
 
-- [x] **Deploy de produção liberado e publicado em 27/11/2026** (plano Netlify **Personal** ativo). Conferido no ar: home abre em `v1.1.3`; `visualizar.html`, `jogador.html`, `ao-vivo.html`, `comunidade.html` e `contato.html` respondem **200**; cabeçalhos de segurança do `netlify.toml` presentes; `sw.js` e a função de licença respondem; bateria local **139/139** sem erro de console. `scripts/security-check.ps1` é somente leitura e não existe um script separado só de deploy. O espelho do GitHub Pages também está em `v1.1.3`.
+- [x] **Deploy de produção liberado e publicado em 27/11/2026** (plano Netlify **Personal** ativo). Conferido no ar: home abre em `v1.1.3`; `visualizar.html`, `jogador.html`, `ao-vivo.html`, `comunidade.html` e `contato.html` respondem **200**; cabeçalhos de segurança do `netlify.toml` presentes; `sw.js` e a função de licença respondem; bateria local **148/148** (27 grupos) sem erro de console. `scripts/security-check.ps1` é somente leitura e não existe um script separado só de deploy. O espelho do GitHub Pages também está em `v1.1.3`.
 
 ## Já está feito — não refazer
 
@@ -40,6 +40,20 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 - [x] Mensagens de erro das funções de pagamento não devolvem `err.message` de rede (detalhe de DNS/proxy/endereço interno).
 - [x] Respostas de nota e de resposta do jogador conferem se o `gameId` existe no retrato publicado.
 - [x] Respostas 204 do preflight também saem com `Cache-Control: no-store`.
+
+### Lote 6 — auditoria final aplicada localmente em 27/11/2026
+
+- [x] Trava atômica (`racha-cobrancas-lock`) em PIX/cartão mensal e diário: duas chamadas simultâneas devolvem 409 em vez de criar duas cobranças.
+- [x] `mp-webhook` usa `onlyIfNew` para deduplicar eventos de forma atômica, libera a reserva do evento e devolve **502** se a consulta ao Mercado Pago falhar (o MP reentrega).
+- [x] Estorno devolve crédito ao jogador, `amountWarning` é limpo e a reassinatura após cancelamento volta a liberar acesso.
+- [x] BR Code do PIX manual gera bytes EMV ASCII, aceita chave longa/acentuada e mantém CRC16 válido.
+- [x] `qr_code_base64` é reaproveitado quando o MP não devolve `qr_code`, e `jogador.js` mostra a imagem do QR.
+- [x] Lembretes usam `America/Sao_Paulo` para data/24h/2h; nota só é aceita para jogo já realizado.
+- [x] Confirmação manual respeita a capacidade (`hasSlot`); resposta “Vou jogar” no PIX manual cria reserva de vaga sem marcar presença.
+- [x] IDs de backup/`storage` são sanitizados, atributos `data-*` usam `esc()`, cores são validadas como hex e fotos passam por allowlist (`data:image/(png|jpeg|webp)` ou `blob:` local).
+- [x] Importar backup e desativar cobrança automática pedem confirmação explícita.
+- [x] `script-src` trocou `unsafe-inline` por hashes SHA-256 dos scripts inline (mais `unsafe-hashes` para o único `onclick` de impressão).
+- [x] Bateria ampliada para **148 testes em 27 grupos**, sem erro de console.
 
 ## Não se aplica ou não vale a pena agora
 
