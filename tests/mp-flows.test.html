@@ -113,11 +113,17 @@ const cryptoUrl = dataUrl(cryptoSource);
 function makeMapStore(map) {
   return {
     get: async (k) => map.has(k) ? map.get(k) : null,
-    setJSON: async (k, v) => { map.set(k, v); },
+    setJSON: async (k, v, opts) => {
+      if (opts && opts.onlyIfNew && map.has(k)) return { modified: false };
+      map.set(k, v);
+      return { modified: true };
+    },
     delete: async (k) => { map.delete(k); },
     list: async () => ({ blobs: Array.from(map.keys()).map((key) => ({ key })) })
   };
 }
+
+let lockMap = new Map();
 
 function installStores() {
   stores = {
@@ -125,7 +131,8 @@ function installStores() {
     'racha-visualizacoes': makeMapStore(viewMap),
     'racha-rate': makeMapStore(rateMap),
     'racha-tentativas': makeMapStore(attemptsMap),
-    'racha-webhook-eventos': makeMapStore(eventsMap)
+    'racha-webhook-eventos': makeMapStore(eventsMap),
+    'racha-cobrancas-lock': makeMapStore(lockMap)
   };
   globalThis.__stores = stores;
 }
@@ -172,8 +179,9 @@ const commonReplacements = [
 const names = [
   'mp-connect', 'create-daily-pix', 'create-monthly-pix', 'create-monthly-card',
   'create-monthly-auto', 'cancel-monthly-auto', 'manage-daily-payments',
-  'get-player-view', 'view-respond', 'mp-webhook', 'find-player', 'create-master',
-  'send-reminders', 'reconcile-licenses', 'change-plan', 'license'
+  'get-player-view', 'view-respond', 'view-rating', 'admin-confirm', 'mp-webhook',
+  'find-player', 'create-master', 'send-reminders', 'reconcile-licenses',
+  'change-plan', 'license'
 ];
 for (const name of names) {
   globalThis.__etapa = 'modulo:' + name;
@@ -283,6 +291,7 @@ function reset(options = {}) {
   stateMap = new Map();
   attemptsMap = new Map();
   eventsMap = new Map();
+  lockMap = new Map();
   installStores();
 
   const license = options.license === undefined ? connectedLicense(options.expiresInDays) : options.license;
@@ -2190,6 +2199,138 @@ await teste('erro de rede do Mercado Pago não é devolvido ao navegador', async
     ok(!src.includes('result.error') && !src.includes('changed.error'),
       nome + ' ainda devolve o erro interno de rede');
   }
+});
+
+grupo('16. Auditoria final: corridas, reservas e consistência');
+
+const VR = globalThis.__mods['view-rating'];
+const AC = globalThis.__mods['admin-confirm'];
+const D = globalThis.__mods.daily;
+
+await teste('PIX da mensalidade aceita QR apenas em base64', async () => {
+  reset({
+    mpHandler: (url, init) => {
+      const base = defaultMpHandler(url, init);
+      if (String(init?.method || '').toUpperCase() === 'POST' && url.endsWith('/v1/payments')) {
+        return { ok: true, status: 201, data: { id: 'MP-BASE64', point_of_interaction: { transaction_data: { qr_code_base64: 'QUJD' } } } };
+      }
+      return base;
+    }
+  });
+  const res = await post(globalThis.__mods['create-monthly-pix'].default, { v: V, p: P, month: 11, year: 2026 });
+  eq(res.status, 200);
+  const data = await res.json();
+  eq(data.payment.qrCode || '', '');
+  eq(data.payment.qrBase64, 'QUJD');
+});
+
+async function bloqueioConcorrente(fnName, path, corpo) {
+  let liberar;
+  const barreira = new Promise((resolve) => { liberar = resolve; });
+  reset({
+    mpHandler: async (url, init) => {
+      if (String(init?.method || '').toUpperCase() === 'POST' && url.endsWith(path)) await barreira;
+      return defaultMpHandler(url, init);
+    }
+  });
+  const fn = globalThis.__mods[fnName].default;
+  const primeiro = post(fn, corpo);
+  for (let i = 0; i < 30 && lockMap.size === 0; i++) await new Promise((r) => setTimeout(r, 5));
+  ok(lockMap.size > 0, 'o lock de cobrança não foi criado');
+  const segundo = await post(fn, corpo);
+  eq(segundo.status, 409, 'a segunda cobrança não foi bloqueada');
+  liberar();
+  await primeiro;
+  eq(lockMap.size, 0, 'o lock não foi liberado ao terminar');
+}
+
+await teste('duas chamadas de PIX mensal não criam duas cobranças', async () => {
+  await bloqueioConcorrente('create-monthly-pix', '/v1/payments', { v: V, p: P, month: 11, year: 2026 });
+});
+
+await teste('duas chamadas de cartão mensal não abrem dois checkouts', async () => {
+  await bloqueioConcorrente('create-monthly-card', '/checkout/preferences', { v: V, p: P, month: 11, year: 2026 });
+});
+
+await teste('falha ao consultar pagamento pede reentrega com 502', async () => {
+  reset({
+    license: { ...connectedLicense(), ownerKey: KEY },
+    mpHandler: () => ({ ok: false, status: 502, data: { message: 'Mercado Pago indisponível' } })
+  });
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?' +
+    new URLSearchParams({ topic: 'payment', 'data.id': '999999999' }).toString();
+  const res = await webhookDeTeste(url, '999999999', 'req-consulta-falha');
+  eq(res.status, 502);
+  eq((await res.json()).received, false);
+});
+
+await teste('BR Code aceita chave longa e sem acentos', async () => {
+  const settings = {
+    pixKey: 'chave-com-mais-de-80-caracteres-com-acento-áéíóú-para-testar-o-limite-do-banco',
+    pixMerchant: 'RACHA DO LOLÓ — MACEIÓ', pixCity: 'MACEIÓ - AL'
+  };
+  const code = D.manualPixCode(settings, 60, 'RL202611P1');
+  ok(code.startsWith('000201'), 'BR Code não começou no campo 00');
+  ok(/^6304[0-9A-F]{4}$/.test(code.slice(-8)), 'CRC16 não foi gerado');
+  ok(!/[^\x00-\x7F]/.test(code), 'BR Code saiu de ASCII');
+});
+
+await teste('nota só é aceita para jogo já realizado', async () => {
+  reset({ view: baseView({ snapshot: { games: [{ id: GAME, date: '2026-12-10', done: false }] } }) });
+  const futuro = await post(VR.default, { v: V, p: P, gameId: GAME, rating: 5 });
+  eq(futuro.status, 400);
+  includes((await futuro.json()).error, 'já realizados');
+
+  reset({ view: baseView({ snapshot: { games: [{ id: GAME, date: '2026-11-01', done: true }] } }) });
+  const passado = await post(VR.default, { v: V, p: P, gameId: GAME, rating: 5 });
+  eq(passado.status, 200);
+  eq(viewMap.get(V).ratings[GAME][PLAYER], 5);
+});
+
+await teste('diária manual reserva vaga sem marcar presença', async () => {
+  reset({
+    view: baseView({
+      paymentMode: 'manual',
+      playerRoles: { [PLAYER]: 'daily' },
+      snapshot: { settings: { dailyPaymentEnabled: true, dayFee: 60 }, games: [{ id: GAME, date: '2026-12-10' }] }
+    })
+  });
+  const res = await post(R.default, { v: V, p: P, gameId: GAME, response: 'yes' });
+  eq(res.status, 200);
+  eq((await res.json()).status, 'manual');
+  const salvo = viewMap.get(V);
+  eq(salvo.responses[GAME]?.[PLAYER] || '', '', 'presença foi marcada sem pagamento');
+  const reservas = salvo.reservations[GAME] || [];
+  ok(reservas.some((row) => row.playerId === PLAYER), 'a vaga não ficou reservada');
+});
+
+await teste('confirmação manual não estoura a capacidade do jogo', async () => {
+  const view = baseView({
+    snapshot: { settings: { maxPlayers: 1 } },
+    reservations: {
+      [GAME]: [{
+        paymentId: 'DP-RESERVADO', playerId: 'p2',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString()
+      }]
+    }
+  });
+  reset({ view });
+  const res = await post(AC.default, {
+    licenseKey: KEY, deviceId: DEVICE, token: V,
+    playerId: PLAYER, gameId: GAME, presence: true
+  });
+  eq(res.status, 409);
+  eq(viewMap.get(V).responses[GAME]?.[PLAYER] || '', '', 'presença foi forçada sem vaga');
+});
+
+await teste('fuso de Brasília e validade histórica estão no código', async () => {
+  const rem = await origFetch(new URL('../netlify/functions/send-reminders.mjs', location.href)).then((r) => r.text());
+  includes(rem, 'hoursUntilLocal', 'lembretes ainda usam data como UTC');
+  const rating = await origFetch(new URL('../netlify/functions/view-rating.mjs', location.href)).then((r) => r.text());
+  includes(rating, 'gamePlayed', 'nota não verifica se o jogo já aconteceu');
+  const daily = await origFetch(new URL('../netlify/functions/_daily.mjs', location.href)).then((r) => r.text());
+  includes(daily, "timeZone: TZ", 'fuso de Brasília não está compartilhado');
 });
 
 /* ------------------------------------------------------------------ */
