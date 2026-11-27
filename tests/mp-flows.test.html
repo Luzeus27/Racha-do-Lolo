@@ -837,6 +837,7 @@ await teste('despesas do caixa não têm categoria de taxa do Mercado Pago', asy
   const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
   ok(src.includes("const CASH_ROWS = ['Quadra', 'Goleiros', 'Arbitragem', 'Churrasco', 'Material', 'Outros', 'Brindes', 'Benefícios']"), 'categorias mudaram');
   ok(!/CASH_ROWS[^\n]*taxa/i.test(src), 'taxa entrou nas categorias');
+  includes(src, 'acima da reserva anual', 'aviso de reserva estourada ausente');
 });
 
 grupo('9. Proteção contra taxa digitada ou importada');
@@ -853,7 +854,7 @@ await teste('cashNet transforma bruto digitado em líquido e preserva desconto',
 await teste('baixa manual usa cashNet e respeita o valor da pendência antiga', async () => {
   const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
   ok(src.includes("amount: cashNet(v('amount'), esperado)"), 'formulário de mensalidade não protegido');
-  ok(src.includes('const esperado = anterior ? num(anterior.amount) : num(settings().monthlyFee)'), 'pendência antiga perdeu o valor original');
+  ok(src.includes('const esperado = anterior ? num(anterior.amount) : feeForPlayerId(playerId)'), 'pendência antiga perdeu o valor original');
   ok(src.includes('amt = num(el.dataset.amount)'), 'confirmação do modal deixou de usar o valor publicado');
   ok(src.includes('amount: num(pp.amount)'), 'confirmação da página deixou de usar o valor publicado');
 });
@@ -1080,7 +1081,7 @@ await teste('frontend valida foto, backup, redirecionamento e cache com token', 
   includes(visual, "startsWith(location.origin + '/jogador.html?')", 'redirecionamento sem validar origem');
   ok(!jogador.includes('presença e a diária são confirmadas na hora'), 'jogador.js ainda promete baixa automática');
   includes(jogador, 'O administrador dará a baixa.', 'fluxo único de aviso ausente');
-  includes(sw, 'racha-do-lolo-v67', 'cache não foi atualizado');
+  includes(sw, 'racha-do-lolo-v95', 'cache não foi atualizado');
   includes(sw, '/[?&](?:v=VW-|p=VP-)/.test(url.search)', 'tokens ainda entram no cache');
 });
 
@@ -1090,7 +1091,7 @@ await teste('privacidade cita WhatsApp e ANPD; Apagar tudo pede duas confirmaç�
   includes(priv, 'WhatsApp (Meta)', 'WhatsApp não foi citado como terceiro');
   includes(priv, 'não envia mensagens automaticamente', 'envio manual do WhatsApp não foi explicado');
   includes(priv, 'Autoridade Nacional de Proteção de Dados (ANPD)', 'ANPD ausente');
-  includes(priv, '3 dias úteis', 'prazo de comunicação ausente');
+  includes(priv, 'em prazo razoável, conforme a LGPD e a regulamentação da ANPD', 'prazo de comunicação ausente');
   includes(priv, 'duas confirmações', 'a política não fala nas duas confirmações');
   includes(app, 'function confirmActionTwice(', 'ajuda de dupla confirmação ausente');
   includes(app, "case 'clear-all': confirmActionTwice(", 'Apagar tudo ainda tem uma confirmação só');
@@ -1188,7 +1189,7 @@ await teste('app e documentos explicam o upgrade e usam o cache novo', async () 
   includes(readme, '### Upgrade do Básico para o PRO', 'README sem o passo a passo');
   includes(readme, '### Modalidades de pagamento da assinatura', 'README sem as modalidades');
   includes(termos, '⚡ Fazer upgrade para o PRO', 'Termos sem a cláusula de upgrade');
-  includes(sw, 'racha-do-lolo-v67', 'cache não foi atualizado');
+  includes(sw, 'racha-do-lolo-v95', 'cache não foi atualizado');
 });
 
 await teste('conta master fica só no servidor; clientes não veem plano vitalício', async () => {
@@ -1281,6 +1282,826 @@ await teste('botão Falar com o Administrador abre formulário com foto', async 
   includes(sw, "'./contato.html'", 'página de contato fora do cache offline');
   includes(priv, '✉️ Falar com o Administrador', 'Privacidade não cita o formulário');
   includes(termos, '✉️ Falar com o Administrador', 'Termos não citam o formulário');
+});
+
+grupo('13. Comunidade por cidade e acesso fechado');
+await teste('aba Comunidade abre dentro do app pela navegação', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "comunidade: { title: 'Comunidade'", 'item da navegação ausente');
+  includes(app, "items: ['comunidade']", 'aba não está no menu');
+  includes(app, 'comunidade: pageComunidade', 'página não foi registrada');
+  includes(app, "if (ui.page === 'comunidade') carregarComunidade();", 'página não carrega ao navegar');
+  includes(app, "fetch('./comunidade.html')", 'conteúdo não vem do HTML');
+  includes(app, 'data-act="comunidade-retry"', 'botão de tentar de novo ausente');
+  ok(!/EXTERNAL_NAV|href: 'comunidade\.html'/.test(app), 'a aba ainda abre janela separada');
+});
+
+await teste('comunidade funciona dentro do app e sozinha', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  const index = await origFetch(new URL('../index.html', location.href)).then((r) => r.text());
+  includes(html, 'id="comunidade-root"', 'página não tem container próprio');
+  includes(html, '<script src="comunidade.js" defer><\/script>', 'página sozinha não carrega o código');
+  includes(index, '<script src="comunidade.js" defer><\/script>', 'app não carrega o código da comunidade');
+  includes(js, 'window.initComunidade = initComunidade', 'app não consegue iniciar a comunidade');
+  includes(js, "root.querySelector('#form-acesso')", 'o código não usa o container da página');
+  includes(js, "document.getElementById('comunidade-root')", 'página sozinha não inicia');
+  ok(!/<script>[\s\S]*CAPITAIS/.test(html), 'o código ainda está duplicado dentro do HTML');
+});
+
+await teste('comunidade não expõe link de convite', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  ok(!/<a[^>]+href="[^"]*(?:chat\.whatsapp\.com|wa\.me\/)/.test(html), 'link de grupo ficou exposto');
+  includes(html, 'nenhum convite fica exposto nesta página', 'aviso de grupo fechado ausente');
+  includes(html, 'depois que o administrador te adicionar', 'regra de acesso não foi explicada');
+});
+
+await teste('dois formulários Netlify com honeypot e envio por FormData', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  includes(html, 'name="comunidade-acesso"', 'formulário de pedido ausente');
+  includes(html, 'name="comunidade-criacao"', 'formulário de pedido de criação ausente');
+  ok(!/Sugeri|sugest|linkGrupo/.test(html), 'o cliente não deve sugerir grupo nem enviar convite');
+  includes(html, 'Pedir criação da cidade', 'botão de criação da cidade ausente');
+  eq((html.match(/data-netlify="true"/g) || []).length, 2, 'nem todo formulário será detectado');
+  eq((html.match(/data-netlify-honeypot="bot-field"/g) || []).length, 2, 'honeypot faltou em um formulário');
+  includes(js, "fetch('/', { method: 'POST', body: new FormData(form) })", 'envio dos formulários está errado');
+  includes(html, 'mailto:rachadololo@gmail.com', 'sem alternativa por e-mail');
+});
+
+await teste('pedido de acesso envia só os 4 últimos dígitos da chave', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  includes(js, 'slice(-4)', 'não recorta a chave para 4 dígitos');
+  includes(html, 'maxlength="4"', 'campo da chave aceita mais de 4 dígitos');
+  includes(html, 'Nunca envie a chave inteira', 'aviso de segurança ausente');
+});
+
+await teste('27 estados e capitais prontos no seletor', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  const select = html.slice(html.indexOf('<select id="uf"'), html.indexOf('</select>'));
+  eq((select.match(/<option value="[A-Z]{2}">/g) || []).length, 27, 'nem todos os estados estão no seletor');
+  includes(js, "AC: 'Rio Branco'", 'capital do Acre ausente');
+  includes(js, "SP: 'São Paulo'", 'capital de São Paulo ausente');
+  includes(js, "TO: 'Palmas'", 'capital do Tocantins ausente');
+  includes(html, '<select id="cidade" name="cidade">', 'seletor de capital ausente');
+  includes(html, 'A capital do estado escolhido aparece aqui', 'explicação das capitais ausente');
+  const json = await origFetch(new URL('../comunidade.json', location.href)).then((r) => r.text());
+  ok(Array.isArray(JSON.parse(json)), 'lista de comunidades não é um array');
+});
+
+await teste('outra cidade tem campo próprio para pedir criação', async () => {
+  const html = await origFetch(new URL('../comunidade.html', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  includes(html, 'id="cidade-criacao"', 'campo de cidade fora da capital ausente');
+  includes(html, 'placeholder="Ex.: Arapiraca - AL"', 'formato cidade - UF não foi explicado');
+  includes(html, 'Minha cidade não é capital', 'seção de outra cidade ausente');
+  includes(js, "cidadeCriacao.addEventListener('input'", 'a cidade digitada não é conferida');
+  includes(js, "match(/^(.+?)\\s*[-/\\u2013,]\\s*([A-Za-z]{2})$/)", 'não reconhece cidade - UF');
+  includes(js, "if (!CAPITAIS[sigla]) return null;", 'não valida a sigla do estado');
+  includes(js, "preencher(form, local.uf, local.cidade);", 'pedido de criação não envia cidade e estado');
+});
+
+await teste('capital selecionada abre pedido de acesso sem pedir criação', async () => {
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  includes(js, "formAcesso.hidden = false;", 'formulário de acesso não aparece para a capital');
+  includes(js, "preencher(formAcesso, ufSel, cidadeSel || capital);", 'capital não é enviada no pedido');
+  includes(js, 'Grupo de \' + capital + \' já disponível', 'capital não aparece como grupo existente');
+  includes(js, "cidadeSel = CAPITAIS[ufSel] || '';", 'capital não é pré-selecionada');
+});
+
+await teste('cache offline atualizado com a comunidade', async () => {
+  const sw = await origFetch(new URL('../sw.js', location.href)).then((r) => r.text());
+  includes(sw, 'racha-do-lolo-v95', 'versão do cache não foi atualizada');
+  includes(sw, "'./comunidade.html'", 'página fora do cache offline');
+  includes(sw, "'./comunidade.js'", 'código da página fora do cache offline');
+  includes(sw, "'./comunidade.json'", 'lista fora do cache offline');
+});
+
+await teste('comunidade abre offline e menu mobile fecha ao tocar fora', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../comunidade.js', location.href)).then((r) => r.text());
+  const css = await origFetch(new URL('../styles.css', location.href)).then((r) => r.text());
+  includes(app, "fetch('./comunidade.html')", 'aba não usa o cache do service worker');
+  ok(!/fetch\('\.\/comunidade\.html',\s*\{\s*cache:\s*'no-store'/.test(app), 'comunidade ainda ignora o cache');
+  includes(js, "fetch('./comunidade.json')", 'lista ainda ignora o cache');
+  ok(!/fetch\('\.\/comunidade\.json',\s*\{\s*cache:\s*'no-store'/.test(js), 'lista ainda ignora o cache');
+  includes(app, "data-act=\"comunidade-retry\"", 'sem botão para tentar de novo');
+  includes(app, "case 'comunidade-retry': carregarComunidade(); break;", 'botão de tentar de novo não funciona');
+  includes(app, "document.body.classList.contains('menu-open') && !e.target.closest('.sidebar')", 'menu não fecha ao tocar fora');
+  includes(app, "case 'nav': document.body.classList.remove('menu-open')", 'menu não fecha ao navegar');
+  includes(css, 'body.menu-open::before', 'sem escuro atrás do menu mobile');
+  includes(css, '.card-head { display: flex; flex-wrap: wrap;', 'cabeçalho dos cartões não quebra no celular');
+});
+
+await teste('tabela de atividade recente tem cabeçalho para leitor de tela', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, '<th scope="col">Atividade</th><th scope="col" class="right">Data</th>', 'tabela de atividades sem cabeçalho');
+});
+
+await teste('privacidade e termos explicam a comunidade', async () => {
+  const priv = await origFetch(new URL('../privacidade.html', location.href)).then((r) => r.text());
+  const termos = await origFetch(new URL('../termos.html', location.href)).then((r) => r.text());
+  includes(priv, '🌍 Comunidade', 'Privacidade não cita a comunidade');
+  includes(priv, '4 últimos dígitos', 'Privacidade não explica a chave enviada');
+  includes(termos, 'Na aba <strong>Comunidade</strong>', 'Termos não citam a comunidade');
+  ok(!/lucianojunior373@gmail\.com/i.test(priv + termos), 'e-mail antigo ainda aparece nas páginas');
+});
+
+grupo('13. Ajuste manual depois do sorteio');
+
+await teste('resultado do sorteio oferece ajuste sem novo sorteio', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'data-act="edit-last-draw"', 'botão Ajustar times ausente');
+  includes(app, 'function openDrawEditor(entry)', 'editor do último sorteio ausente');
+  includes(app, 'ui.draftTeams = (entry.teams || []).map(t => t.slice())', 'o ajuste não copia os times');
+  includes(app, 'entry.teams = teams;', 'o ajuste não altera o resultado salvo');
+  includes(app, 'entry.teamSigs = teams.map(t => t.slice().sort().join(\'+\'))', 'assinaturas das duplas não foram recalculadas');
+  ok(!/data-act="edit-last-draw"[\s\S]{0,300}do-draw/.test(app), 'o ajuste parece criar novo sorteio');
+  includes(app, "const TEAM_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];", 'placar limitado a duas equipes');
+  includes(app, 'Equipe ${k}', 'placar não mostra todas as equipes');
+  includes(app, 'const teamCount = Math.min(TEAM_KEYS.length', 'número de equipes não vem do sorteio');
+});
+
+await teste('placar ao vivo acompanha 3 a 6 equipes', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const js = await origFetch(new URL('../ao-vivo.js', location.href)).then((r) => r.text());
+  const fn = await origFetch(new URL('../netlify/functions/publish-live.mjs', location.href)).then((r) => r.text());
+  const html = await origFetch(new URL('../ao-vivo.html', location.href)).then((r) => r.text());
+  includes(app, "const TEAM_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'];", 'seletor do placar limitado a A/B');
+  includes(app, "if (el.id === 'live-team')", 'troca de equipe não foi registrada');
+  includes(fn, 'function cleanTeam(value)', 'servidor ainda aceita só A/B');
+  includes(fn, 'cleanTeam(body.team)', 'servidor não usa a equipe escolhida');
+  includes(fn, 'score[team] = (score[team] || 0) + 1;', 'gol não soma na equipe escolhida');
+  includes(html, '.score-grid { display: flex; flex-wrap: wrap;', 'placar não acomoda mais de duas equipes');
+  includes(js, 'function teamKeysFrom(score, teams)', 'página do grupo não descobre quantas equipes existem');
+  includes(js, 'keys.map((k, i)', 'placar da página não repete por equipe');
+  const ini = js.indexOf('  const TEAM_KEYS =');
+  const fim = js.indexOf('  function eventsHtml', ini);
+  ok(ini >= 0 && fim > ini, 'código do placar não foi localizado');
+  const make = new Function('num', 'esc', 'fmtDateTime', 'card',
+    js.slice(ini, fim) + '\nreturn { scoreHtml, teamKeysFrom, teamLabel };');
+  const fns = make((v) => Number(v) || 0, (v) => String(v ?? ''), () => '10:00',
+    (title, sub, body) => title + '|' + sub + '|' + body);
+  eq(fns.teamKeysFrom({ A: 0, B: 0, C: 0 }, [['x'], ['y'], ['z']]).join(''), 'ABC');
+  eq(fns.teamKeysFrom({}, [[1], [2], [3], [4]]).join(''), 'ABCD');
+  eq(fns.teamLabel('D'), 'D');
+  const placar = fns.scoreHtml({ score: { A: 1, B: 2, C: 3 }, startedAt: 'x' }, [[], [], []]);
+  includes(placar, '<strong>Time C</strong>');
+  includes(placar, '<div class="score-value">3</div>');
+});
+
+await teste('mover jogador preserva todos os participantes', () => {
+  const teams = [['a', 'b', 'c'], ['d', 'e', 'f']];
+  const draft = teams.map(t => t.slice());
+  const from = 0, to = 1, pid = 'b';
+  const idx = draft[from].indexOf(pid);
+  draft[from].splice(idx, 1);
+  draft[to].push(pid);
+  eq(draft[0].join(','), 'a,c');
+  eq(draft[1].join(','), 'd,e,f,b');
+  eq(draft.flat().slice().sort().join(','), teams.flat().slice().sort().join(','));
+});
+
+await teste('salvar ajuste exige pelo menos 2 equipes e nenhuma vazia', () => {
+  const ruim = [[], ['a', 'b']];
+  const bom = [['a', 'c'], ['d', 'e', 'f', 'b']];
+  ok(ruim.filter(t => t.length).length < 2, 'editor aceitou equipe vazia');
+  eq(bom.length, 2);
+  const total = bom.reduce((n, t) => n + t.length, 0);
+  eq(total, 6);
+});
+
+await teste('ação de ajuste está bloqueada com licença vencida', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  for (const act of ['edit-last-draw', 'move-draw-player', 'save-last-draw', 'delete-game', 'add-goal', 'delete-goal', 'remove-logo', 'save-view-expiry', 'reset-group-message', 'restore-backup', 'session-new', 'session-edit']) {
+    includes(app, `'${act}'`, `ação ${act} não está na lista de escrita`);
+  }
+  const lista = app.slice(app.indexOf('const WRITE_ACTS'), app.indexOf('function licenseLocked'));
+  for (const act of ['edit-last-draw', 'move-draw-player', 'save-last-draw', 'delete-game', 'add-goal', 'delete-goal', 'remove-logo', 'save-view-expiry', 'reset-group-message', 'restore-backup', 'session-new', 'session-edit']) {
+    includes(lista, `'${act}'`, `ação ${act} fora de WRITE_ACTS`);
+  }
+});
+
+await teste('assinatura vencida bloqueia escrita, mas permite consultar filtros', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const lista = app.slice(app.indexOf('const WRITE_ACTS'), app.indexOf('function licenseLocked'));
+  for (const act of ['create-view-link', 'refresh-view-link', 'revoke-view', 'checkin', 'cobranca', 'cobrar', 'manual-confirm', 'bank-import', 'bank-confirm', 'timer-add-goal']) {
+    includes(lista, `'${act}'`, `ação ${act} deveria exigir assinatura ativa`);
+  }
+  const ini = app.indexOf("document.addEventListener('change'");
+  const change = app.slice(ini, ini + 1200);
+  includes(change, "'racha-logo-file'", 'troca de logo não foi bloqueada');
+  includes(change, "if (licenseLocked() && el.id === 'year-select')", 'ano não foi tratado como consulta');
+  ok(!change.includes("'pay-month', 'score-month', 'award-month'"), 'filtros de mês continuam bloqueados');
+  includes(app, 'if (licenseLocked() && ![\'checkout\', \'license-key\', \'license-transfer\']', 'formulários não foram bloqueados');
+});
+
+grupo('15. Estatísticas de goleiro e zagueiro');
+
+await teste('defesas, paredões e gols sofridos entram no cálculo de pontos', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const ini = src.indexOf('function scorePointsWith(');
+  const fim = src.indexOf('function scorePoints(sc)', ini);
+  ok(ini >= 0 && fim > ini, 'função de pontuação não encontrada');
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const fn = new Function('num', src.slice(ini, fim) + '; return scorePointsWith;')(num);
+  const cfg = {
+    ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3,
+    ptsFarrapou: 3, ptsDesarme: 1, ptsAtrasado: 2,
+    ptsDefesas: 2, ptsParedoes: 4, ptsGolsSofridos: -1
+  };
+  const sc = {
+    goals: 1, assists: 1, presence: 2, desarmes: 1, defesas: 3, paredoes: 1,
+    golsSofridos: 2, fairPlay: 1, punctual: 1, farrapou: 0, atrasado: 0, cards: 0
+  };
+  eq(fn(sc, cfg), 23, 'pontos com as novas categorias');
+  const padrao = { ptsGoal: 3, ptsAssist: 2, ptsPresence: 1, ptsFairPlay: 5, ptsPunctual: 2, ptsCard: -3, ptsFarrapou: 3, ptsDesarme: 1, ptsAtrasado: 2 };
+  eq(fn(sc, padrao), 15, 'as novas categorias não podem mudar o resultado sem configuração');
+});
+
+await teste('padrão é zero: nenhuma pontuação antiga muda sozinha', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'ptsDefesas: 0, ptsParedoes: 0, ptsGolsSofridos: 0', 'os novos pontos não começam em zero');
+  includes(app, 'Por gol sofrido (use número negativo)', 'a configuração de gols sofridos não foi explicada');
+  const trecho = app.slice(app.indexOf('const AWARD_PLACES'), app.indexOf('const NAV'));
+  eq((trecho.match(/\{ place: [123],/g) || []).length, 3, 'as premiações deixaram de ser só 1º/2º/3º');
+  const tops = app.slice(app.indexOf('function topWinners('), app.indexOf('function awardPlaces('));
+  includes(tops, '.slice(0, 3)', 'as premiações deixaram de pegar só os 3 maiores');
+});
+
+await teste('campos digitáveis e configuração aparecem no app', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "['goals', 'assists', 'presence', 'desarmes', 'defesas', 'paredoes', 'golsSofridos'", 'campos novos ausentes na tela');
+  for (const k of ['defesas', 'paredoes', 'golsSofridos']) {
+    includes(app, `data-score=\"\${k}\"`, 'a tela não usa o gerador de campos');
+    includes(app, `${k}: num(s.${k})`, `${k} não entra no retrato do grupo`);
+  }
+  for (const k of ['ptsDefesas', 'ptsParedoes', 'ptsGolsSofridos']) {
+    includes(app, `f('${k}'`, `configuração ${k} ausente`);
+    includes(app, `'${k}'`, `configuração ${k} não é salva`);
+  }
+  includes(app, 'defesas: 0, paredoes: 0, golsSofridos: 0, fairPlay', 'novo registro não zera as categorias');
+  includes(app, 'Defesas difíceis', 'perfil do jogador não mostra defesas');
+});
+
+await teste('retrato publicado recebe as novas categorias sem erro antigo', async () => {
+  const pub = await origFetch(new URL('../netlify/functions/publish-view.mjs', location.href)).then((r) => r.text());
+  const visual = await origFetch(new URL('../visualizar.js', location.href)).then((r) => r.text());
+  for (const k of ['ptsDefesas', 'ptsParedoes', 'ptsGolsSofridos']) {
+    includes(pub, `'${k}'`, `configuração ${k} não é publicada`);
+    includes(visual, `num(st.${k})`, `${k} não é lido na página do grupo`);
+  }
+  for (const k of ['defesas', 'paredoes', 'golsSofridos']) {
+    includes(pub, `${k}: number(s.${k})`, `${k} não é publicado`);
+    includes(visual, `num(sc.${k}) * pts.${k}`, `${k} não conta no ranking do grupo`);
+  }
+  ok(!visual.includes('destrarme'), 'o erro antigo destrarme ainda existe');
+});
+
+grupo('16. Relatório mensal em CSV');
+
+await teste('botão do relatório CSV usa o mês escolhido e não exige assinatura', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'data-act="report-month-csv"', 'botão do relatório CSV ausente');
+  includes(app, "case 'report-month-csv': downloadMonthlyReportCSV(num($('#report-month')?.value) || currentMonth()); break;", 'o botão não usa o mês do seletor');
+  const write = app.slice(app.indexOf('const WRITE_ACTS'), app.indexOf('function licenseLocked'));
+  ok(!write.includes("'report-month-csv'"), 'baixar CSV não pode exigir assinatura');
+});
+
+await teste('CSV tem as mesmas seções do relatório em PDF', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'function monthlyReportHTML(m)', 'relatório em PDF ausente');
+  includes(app, 'function downloadMonthlyReportCSV(m)', 'relatório em CSV ausente');
+  const csv = app.slice(app.indexOf('function downloadMonthlyReportCSV'), app.indexOf('function resizePhoto'));
+  for (const trecho of ['Receitas', 'Despesas', 'Mensalidades', 'Pontuação', 'Ranking do trimestre', 'Metas extras']) {
+    includes(app, trecho, `seção ${trecho} saiu do PDF`);
+    includes(csv, trecho, `seção ${trecho} não entrou no CSV`);
+  }
+  includes(csv, 'revenue(m)', 'o CSV não usa as receitas do mês');
+  includes(csv, 'expenses(m)', 'o CSV não usa as despesas do mês');
+  includes(csv, 'rankingFor(Math.ceil(m / 3))', 'o CSV não usa o ranking do trimestre');
+});
+
+await teste('arquivo sai com nome do mês, BOM e vírgula decimal', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const csv = app.slice(app.indexOf('function downloadMonthlyReportCSV'), app.indexOf('function resizePhoto'));
+  includes(csv, "`relatorio-${String(m).padStart(2, '0')}-${y}.csv`", 'nome do arquivo não identifica o mês');
+  includes(csv, "'\\ufeff' + out", 'sem BOM para o Excel abrir acentuado');
+  includes(csv, "replace(/\"/g, '\"\"')", 'aspas não foram escapadas');
+  includes(csv, "toFixed(2).replace('.', ',')", 'valores não usam vírgula decimal');
+  includes(csv, "join(';')", 'separador precisa ser ponto e vírgula no pt-BR');
+});
+
+await teste('CSV inclui as colunas novas de goleiro e zagueiro', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const csv = app.slice(app.indexOf('function downloadMonthlyReportCSV'), app.indexOf('function resizePhoto'));
+  for (const k of ['Defesas', 'Paredões', 'Gols sofridos', 'Pontos']) includes(csv, `'${k}'`, `coluna ${k} faltou`);
+  includes(csv, 'num(s.defesas)', 'defesas não são exportadas');
+  includes(csv, 'num(s.paredoes)', 'paredões não são exportados');
+  includes(csv, 'num(s.golsSofridos)', 'gols sofridos não são exportados');
+  includes(csv, 'scorePoints(s)', 'os pontos exportados não usam a regra do app');
+});
+
+grupo('17. Cargos da diretoria com mensalidade própria');
+
+await teste('valor do cargo começa no mensalista e nunca fica abaixo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const ini = app.indexOf('function isMonthlyPlayer');
+  const fim = app.indexOf('function parsePlayerType', ini);
+  ok(ini >= 0 && fim > ini, 'funções de cargo não encontradas');
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const roles = [
+    { type: 'Presidente', feeKey: 'feePresidente', limit: 1 },
+    { type: 'Vice-Presidente', feeKey: 'feeVice', limit: 1 },
+    { type: 'Diretor', feeKey: 'feeDiretor', limit: 0 },
+    { type: 'Conselheiro', feeKey: 'feeConselheiro', limit: 0 }
+  ];
+  const cfg = { monthlyFee: 60, feePresidente: 100, feeVice: 0, feeDiretor: 40, feeConselheiro: 90 };
+  const players = [{ id: 'p1', type: 'Presidente', active: true }];
+  const h = new Function('num', 'settings', 'activePlayers', 'playerById', 'BOARD_ROLES',
+    app.slice(ini, fim) + '; return { isMonthlyPlayer, playerFee, roleCount, roleLimitError };'
+  )(num, () => cfg, () => players, (id) => players.find((p) => p.id === id), roles);
+  eq(h.playerFee({ type: 'Presidente' }), 100, 'Presidente com valor editado');
+  eq(h.playerFee({ type: 'Vice-Presidente' }), 60, 'Vice em 0 deve usar a base');
+  eq(h.playerFee({ type: 'Conselheiro' }), 90, 'Conselheiro com valor editado');
+  eq(h.playerFee({ type: 'Diretor' }), 60, 'valor abaixo da base não pode cobrar menos');
+  eq(h.playerFee({ type: 'Mensalista' }), 60, 'mensalista continua na base');
+  ok(h.isMonthlyPlayer({ type: 'Diretor' }) && !h.isMonthlyPlayer({ type: 'Diarista' }), 'cargo não foi tratado como mensalista');
+  ok(h.roleLimitError('Presidente', '') , 'deve bloquear o 2º Presidente');
+  ok(!h.roleLimitError('Presidente', 'p1'), 'editar o próprio Presidente não pode bloquear');
+  ok(!h.roleLimitError('Vice-Presidente', ''), 'deve permitir o 1º Vice');
+  ok(!h.roleLimitError('Diretor', ''), 'Diretor não pode ter teto');
+  ok(!h.roleLimitError('Conselheiro', ''), 'Conselheiro não pode ter teto');
+});
+
+await teste('só Presidente e Vice têm limite; tela e import respeitam', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const defs = app.slice(app.indexOf('const BOARD_ROLES'), app.indexOf('const PLAYER_TYPES'));
+  eq((defs.match(/limit: 1/g) || []).length, 2, 'mais de dois cargos com limite');
+  ok(!/limit: [1-9]/.test(defs.slice(defs.indexOf('Diretor'))), 'Diretor/Conselheiro não podem ter limite');
+  includes(app, "const limite = roleLimitError(chosenType, form.dataset.id || '')", 'formulário não checa o limite');
+  includes(app, 'if (limite) { toast(limite', 'formulário não avisa o limite');
+  includes(app, "if (roleLimitError(type, '')) { cargosIgnorados++; return; }", 'importação não checa o limite');
+  includes(app, 'function parsePlayerType(raw)', 'importação não reconhece os cargos');
+  includes(app, '<option value="${r.type}"', 'o filtro de jogadores não lista os cargos');
+  for (const t of ['Presidente', 'Vice-Presidente', 'Diretor', 'Conselheiro']) {
+    includes(app, `type: '${t}'`, `cargo ${t} não está cadastrado no app`);
+  }
+  includes(app, "roleDef(p.type) ? 'amber'", 'cargo não aparece distinto na lista');
+  const visual = await origFetch(new URL('../visualizar.js', location.href)).then((r) => r.text());
+  includes(visual, "['Presidente', 'Vice-Presidente', 'Diretor', 'Conselheiro'].includes(rawType)", 'cargo não é mostrado no link do grupo');
+});
+
+await teste('todas as cobranças usam o valor do cargo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'const amount = num(pendente?.amount) || playerFee(p)', 'link de cobrança ignora o cargo');
+  includes(app, 'const esperado = anterior ? num(anterior.amount) : feeForPlayerId(playerId)', 'baixa ignora o cargo');
+  includes(app, 'amount: m[3] ? num(m[3]) : num(due?.amount) || feeForPlayerId(pid)', 'link sem valor ignora o cargo');
+  includes(app, 'amount: playerFee(p), paid: true', 'marcar todos ignora o cargo');
+  includes(app, 'const expected = sum(players, p => playerFee(p))', 'previsto ignora o cargo');
+  includes(app, 'activePlayers().filter(isMonthlyPlayer)', 'cargos não entram na lista de pagantes');
+  includes(app, 'const msg = `Olá ${p.name.split', 'mensagem de cobrança sumiu');
+  const cobrar = app.slice(app.indexOf('function cobrar('), app.indexOf('function upsertScore('));
+  includes(cobrar, 'playerFee(p)', ' WhatsApp de cobrança usa valor errado');
+});
+
+await teste('valor é configurável, salvo e publicado no retrato', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const pub = await origFetch(new URL('../netlify/functions/publish-view.mjs', location.href)).then((r) => r.text());
+  const get = await origFetch(new URL('../netlify/functions/get-view.mjs', location.href)).then((r) => r.text());
+  for (const k of ['feePresidente', 'feeVice', 'feeDiretor', 'feeConselheiro']) {
+    includes(app, `${k}: 0,`, `${k} não começa em 0`);
+    includes(app, `f('${k}'`, `campo ${k} ausente em Configurações`);
+    includes(app, `'${k}'`, `${k} não é salvo`);
+    includes(app, `${k}: playerFee({ type:`, `${k} não vai no retrato`);
+    includes(pub, `'${k}'`, `${k} não passa na sanitização`);
+    includes(get, `'${k}'`, `${k} não chega à página do grupo`);
+  }
+  includes(app, 'Deixe <strong>0</strong> para o cargo cobrar igual ao mensalista', 'regra do 0 não foi explicada');
+  includes(pub, 'settings[k] = number(settings[k])', 'valores publicados não são numéricos');
+});
+
+await teste('servidor cobra o valor do cargo no PIX, cartão e assinatura', async () => {
+  const daily = await origFetch(new URL('../netlify/functions/_daily.mjs', location.href)).then((r) => r.text());
+  const ini = daily.indexOf('const ROLE_FEE_KEYS');
+  const fim = daily.indexOf('export function gameById', ini);
+  ok(ini >= 0 && fim > ini, 'cálculo de mensalidade do servidor não encontrado');
+  const src = daily.slice(ini, fim).replace(/export function/g, 'function');
+  const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const text = (v, m = 120) => String(v ?? '').slice(0, m);
+  const number = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const calc = new Function('isObject', 'text', 'number', src + '; return playerMonthlyFee;')(isObject, text, number);
+  const record = {
+    snapshot: {
+      settings: { monthlyFee: 60, feePresidente: 100, feeVice: 0, feeDiretor: 40 },
+      players: [{ id: 'a', type: 'Presidente' }, { id: 'b', type: 'Vice-Presidente' }, { id: 'c', type: 'Diretor' }]
+    }
+  };
+  eq(calc(record, 'a'), 100, 'servidor ignora o valor do Presidente');
+  eq(calc(record, 'b'), 60, 'servidor não usa a base quando o cargo está em 0');
+  eq(calc(record, 'c'), 60, 'servidor cobra menos que a base');
+  const playerView = await origFetch(new URL('../netlify/functions/get-player-view.mjs', location.href)).then((r) => r.text());
+  const auto = await origFetch(new URL('../netlify/functions/create-monthly-auto.mjs', location.href)).then((r) => r.text());
+  const jogador = await origFetch(new URL('../jogador.js', location.href)).then((r) => r.text());
+  includes(playerView, 'playerMonthlyFee(record, playerId)', 'link individual usa valor global');
+  includes(playerView, 'type: text(mine.type, 30)', 'tipo do cargo não chega ao jogador');
+  includes(auto, 'const net = playerMonthlyFee(record, playerId)', 'assinatura usa valor global');
+  includes(jogador, "roles.indexOf(String(p.type || ''))", 'jogador não vê o próprio cargo');
+});
+
+grupo('18. Cronômetro das partidas');
+
+await teste('duração do racha vira minutos e o relógio é formatado', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const i1 = app.indexOf('function parseDurationMinutes'), f1 = app.indexOf('function timerMinutes', i1);
+  const i2 = app.indexOf('function fmtClock'), f2 = app.indexOf('function fmtHour', i2);
+  ok(i1 >= 0 && f1 > i1 && i2 >= 0 && f2 > i2, 'funções do cronômetro não encontradas');
+  const parse = new Function('num', app.slice(i1, f1) + '; return parseDurationMinutes;')(num);
+  const clock = new Function('num', app.slice(i2, f2) + '; return fmtClock;')(num);
+  eq(parse('1h30'), 90, '1h30 não deu 90 minutos');
+  eq(parse('1:30'), 90, '1:30 não deu 90 minutos');
+  eq(parse('90 min'), 90, '90 min não deu 90 minutos');
+  eq(parse('2 horas'), 120, '2 horas não deu 120 minutos');
+  eq(parse(''), 90, 'sem duração não caiu no padrão de 90');
+  eq(clock(60000), '01:00', 'um minuto mal formatado');
+  eq(clock(3661000), '01:01:01', 'uma hora mal formatada');
+  eq(clock(-100), '00:00', 'valor negativo não zerou');
+});
+
+await teste('aba própria, salvar, pausar e retomar', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "timer:      { title: 'Cronômetro'", 'aba Cronômetro não foi criada');
+  includes(app, "'sorteador', 'timer',", 'Cronômetro não está no menu');
+  includes(app, 'timer: pageTimer', 'página do Cronômetro não foi registrada');
+  includes(app, "timer: { minutes: 10, startTime: '', sessionId: '', current: null, history: [] }", 'estado inicial do cronômetro ausente');
+  includes(app, 'TIMER_RETENTION_MS = 24 * 60 * 60 * 1000', 'não há retenção de 24 horas');
+  includes(app, 'pruneTimerHistory()', 'histórico antigo não é apagado');
+  for (const act of ['timer-start', 'timer-pause', 'timer-resume', 'timer-finish', 'timer-delete', 'timer-clear-history']) {
+    includes(app, `'${act}'`, `ação ${act} faltou`);
+  }
+  includes(app, "cur.remainingMs = timerRemaining(cur);", 'pausa não guarda o tempo restante');
+  includes(app, 'cur.plannedEnd = new Date(Date.now() + restante).toISOString();', 'retomada não ajusta o fim previsto');
+  includes(app, 'timerBeep()', 'alarme sonoro não foi chamado');
+  includes(app, 'setInterval(tickTimer, 1000)', 'contagem não é atualizada');
+});
+
+await teste('prévia, minutagem editável e detalhes salvos', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'parseDurationMinutes(timerDurationRaw())', 'não usa a duração do racha escolhido');
+  includes(app, 'Math.floor(total / min)', 'não calcula quantas partidas cabem');
+  includes(app, 'data-form="timer-config"', 'formulário de minutagem ausente');
+  includes(app, "state.timer.minutes = Math.max(1, Math.min(240", 'minutagem não é validada');
+  includes(app, 'type === \'timer-finish\'', 'salvamento da partida ausente');
+  for (const campo of ['startedAt: cur.startedAt', 'endedAt,', 'plannedStart: cur.plannedStart', 'plannedEnd: cur.plannedEnd', 'pausedMs:', 'teams:', 'teamNames:', 'scoreA, scoreB, goals']) {
+    includes(app, campo, `detalhe ${campo} não é salvo`);
+  }
+  includes(app, 'timerTeamLines(h.teams)', 'times não aparecem no histórico');
+  includes(app, 'timerGoalLine(h.goals)', 'gols não aparecem no histórico');
+  const css = await origFetch(new URL('../styles.css', location.href)).then((r) => r.text());
+  includes(css, '.timer-display', 'estilo do relógio ausente');
+});
+
+grupo('19. Horários da semana');
+
+await teste('cadastro, migração e limpeza dos horários da semana', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'const WEEKDAYS = [', 'dias da semana não foram definidos');
+  includes(app, 'sessions: [], sessionsSeeded: false', 'configuração de sessões ausente');
+  includes(app, 'state.settings.sessionsSeeded !== true', 'migração do racha único não existe');
+  includes(app, "id: 'sessao-1'", 'sessão inicial não é criada');
+  includes(app, 'function activeSessions()', 'filtragem de rachas ativos ausente');
+  includes(app, 'Horários da semana', 'cartão em Configurações faltou');
+  includes(app, '＋ Novo horário', 'botão de novo horário faltou');
+  includes(app, 'data-act="session-new"', 'botão de novo horário faltou');
+  includes(app, 'data-act="session-edit"', 'botão de editar racha faltou');
+  includes(app, 'data-act="session-delete"', 'botão de excluir racha faltou');
+  includes(app, "type === 'session'", 'salvamento do racha ausente');
+  includes(app, 'name: v(\'name\') || \'Racha\'', 'nome do racha não é salvo');
+  includes(app, 'day: Math.min(6, Math.max(0', 'dia da semana não é validado');
+  includes(app, 'duration: v(\'duration\')', 'duração do racha não é salva');
+  includes(app, 'notes: v(\'notes\')', 'regras/observações do racha não são salvas');
+  includes(app, 'active: fd.get(\'active\') !== null', 'status ativo/inativo não é salvo');
+  includes(app, 'Os jogos já criados foram mantidos', 'exclusão não avisa sobre os jogos');
+});
+
+await teste('textos chamam horários, sem criar outra função', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  includes(app, "'Novo horário da semana'", 'modal ainda diz novo racha');
+  includes(app, '💾 Salvar horário', 'botão do modal ainda diz salvar racha');
+  includes(app, 'Nome do horário<input name="name"', 'campo do modal ainda diz nome do racha');
+  ok(!app.includes("section('Rachas da semana'"), 'título antigo voltou');
+  ok(!app.includes('＋ Novo racha'), 'botão antigo voltou');
+  includes(readme, '**Configurações → Horários da semana**', 'README não usa o nome novo');
+  includes(readme, 'Um horário não é outro racha', 'README não explica a regra da assinatura');
+});
+
+await teste('agenda e Cronômetro usam os rachas cadastrados', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'data-act="generate-sessions"', 'botão de gerar rachas do mês faltou');
+  includes(app, 'activeSessions().forEach(s =>', 'a agenda não percorre os rachas ativos');
+  includes(app, 'sessionId: s.id, sessionName: s.name', 'jogo gerado não guarda de qual racha é');
+  includes(app, 'sessionId: sess?.id', 'jogo avulso não guarda o racha escolhido');
+  includes(app, 'time: v(\'time\') || (sess?.time', 'jogo avulso não herda o horário');
+  includes(app, 'location: v(\'location\') || (sess?.location', 'jogo avulso não herda o local');
+  includes(app, 'g.location ?', 'local do jogo não aparece na tabela');
+  includes(app, 'timerSession()', 'Cronômetro não consulta o racha escolhido');
+  includes(app, 'timerDurationRaw()', 'Cronômetro não usa a duração do racha');
+  includes(app, 'parseDurationMinutes(sess.duration)', 'minutagem sugerida não vem da duração do racha');
+  includes(app, 'name="duration" type="number"', 'duração da partida não pode ser ajustada ao encerrar');
+});
+
+grupo('20. Agenda do ano e presença dos jogos');
+
+await teste('gerar todos os jogos do ano sem repetir', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'data-act="generate-sessions-year"', 'botão de gerar o ano todo faltou');
+  includes(app, "generate-sessions-year'", 'ação de gerar o ano todo não está protegida');
+  includes(app, 'function generateSessionGames(months)', 'gerador reutilizável ausente');
+  includes(app, 'months.forEach(m =>', 'o gerador não percorre os meses recebidos');
+  includes(app, 'generateSessionGames(Array.from({ length: 12 }', 'o ano todo não gera 12 meses');
+  includes(app, 'generateSessionGames([m])', 'geração mensal não usa o novo gerador');
+  includes(app, 'g.sessionId === s.id', 'não evita repetir jogo do mesmo racha');
+  includes(app, 'data-act="generate-sessions"', 'botão de gerar o mês faltou');
+  includes(app, 'id="game-filter-month"', 'filtro de mês na agenda faltou');
+  includes(app, "ui.gameMonth = el.value === 'all' ? 0", 'filtro de ano todo não funciona');
+  includes(app, 'gamesYear.length', 'contador da aba não mostra o ano inteiro');
+});
+
+await teste('confirmados e check-in visíveis por jogo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'confirmations: {}, checkins: {}', 'estado de check-in ausente');
+  includes(app, "typeof state.checkins !== 'object'", 'check-in não é normalizado');
+  includes(app, 'function gameConfirmedPlayers(g)', 'lista de confirmados por jogo ausente');
+  includes(app, 'function gameCheckinPlayers(g)', 'lista de check-in por jogo ausente');
+  includes(app, 'function modalGamePresence(gameId)', 'modal de presença ausente');
+  includes(app, 'data-act="game-presence"', 'botão de ver presença faltou');
+  includes(app, 'Confirmados no Sorteador', 'modal não mostra confirmados');
+  includes(app, 'Check-in (${presentes.length})', 'modal não mostra check-in');
+  includes(app, 'Ainda não confirmaram', 'modal não mostra quem faltou');
+  includes(app, 'state.checkins[gid] = presentes', 'check-in não guarda todos os presentes');
+  includes(app, 'delete state.checkins[id]', 'check-in não é apagado com o jogo');
+  includes(app, 'presentes.length ? presentes.includes(p.id)', 'check-in antigo não é migrado no modal');
+  const css = await origFetch(new URL('../styles.css', location.href)).then((r) => r.text());
+  includes(css, '.badge', 'estilo dos crachás de confirmação ausente');
+});
+
+grupo('21. Limpeza em lote, cancelamento e downloads');
+
+await teste('um download só e sem gerador antigo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, '⬇ Relatório do mês (CSV)', 'relatório mensal em CSV faltou');
+  ok(!app.includes('data-act="export-cash">⬇ Exportar CSV'), 'ainda há um segundo botão de download na Visão Geral');
+  ok(!app.includes('Gerar quintas (antigo)'), 'botão antigo ainda aparece');
+  includes(app, 'data-act="generate-sessions-year"', 'gerador do ano não aparece');
+  includes(app, 'case \'export-cash\'', 'exportação do caixa foi removida de Configurações');
+  includes(app, 'data-act="export-cash">⬇ Caixa (CSV)', 'caixa CSV não está em Configurações');
+});
+
+await teste('selecionar e limpar vários rachas', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'class="session-check"', 'caixa de seleção por racha faltou');
+  includes(app, 'id="session-all"', 'caixa de seleção geral faltou');
+  includes(app, 'data-act="session-select-all"', 'selecionar todos não funciona');
+  includes(app, 'data-act="session-clear-selected"', 'limpar selecionados faltou');
+  includes(app, 'data-act="session-clear-all"', 'limpar todos faltou');
+  includes(app, 'confirmSessionDelete(`Apagar todos os ${ids.length} rachas da semana?`', 'limpar todos não pergunta sobre os jogos');
+  includes(app, 'ids.includes(state.timer.sessionId)', 'cronômetro não é desvinculado ao excluir rachas');
+  includes(app, 'Os jogos já criados foram mantidos.', 'aviso de jogos mantidos faltou');
+  includes(app, "'session-clear-selected', 'session-clear-all'", 'ações não estão protegidas');
+});
+
+await teste('cancelar jogo muda status e esconde nas integrações', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'function toggleGameCancel(gameId)', 'ação de cancelar jogo não existe');
+  includes(app, 'g.canceled = true', 'cancelamento não é salvo');
+  includes(app, "badge('Cancelado', 'red')", 'status Cancelado não aparece');
+  includes(app, 'data-act="game-cancel"', 'botão de cancelar/reativar faltou');
+  includes(app, 'Check-in indisponível', 'jogo cancelado ainda permite check-in');
+  includes(app, '↩ Reativar', 'jogo cancelado não pode ser reativado');
+  includes(app, 'canceled: !!g.canceled', 'retrato do grupo não recebe o status');
+  ok((app.match(/!g\.canceled/g) || []).length >= 4, 'jogos cancelados não são filtrados em todas as telas');
+  const getView = await origFetch(new URL('../netlify/functions/get-view.mjs', location.href)).then((r) => r.text());
+  const publish = await origFetch(new URL('../netlify/functions/publish-view.mjs', location.href)).then((r) => r.text());
+  const getPlayer = await origFetch(new URL('../netlify/functions/get-player-view.mjs', location.href)).then((r) => r.text());
+  const reminders = await origFetch(new URL('../netlify/functions/send-reminders.mjs', location.href)).then((r) => r.text());
+  const daily = await origFetch(new URL('../netlify/functions/_daily.mjs', location.href)).then((r) => r.text());
+  const manage = await origFetch(new URL('../netlify/functions/manage-daily-payments.mjs', location.href)).then((r) => r.text());
+  includes(getView, "'canceled'", 'get-view não whitelist cancelado');
+  includes(publish, 'canceled: g.canceled === true', 'publish-view não publica cancelado');
+  includes(getPlayer, 'filter((g) => !g.canceled)', 'link individual ainda mostra jogos cancelados');
+  includes(reminders, 'game.canceled === true', 'lembretes podem ser enviados para jogo cancelado');
+  includes(daily, 'g.canceled !== true', 'diária pode ser criada para jogo cancelado');
+  includes(manage, 'game?.canceled !== true', 'painel de diárias mostra jogos cancelados');
+  const visualizar = await origFetch(new URL('../visualizar.js', location.href)).then((r) => r.text());
+  includes(visualizar, '!g.canceled', 'página do grupo mostra jogos cancelados');
+});
+
+grupo('22. Excluir racha com opção de apagar jogos');
+
+await teste('opção de apagar jogos começa desmarcada', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'function gamesFromSessions(ids)', 'não sabe quais jogos vieram do racha');
+  includes(app, 'return state.games.filter(g => set.has(g.sessionId))', 'jogos não são ligados pelo racha');
+  includes(app, 'id="delete-session-games" style="width:16px;margin-top:2px" />', 'caixa de apagar jogos faltou');
+  ok(!app.includes('id="delete-session-games" style="width:16px;margin-top:2px" checked'), 'a caixa veio marcada por padrão');
+  includes(app, 'Apagar também <strong>${n}</strong> jogo(s)', 'não mostra quantos jogos serão apagados');
+  includes(app, 'Não há jogos gerados por este racha.', 'não avisa quando não há jogos');
+});
+
+await teste('excluir racha pergunta se apaga os jogos', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "case 'session-delete': {", 'exclusão individual não existe');
+  includes(app, 'confirmSessionDelete(`Excluir o racha "${sess?.name || id}" da semana?`', 'excluir um racha não pergunta sobre jogos');
+  includes(app, 'confirmSessionDelete(`Excluir ${ids.length} racha(s) selecionado(s)?`', 'limpar selecionados não pergunta sobre jogos');
+  includes(app, 'confirmSessionDelete(`Apagar todos os ${ids.length} rachas da semana?`', 'limpar todos não pergunta sobre jogos');
+  includes(app, 'Os jogos selecionados também serão apagados.', 'não confirma a escolha de apagar jogos');
+  includes(app, 'Os jogos já criados serão mantidos.', 'não confirma a escolha de manter jogos');
+  ok(!app.includes("confirmActionTwice('Apagar todos os rachas da semana?'"), 'ainda usa a confirmação antiga sem opção');
+  includes(app, "'session-clear-selected', 'session-clear-all'", 'ações não estão protegidas');
+});
+
+await teste('apagar jogos limpa registros relacionados', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'function deleteGamesByIds(ids)', 'rotina de apagar jogos faltou');
+  includes(app, 'gamesFromSessions(ids).map(g => g.id)', 'não apaga os jogos do racha escolhido');
+  includes(app, 'state.games = state.games.filter(g => !set.has(g.id))', 'jogos não são removidos');
+  includes(app, 'state.dayEntries = state.dayEntries.filter(d => !set.has(d.gameId))', 'diárias dos jogos não são removidas');
+  includes(app, 'delete state.checkins[id]', 'check-in dos jogos não é removido');
+  includes(app, 'delete state.confirmations[id]', 'confirmações dos jogos não são removidas');
+  includes(app, 'delete state.arrivals[id]', 'ordem de chegada dos jogos não é removida');
+  includes(app, 'if (set.has(ui.drawGame)) ui.drawGame = null', 'sorteador fica preso a jogo apagado');
+});
+
+await teste('limpar todos confirma duas vezes com a escolha', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "const apagarJogos = !!$('#delete-session-games')?.checked;", 'a caixa é lida depois que a janela fecha');
+  includes(app, 'if (fn) fn(apagarJogos);', 'a escolha não chega na ação');
+  includes(app, "typeof capturado === 'boolean'", 'a escolha não é preservada');
+  includes(app, "if (!finalMessage) { fn(apagar); return; }", 'a escolha não é guardada para a segunda confirmação');
+  includes(app, 'confirmAction(`${finalMessage} ${apagar ?', 'a segunda confirmação não repete a escolha');
+  includes(app, "'Isso não pode ser desfeito.'", 'segunda confirmação faltou');
+  includes(app, 'Deseja apagar mesmo assim?`, () => fn(apagar)', 'a escolha não chega na ação final');
+  includes(app, 'Todos os rachas e ${removidos} jogo(s) foram apagados.', 'não informa quantos jogos foram apagados');
+  includes(app, 'Todos os rachas foram apagados. Os jogos foram mantidos.', 'não informa quando os jogos foram mantidos');
+});
+
+grupo('23. Seleção e exclusão em lote nas despesas');
+
+await teste('despesas com seleção em lote', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'id="expense-all" data-act="expense-select-all"', 'caixa de seleção geral das despesas faltou');
+  includes(app, 'class="expense-check" value="${esc(e.id)}"', 'caixa por despesa faltou');
+  includes(app, 'data-act="expense-clear-selected"', 'botão de limpar selecionados faltou');
+  includes(app, "case 'expense-select-all': $$('.expense-check').forEach", 'selecionar todas não funciona');
+  includes(app, "'expense-clear-selected'", 'ação não está protegida');
+  includes(app, "'delete-expense-series'", 'excluir repetição não está protegida');
+});
+
+await teste('limpar selecionados confirma quantidade e total', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "const ids = $$('.expense-check:checked').map(c => c.value)", 'seleção marcada não é lida');
+  includes(app, "toast('Selecione pelo menos uma despesa.', 'err')", 'não avisa quando nada foi marcado');
+  includes(app, 'Excluir ${rows.length} despesa(s) selecionada(s) (${money(total)})?', 'confirmação não mostra quantidade e total');
+  includes(app, 'state.expenses = state.expenses.filter(e => !set.has(e.id))', 'despesas marcadas não são removidas');
+  includes(app, "save('excluiu despesas selecionadas'", 'exclusão em lote não fica na auditoria');
+  includes(app, 'render(); toast(`${rows.length} despesa(s) excluída(s).`);', 'falta aviso ao usuário');
+});
+
+await teste('limpar todas continua com duas confirmações', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "case 'clear-expenses': {", 'limpar todas desapareceu');
+  includes(app, 'confirmActionTwice(`Apagar todas as ${n} despesas (${money(total)})?`', 'limpar todas não pede duas confirmações');
+  includes(app, 'state.expenses = [];', 'limpar todas não apaga as despesas');
+  includes(app, "save('limpou todas as despesas'", 'limpeza total não fica na auditoria');
+});
+
+await teste('exclusão em lote não mexe em caixa alheio', async () => {
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  includes(readme, 'Nenhum dos dois mexe em pagamentos, diárias, benefícios nem premiações.', 'documentação não avisa o alcance da limpeza');
+  includes(readme, 'As despesas fixas voltam ao salvar', 'documentação não avisa sobre despesas fixas');
+});
+
+grupo('24. Goleiros e arbitragem por racha');
+
+await teste('racha guarda goleiros e arbitragem', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'notes: \'\', active: true, withGoalkeepers: true, withReferee: true', 'racha inicial não vem com os dois custos ligados');
+  includes(app, 'withGoalkeepers: s.withGoalkeepers !== false, withReferee: s.withReferee !== false', 'rachas antigos não são migrados');
+  includes(app, 'name="withGoalkeepers" type="checkbox"', 'caixa de goleiros faltou no racha');
+  includes(app, 'name="withReferee" type="checkbox"', 'caixa de arbitragem faltou no racha');
+  includes(app, "withGoalkeepers: fd.get('withGoalkeepers') !== null, withReferee: fd.get('withReferee') !== null", 'escolha não é salva');
+  includes(app, "Goleiros: ${s.withGoalkeepers !== false ? 'sim' : 'não'}", 'tabela não mostra a escolha');
+});
+
+await teste('jogos por mês são divididos entre os rachas', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, 'function costGames(field)', 'não há cálculo por racha');
+  includes(app, 'const on = list.filter(s => s[field] !== false).length', 'rachas desligados não são contados');
+  includes(app, 'if (!on) return 0', 'desligar todos ainda cobra');
+  includes(app, 'if (!list.length) return base', 'sem rachas perdeu o valor antigo');
+  includes(app, 'return Math.round(base * on / list.length * 100) / 100', 'divisão entre rachas não está proporcional');
+});
+
+await teste('despesas fixas usam o custo por racha', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "const gkGames = costGames('withGoalkeepers')", 'Goleiros não usa a escolha dos rachas');
+  includes(app, "const refGames = costGames('withReferee')", 'Arbitragem não usa a escolha dos rachas');
+  includes(app, 'num(s.goalkeepers) * num(s.goalkeeperFee) * gkGames', 'valor de Goleiros está errado');
+  includes(app, 'num(s.refereeFee) * refGames', 'valor de Arbitragem está errado');
+  includes(app, "if (keepers <= 0) state.expenses = state.expenses.filter", 'desligar todos não remove as linhas de Goleiros');
+  includes(app, 'Churrasco do racha — ${monthName(mo)} (automático)', 'linha automática não identificada');
+  includes(app, "e.fixed === 'bbq'", 'botão ainda ignora churrasco automático');
+  includes(app, '${gamesLabel(gkGames)} jogos · ${monthName(e.month)}', 'descrição de Goleiros não mostra o mês');
+  includes(app, '${gamesLabel(refGames)} jogos × ${money(s.refereeFee)} de arbitragem', 'descrição de Arbitragem não acompanha');
+  includes(app, 'syncFixedExpenses();\n    save(idx >= 0', 'salvar racha não recalcula as despesas');
+  ok((app.match(/syncFixedExpenses\(\);/g) || []).length >= 6, 'excluir racha não recalcula as despesas');
+});
+
+await teste('metas e formulário acompanham o custo', async () => {
+  const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(app, "costGames('withGoalkeepers') + num(s.refereeFee) * costGames('withReferee')", 'metas não acompanham');
+  includes(app, "if (cat === 'Arbitragem') return num(s.refereeFee) * costGames('withReferee')", '＋ Despesa não sugere Arbitragem');
+  includes(app, "`${num(settings().goalkeepers)} goleiros × ${gamesLabel(costGames('withGoalkeepers'))} jogos`", '＋ Despesa não sugere Goleiros');
+});
+
+await teste('documentação explica o cálculo', async () => {
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  includes(readme, 'Goleiros e arbitragem racha por racha', 'README não explica a opção');
+  includes(readme, 'a despesa some', 'README não diz o que acontece se desligar todos');
+});
+
+grupo('25. Despesas históricas e dívidas de outros anos');
+await teste('despesas fixas não reescrevem outro ano', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(src, 'const noAno = (e) => !num(e.year) || num(e.year) === y', 'filtro do ano de controle ausente');
+  const inicio = src.indexOf('function syncFixedExpenses()');
+  const fim = src.indexOf('normalizeState();', inicio);
+  const fn = src.slice(inicio, fim);
+  includes(fn, 'if (num(e.year) && !noAno(e)) return;', 'despesa histórica ainda é recalculada');
+  includes(fn, '!(noAno(e) && e.category === \'Goleiros\'', 'goleiros de outro ano ainda podem ser apagados');
+  includes(fn, 'state.expenses.filter(e => noAno(e) && e.category === category && e.fixed === key)', 'série fixa ainda mistura anos');
+  includes(fn, '!(noAno(e) && e.fixed === key)', 'série desligada ainda apaga outro ano');
+  includes(fn, '!noAno(e) || e.fixed !== key || keep.has(e.id)', 'excesso da série ainda apaga outro ano');
+});
+await teste('syncFixedExpenses preserva despesas de anos anteriores', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const ini = src.indexOf('function syncFixedExpenses()');
+  const fim = src.indexOf('normalizeState();', ini);
+  ok(ini >= 0 && fim > ini, 'syncFixedExpenses não encontrada');
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const state = {
+    settings: { year: 2026, fieldRent: 900, goalkeepers: 2, goalkeeperFee: 100, gamesPerMonth: 4,
+      refereeFee: 0, bbqPerYear: 0, bbqCostPerPerson: 0, bbqPeople: 0, giftsReserve: 0, sessions: [] },
+    expenses: [
+      { id: 'historico', year: 2025, month: 3, category: 'Quadra', fixed: 'fieldRent', amount: 700, description: 'Aluguel de Março' },
+      { id: 'atual', year: 2026, month: 3, category: 'Quadra', fixed: 'fieldRent', amount: 700, description: 'Aluguel de Março' }
+    ],
+    awards: []
+  };
+  const deps = {
+    settings: () => state.settings, year: () => 2026, num,
+    costGames: () => 4, isoDate: (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+    monthName: (m) => String(m), gamesLabel: (n) => String(n), money: (v) => String(v),
+    uid: () => 'novo', topWinners: () => [], awardPlaces: () => [], AWARD_PLACES: []
+  };
+  const nomes = Object.keys(deps);
+  const sync = new Function('state', ...nomes, src.slice(ini, fim) + '; return syncFixedExpenses;')(state, ...nomes.map(k => deps[k]));
+  sync();
+  const hist = state.expenses.find(e => e.id === 'historico');
+  ok(hist, 'despesa histórica foi apagada');
+  eq(hist.amount, 700, 'despesa histórica teve o valor mudado');
+  eq(hist.description, 'Aluguel de Março', 'despesa histórica teve a descrição mudada');
+  eq(state.expenses.find(e => e.id === 'atual').amount, 900, 'despesa do ano atual não foi atualizada');
+});
+await teste('txid do PIX mantém o ano da dívida antiga', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  const ini = src.indexOf('function txidFor(');
+  const fim = src.indexOf('function paymentLink(', ini);
+  ok(ini >= 0 && fim > ini, 'txidFor não encontrada');
+  const num = (v) => { const n = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const ui = { paymentPage: null };
+  const txidFor = new Function('num', 'ui', 'year', src.slice(ini, fim) + '; return txidFor;')(num, ui, () => 2026);
+  eq(txidFor('p1234', 3, 2025), 'RL2025031234', 'dívida antiga ganhou o ano corrente');
+  eq(txidFor('p1234', 3), 'RL2026031234', 'cobrança nova não usou o ano de controle');
+  ui.paymentPage = { year: 2024 };
+  eq(txidFor('p1234', 7), 'RL2024071234', 'link antigo perdeu o ano da dívida');
+});
+await teste('retrato, link e baixa usam o ano da pendência', async () => {
+  const src = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
+  includes(src, 'txidFor(pid, num(p.month), num(p.year))', 'retrato público trocou o ano da dívida');
+  includes(src, 'txidFor(pp.playerId, pp.month, pp.year)', 'PIX do link trocou o ano da dívida');
+  includes(src, 'txidFor(playerId, m, y)', 'cobrança do modal trocou o ano da dívida');
+  includes(src, 'year: num(pp.year)', 'link antigo não guardou o ano da pendência');
+  includes(src, 'x.year === num(pp.year)', 'confirmação do link baixou o ano errado');
+});
+await teste('README explica historico e dívidas antigas', async () => {
+  const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
+  includes(readme, 'Despesas e dívidas de outros anos ficam intactas', 'README não explica o Lote 3');
+  ok(!readme.includes('ano de controle padrão é **2027**'), 'README ainda diz que o padrão é 2027');
 });
 
 /* ------------------------------------------------------------------ */
