@@ -75,8 +75,10 @@ export default async (req) => {
   const now = new Date(nowMs).toISOString();
   const payments = copyMonthlyPayments(record.monthlyPayments);
 
-  /* Reaproveita um checkout ainda válido para não criar duas cobranças. */
-  const pending = Object.values(payments)
+  /* Reaproveita um checkout ainda válido para não criar duas cobranças.
+     No sandbox, sempre gera um novo para usar a credencial de teste atual. */
+  const sandbox = String(process.env.MP_SANDBOX_GLOBAL || '').trim() === '1';
+  const pending = sandbox ? null : Object.values(payments)
     .filter((row) => row.playerId === playerId && row.month === due.month && row.year === due.year &&
       row.status === 'pending' && row.method === 'card' && row.checkoutUrl &&
       Date.parse(row.expiresAt) > nowMs)
