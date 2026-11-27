@@ -27,9 +27,9 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 - [x] Webhook valida assinatura, valor e vagas; cancelamento do jogo oferece crédito ou estorno.
 - [x] Mensalista com pendência não confirma: o servidor exige o PIX da mensalidade e dá baixa só após aprovação — webhook no Mercado Pago ou baixa do administrador no PIX manual.
 - [x] Confirmação manual do administrador marca presença e/ou pagamento no link, com licença ativa e registro de quem fez a baixa.
-- [x] App em HTML/CSS/JS puro, sem bibliotecas instaladas — risco de "pacote inventado" é quase zero.
-- [x] LGPD: telefone do jogador é opcional; não há dados pessoais completos em logs; a política cita o WhatsApp/Meta como terceiro de envio **manual** e traz o procedimento de incidente com comunicação à ANPD em prazo razoável (normalmente até 3 dias úteis). O botão **Apagar tudo** pede duas confirmações.
-- [x] Upgrade Básico → PRO usa a mesma chave e a mesma `subscriptionId`: o servidor valida dispositivo, licença ativa e ciclo, altera o valor com `PUT /preapproval/{id}` e nunca cria segunda assinatura nem deixa cobrança dupla.
+- [x] App em HTML/CSS/JS puro no navegador, sem bibliotecas no front-end; uma dependência no backend (`@netlify/blobs`).
+- [x] LGPD: telefone do jogador é opcional; não há dados pessoais completos em logs; a política cita o WhatsApp/Meta como terceiro de envio **manual** e traz o procedimento de incidente com comunicação à ANPD em prazo razoável, conforme a LGPD e a regulamentação da ANPD. O botão **Apagar tudo** pede duas confirmações.
+- [x] Upgrade Básico → PRO usa a mesma chave e a mesma `subscriptionId`: o servidor valida dispositivo, licença ativa e ciclo, altera o valor com `PUT /preapproval/{id}` e não cria segunda assinatura; a confirmação final do valor depende do Mercado Pago.
 
 ## Não se aplica ou não vale a pena agora
 
@@ -39,10 +39,10 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 - **Strix / OpenVAS / wp-scan**: guardar para depois. O Strix é sério, mas exige Docker, chave de modelo e faz testes agressivos. O wp-scan é só para WordPress (nosso app não é). Nenhum dos dois deve ser apontado para produção sem acompanhamento.
 - **Cursos e "skills BLINDAGEM"**: não comprar por medo. O que serve ali nós já revisamos e podemos rever de graça aqui.
 
-## Quando o deploy voltar (sem data certa: depende dos créditos da Netlify)
+## Quando o deploy voltar (retorno previsto após 17/12/2026, se houver upgrade)
 
 1. Confirmar que `https://rachadololo.netlify.app` abre e que `visualizar.html`, `jogador.html` e `ao-vivo.html` não dão 404.
-2. Rodar `scripts/security-check.ps1` (ou conferir a tarefa do Windows **Racha do Lolo - Seguranca**, verificada em 25/11/2026 como habilitada e diária às **09:30**). Ele confere home, as três páginas, os cabeçalhos de segurança, funções com token inválido, segredos no código e o domínio antigo. Ele grava `relatorio-seguranca.txt` na raiz do projeto **somente quando as páginas respondem 200** — com o deploy atual ele encerra sem gravar. É **somente leitura**: não ataca, não envia formulário, não muda nada. Não existe um script separado só de deploy.
+2. Rodar `scripts/security-check.ps1` (ou conferir a tarefa do Windows **Racha do Lolo - Seguranca**, verificada em 26/11/2026 como habilitada e diária às **09:30**). Ele confere home, as três páginas, os cabeçalhos de segurança, funções com token inválido, segredos no código e o domínio antigo. Ele grava `relatorio-seguranca.txt` na raiz do projeto **somente quando as páginas respondem 200** — com o deploy atual ele encerra sem gravar. É **somente leitura**: não ataca, não envia formulário, não muda nada. Não existe um script separado só de deploy.
 3. Testar no celular, na prática: link do grupo, link individual, confirmação de presença, placar ao vivo e lembretes com as frases editáveis.
 4. Verificar se existe webhook **global** no painel do Mercado Pago; se existir, apontá-lo para `https://rachadololo.netlify.app/.netlify/functions/mp-webhook`.
 5. Confirmar que o domínio antigo `teal-griffin-a37fbe.netlify.app` continua fora do ar.

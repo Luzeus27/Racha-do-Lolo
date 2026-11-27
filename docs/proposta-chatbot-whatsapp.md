@@ -1,7 +1,9 @@
-# Proposta — Chatbot de atendimento no WhatsApp
+# Proposta externa — Chatbot de atendimento no WhatsApp (fora do escopo do Racha do Loló)
+
+> Documento de outro projeto, mantido só como referência. Não implementado nem integrado ao Racha do Loló; existe apenas um protótipo local em `../prototipo-chatbot/`.
 
 **Cenário:** uma empresa, canal WhatsApp, com transferência para atendimento humano.
-**Status:** proposta técnica (sem implementação).
+**Status:** proposta externa, sem integração em produção.
 **Data:** novembro/2026.
 
 ---
@@ -21,7 +23,7 @@ Automatizar o primeiro atendimento no WhatsApp da empresa: responder dúvidas fr
 
 ---
 
-## 2. Escopo do MVP
+## 2. Escopo do protótipo
 
 ### Dentro do escopo
 
@@ -136,7 +138,7 @@ Registra mensagem, tokens, custo e resultado
 | 4. Painel e LGPD | Base de conhecimento editável, métricas, textos legais, retenção | 1 semana |
 | 5. Homologação | Testes com número real, ajustes de tom, treinamento da equipe | 3–5 dias |
 
-**Total estimado: 5 a 7 semanas** para o MVP em produção, dependendo da velocidade de aprovação do número na Meta e da entrega do material pela empresa.
+**Total estimado: 5 a 7 semanas** para uma eventual integração externa, dependendo da velocidade de aprovação do número na Meta e da entrega do material pela empresa.
 
 > A verificação do número e a aprovação dos templates na Meta são o principal fator externo de atraso. Recomendo iniciar esse processo na fase 0.
 
