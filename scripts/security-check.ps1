@@ -44,13 +44,13 @@ function AddCheck($name, $ok, $detail) {
 
 # Guarda: so grava relatorio quando o novo deploy estiver no ar.
 $homePage = Fetch ($site + '/')
-if ($homePage.Code -ne 200) { exit }
+if ($homePage.Code -ne 200) { Write-Warning ('Verificacao abortada: home retornou HTTP ' + $homePage.Code); exit }
 $viewPage = Fetch ($site + '/visualizar.html')
-if ($viewPage.Code -ne 200) { exit }
+if ($viewPage.Code -ne 200) { Write-Warning ('Verificacao abortada: visualizar.html retornou HTTP ' + $viewPage.Code); exit }
 $playerPage = Fetch ($site + '/jogador.html')
-if ($playerPage.Code -ne 200) { exit }
+if ($playerPage.Code -ne 200) { Write-Warning ('Verificacao abortada: jogador.html retornou HTTP ' + $playerPage.Code); exit }
 $livePage = Fetch ($site + '/ao-vivo.html')
-if ($livePage.Code -ne 200) { exit }
+if ($livePage.Code -ne 200) { Write-Warning ('Verificacao abortada: ao-vivo.html retornou HTTP ' + $livePage.Code); exit }
 
 AddCheck 'Home' ($homePage.Code -eq 200) ("HTTP " + $homePage.Code)
 AddCheck 'visualizar.html' ($viewPage.Code -eq 200) ("HTTP " + $viewPage.Code)
@@ -77,7 +77,7 @@ AddCheck 'get-player-view com token invalido' (($badPlayer.Code -in @(400,404,41
 $appCode = Fetch ($site + '/app.js')
 $subCode = Fetch ($site + '/subscription.js')
 $allCode = $appCode.Body + $subCode.Body
-$secretMarkers = @('APP_USR-','MP_ACCESS_TOKEN','MP_WEBHOOK_SECRET','2c72fe0c')
+$secretMarkers = @('APP_USR-','MP_ACCESS_TOKEN','MP_WEBHOOK_SECRET','MP_CLIENT_SECRET')
 $foundSecrets = @()
 foreach ($m in $secretMarkers) { if ($allCode -like ('*' + $m + '*')) { $foundSecrets += $m } }
 AddCheck 'Chaves fora do codigo publico' ($foundSecrets.Count -eq 0) ("encontrado: " + ($foundSecrets -join ','))
