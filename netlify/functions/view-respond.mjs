@@ -5,7 +5,7 @@ import { getStore } from '@netlify/blobs';
 import { json, paymentModeFor, setCorsOrigin, rateLimit, viewUnavailable } from './_shared.mjs';
 import {
   activeReservations, copyCredits, copyDailyPayments, copyMonthlyPayments,
-  copyReservations, playerRole, unpaidMonths, gameById
+  copyReservations, gameById, hasSlot, playerRole, unpaidMonths
 } from './_daily.mjs';
 
 const MAX_BODY = 16 * 1024;
@@ -266,20 +266,14 @@ export default async (req) => {
   if (!isObject(responses[gameId])) responses[gameId] = dict();
   const answers = responses[gameId];
 
-  const confirmedBefore = Object.entries(answers).filter(([, status]) => status === 'yes').map(([id]) => id);
   const wasConfirmed = answers[playerId] === 'yes';
-  const rawMax = Number(record.snapshot?.settings?.maxPlayers);
-  const maxPlayers = Number.isFinite(rawMax) && rawMax > 0 ? Math.floor(rawMax) : 0;
-  const taken = new Set(confirmedBefore.filter((id) => id !== playerId));
-  (activeReservations(record)[gameId] || []).forEach((row) => {
-    if (row.playerId && row.playerId !== playerId) taken.add(row.playerId);
-  });
+  const slotAvailable = hasSlot(record, gameId, playerId);
 
   let status;
   if (response === 'yes') {
     if (!gameId) {
       status = 'yes';
-    } else if (maxPlayers > 0 && taken.size >= maxPlayers && !wasConfirmed) {
+    } else if (!slotAvailable && !wasConfirmed) {
       const queue = Array.isArray(waitlist[gameId]) ? waitlist[gameId].slice(0, MAX_PLAYERS) : [];
       if (!queue.includes(playerId)) queue.push(playerId);
       waitlist[gameId] = queue.slice(0, MAX_PLAYERS);
@@ -328,9 +322,26 @@ export default async (req) => {
     extraFields.dailyCredits = credits;
     message = 'Crédito usado. Presença confirmada!';
   } else if (dailyManual && status === 'yes') {
-    /* A vaga foi reservada na fila, mas a presença só entra depois da baixa. */
+    /* A vaga fica reservada, mas a presença só entra depois da baixa manual. */
     delete answers[playerId];
     status = 'manual';
+    const reservations = copyReservations(record.reservations);
+    const gameDate = text(gameById(record, gameId)?.date, 20);
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(gameDate)
+      ? Date.parse(gameDate + 'T23:59:59Z') : NaN;
+    const expiresAt = Number.isFinite(parsed)
+      ? new Date(parsed + 86400000).toISOString()
+      : new Date(Date.now() + 7 * 86400000).toISOString();
+    reservations[gameId] = [
+      ...(reservations[gameId] || []).filter((row) => row.playerId !== playerId),
+      {
+        paymentId: 'DM-' + randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase(),
+        playerId,
+        createdAt: now,
+        expiresAt
+      }
+    ];
+    extraFields.reservations = reservations;
     message = 'Pague a diária pelo PIX do administrador e toque em “Avisar que paguei”.';
   }
 

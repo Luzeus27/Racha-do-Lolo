@@ -9,7 +9,7 @@ import {
 } from './_shared.mjs';
 import {
   VIEW_TOKEN, cleanWaitlist, copyDailyPayments, copyMonthlyPayments,
-  copyReservations, copyResponses, copyWaitlist, gameById, isObject,
+  copyReservations, copyResponses, copyWaitlist, gameById, hasSlot, isObject,
   playerRole, readJson, text, unpaidMonths
 } from './_daily.mjs';
 
@@ -89,6 +89,9 @@ export default async (req) => {
   }
 
   const role = playerRole(view, playerId);
+  if (presence && gameId && !hasSlot(view, gameId, playerId)) {
+    return json({ error: 'Não há vaga livre neste jogo. Use a fila de espera.' }, 409);
+  }
   const responses = copyResponses(view.responses);
   const waitlist = copyWaitlist(view.waitlist);
   const reservations = copyReservations(view.reservations);
