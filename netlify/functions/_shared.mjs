@@ -254,15 +254,27 @@ export function viewUnavailable(record) {
   return '';
 }
 
+/* O Mercado Pago exige X-Idempotency-Key ao criar pagamentos, preferências e
+   assinaturas. A chave é derivada da referência externa (única por cobrança),
+   para que uma nova tentativa não gere uma segunda cobrança real. */
+const IDEMPOTENT_MP_PATH = /^\/(v1\/payments|v1\/orders|preapproval|checkout\/preferences)(\?|$)/;
+
 export async function mpFetch(path, { token, method = 'GET', body } = {}) {
   try {
+    const headers = {
+      Authorization: 'Bearer ' + token,
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    };
+    if (method === 'POST' && IDEMPOTENT_MP_PATH.test(path)) {
+      const reference = (body && typeof body === 'object' && body.external_reference)
+        ? String(body.external_reference)
+        : path + '|' + (body === undefined ? '' : JSON.stringify(body));
+      headers['X-Idempotency-Key'] = createHash('sha256').update(reference).digest('hex').slice(0, 48);
+    }
     const res = await fetch('https://api.mercadopago.com' + path, {
       method,
-      headers: {
-        Authorization: 'Bearer ' + token,
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     const text = await res.text();
