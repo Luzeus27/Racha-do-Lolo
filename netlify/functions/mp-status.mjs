@@ -3,9 +3,57 @@ import { json, mpFetch, mpTokenFor, setCorsOrigin } from './_shared.mjs';
 
 export default async (req) => {
   setCorsOrigin(req);
-  if (req.method !== 'GET') return json({ error: 'Método não permitido.' }, 405);
   const token = await mpTokenFor('');
   if (!token) return json({ error: 'Token indisponível.' }, 503);
+
+  if (req.method === 'POST') {
+    const card = await mpFetch('/v1/card_tokens', {
+      token,
+      method: 'POST',
+      body: {
+        card_number: '5480032801033311',
+        expiration_month: '11',
+        expiration_year: '2030',
+        security_code: '123',
+        cardholder: {
+          name: 'Comprador Racha',
+          identification: { type: 'CPF', number: '12345678909' }
+        }
+      }
+    });
+    if (!card.ok || !card.data?.id) {
+      return json({ etapa: 'cartao', status: card.status, message: card.data?.message || '' }, 502);
+    }
+    const pm = String(card.data?.card?.payment_method?.id || 'mastercard');
+    const issuer = String(card.data?.issuer_id || card.data?.card?.issuer?.id || '');
+    const pay = await mpFetch('/v1/payments', {
+      token,
+      method: 'POST',
+      body: {
+        transaction_amount: 63.15,
+        token: card.data.id,
+        description: 'Mensalidade Racha do Loló — 122026',
+        installments: 1,
+        payment_method_id: pm,
+        issuer_id: issuer,
+        payer: { email: 'mensalista.f39147b4d38d2b@example.com' },
+        external_reference: 'MENSALIDADE-CARD|VW-E9A2F816431A45E3|MS-A1F9857859854B3B',
+        notification_url: 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?cliente=RL-D3367A29C45F',
+        binary_mode: true
+      }
+    });
+    return json({
+      etapa: 'pagamento',
+      ok: pay.ok,
+      status: pay.status,
+      mpStatus: pay.data?.status || '',
+      detail: pay.data?.status_detail || '',
+      message: pay.data?.message || '',
+      paymentId: pay.data?.id || ''
+    }, pay.ok ? 200 : 502);
+  }
+
+  if (req.method !== 'GET') return json({ error: 'Método não permitido.' }, 405);
   const q = new URL(req.url).searchParams;
   const out = {};
   const pref = String(q.get('pref') || '').trim();
