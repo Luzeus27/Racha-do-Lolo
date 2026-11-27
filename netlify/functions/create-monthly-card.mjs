@@ -17,7 +17,7 @@ function newPaymentId() {
 
 function payerEmail(view, playerId) {
   const hash = createHash('sha256').update(view + '|' + playerId).digest('hex').slice(0, 14);
-  return 'test@testuser.com';
+  return 'mensalista.' + hash + '@example.com';
 }
 
 function autoHistory(row, event, at) {
@@ -75,10 +75,8 @@ export default async (req) => {
   const now = new Date(nowMs).toISOString();
   const payments = copyMonthlyPayments(record.monthlyPayments);
 
-  /* Reaproveita um checkout ainda válido para não criar duas cobranças.
-     No sandbox, sempre gera um novo para usar a credencial de teste atual. */
-  const sandbox = String(process.env.MP_SANDBOX_GLOBAL || '').trim() === '1';
-  const pending = sandbox ? null : Object.values(payments)
+  /* Reaproveita um checkout ainda válido para não criar duas cobranças. */
+  const pending = Object.values(payments)
     .filter((row) => row.playerId === playerId && row.month === due.month && row.year === due.year &&
       row.status === 'pending' && row.method === 'card' && row.checkoutUrl &&
       Date.parse(row.expiresAt) > nowMs)
@@ -157,9 +155,7 @@ export default async (req) => {
       return json({ error: 'Mercado Pago: ' + detail }, 502);
     }
 
-    /* Com credencial de teste, o init_point pode vir da conta real; usar o de sandbox. */
-    const checkoutUrl = String((sandbox ? result.data.sandbox_init_point : result.data.init_point) ||
-      result.data.sandbox_init_point || result.data.init_point || '');
+    const checkoutUrl = String(result.data.init_point || '');
     if (!/^https:\/\//.test(checkoutUrl)) {
       return json({ error: 'O Mercado Pago não devolveu o link de pagamento. Tente novamente.' }, 502);
     }

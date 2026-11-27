@@ -117,10 +117,7 @@ export default async (req) => {
     return json({ error: 'Mercado Pago: ' + detail }, 502);
   }
 
-  /* Com credencial de teste, usar o link de autorização do sandbox. */
-  const sandbox = String(process.env.MP_SANDBOX_GLOBAL || '').trim() === '1';
-  const initPoint = String((sandbox ? result.data.sandbox_init_point : result.data.init_point) ||
-    result.data.sandbox_init_point || result.data.init_point || '');
+  const initPoint = String(result.data.init_point || '');
   if (!/^https:\/\//.test(initPoint)) {
     return json({ error: 'O Mercado Pago não devolveu o link de autorização. Tente novamente.' }, 502);
   }
