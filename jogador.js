@@ -17,6 +17,20 @@
     const d = new Date(iso);
     return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
   };
+  /* Foto vem do registro: só formatos raster conhecidos, blob local ou ícone do app. */
+  const safePhotoUrl = (value) => {
+    if (typeof value !== 'string') return '';
+    const v = value.trim();
+    if (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(v)) return v;
+    if (v.startsWith('blob:' + location.origin + '/')) {
+      try {
+        const u = new URL(v);
+        if (u.protocol === 'blob:' && /^\/[A-Za-z0-9._~-]+$/.test(u.pathname) && !u.search && !u.hash) return v;
+      } catch (_) { /* ignora URL inválida */ }
+      return '';
+    }
+    return /^(?:\.\/|\/)?(?:icon-192|icon-512)\.png$/i.test(v) ? v : '';
+  };
 
   const params = new URLSearchParams(location.search);
   const V = String(params.get('v') || '').trim().toUpperCase();
@@ -113,6 +127,11 @@
         '<button type="button" class="btn btn-ghost btn-sm mt" data-act="' + copyAct + '" data-' + key.type + '="' + esc(key.value) +
         '" data-focus-key="' + esc(copyAct + ':' + key.value) + '">📋 Copiar PIX do Mercado Pago</button>';
     }
+    /* Algumas contas devolvem só a imagem do QR (qr_code_base64), sem o texto. */
+    const b64 = String(p.qrBase64 || '');
+    if (!code && /^[A-Za-z0-9+/=]+$/.test(b64) && b64.length <= 200000) {
+      html += '<img src="data:image/png;base64,' + esc(b64) + '" alt="QR Code do PIX do Mercado Pago" style="width:180px;height:180px;display:block;margin:8px auto;border-radius:8px">';
+    }
     if (url) {
       html += '<a class="btn btn-ghost btn-sm mt" href="' + esc(url) + '" target="_blank" rel="noopener">Abrir pagamento ↗</a>';
     }
@@ -142,7 +161,7 @@
   /* Mudanças em updatedAt não redesenham a página: isso evita perder o foco dos botões. */
   function paymentSignature(p) {
     if (!p) return null;
-    return [p.status, p.paymentId, p.method, p.checkoutUrl, p.expiresAt, p.paidAt];
+    return [p.status, p.paymentId, p.method, p.checkoutUrl, p.qrCode, p.qrBase64, p.expiresAt, p.paidAt];
   }
 
   function signature() {
@@ -173,7 +192,7 @@
 
   function identityHtml() {
     const p = state.player || {};
-    const photo = typeof p.photo === 'string' && (/^data:image\//i.test(p.photo) || /^https?:\/\//i.test(p.photo)) ? p.photo : '';
+    const photo = safePhotoUrl(p.photo);
     const avatar = photo
       ? '<img class="avatar-j" src="' + esc(photo) + '" alt="">'
       : '<span class="avatar-j-fallback">' + esc(initials(p.name)) + '</span>';
@@ -574,6 +593,7 @@
   async function setAuto(activate) {
     const key = 'mp-auto';
     if (saving.has(key)) return;
+    if (!activate && !window.confirm('Desativar a cobrança automática? As cobranças automáticas da mensalidade serão interrompidas. Você poderá pagar pelo PIX ou ativar novamente depois.')) return;
     captureFocus();
     saving.add(key);
     render(true);

@@ -213,8 +213,24 @@ const COLOR_PRESETS = {
   laranja: { accent: '#fb923c', secondary: '#facc15', label: 'Laranja' },
   rosa: { accent: '#fb7185', secondary: '#c084fc', label: 'Rosa' }
 };
+/* Cores vêm do localStorage e podem ter sido alteradas por outro script.
+   Só hex é aceito: valores arbitrários quebrariam HTML/CSS e abririam XSS. */
+function safeColor(value, fallback) {
+  const s = String(value || '').trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s;
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) return '#' + s.slice(1).split('').map((c) => c + c).join('');
+  return fallback;
+}
+function cleanColors(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    ...COLOR_PRESETS.padrao,
+    accent: safeColor(src.accent, COLOR_PRESETS.padrao.accent),
+    secondary: safeColor(src.secondary, COLOR_PRESETS.padrao.secondary)
+  };
+}
 let colors = (() => {
-  try { return { ...COLOR_PRESETS.padrao, ...(JSON.parse(localStorage.getItem('racha-colors')) || {}) }; }
+  try { return cleanColors(JSON.parse(localStorage.getItem('racha-colors')) || {}); }
   catch (e) { return { ...COLOR_PRESETS.padrao }; }
 })();
 let deferredPrompt = null;
@@ -360,9 +376,9 @@ function modalReceipt(recId) {
   openModal('Comprovante de pagamento', 'Baixa registrada com sucesso', `
     ${receiptHTML(rec)}
     <div class="row mt" style="justify-content:flex-end">
-      <button class="btn btn-ghost" data-act="copy-receipt" data-id="${rec.id}">📋 Copiar texto</button>
-      <button class="btn btn-ghost" data-act="download-receipt" data-id="${rec.id}">🖼️ Baixar PNG</button>
-      <button class="btn btn-primary" data-act="print-receipt" data-id="${rec.id}">🖨️ Salvar em PDF</button>
+      <button class="btn btn-ghost" data-act="copy-receipt" data-id="${esc(rec.id)}">📋 Copiar texto</button>
+      <button class="btn btn-ghost" data-act="download-receipt" data-id="${esc(rec.id)}">🖼️ Baixar PNG</button>
+      <button class="btn btn-primary" data-act="print-receipt" data-id="${esc(rec.id)}">🖨️ Salvar em PDF</button>
     </div>`, true);
 }
 function receiptById(id) {
@@ -728,6 +744,12 @@ try {
   if (!state || !state.settings) state = makeDemoState();
 } catch (e) { state = makeDemoState(); }
 
+/* IDs voltam de backup/restauração e de outro aba (storage). Restringir o
+   alfabeto antes de qualquer render evita quebrar atributos data-*. */
+function safeId(value, max = 60) {
+  return String(value ?? '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, max) || uid();
+}
+
 /* Garante que estados antigos (sem os campos novos) continuem funcionando. */
 function normalizeState() {
   if (!state || typeof state !== 'object') state = emptyState();
@@ -735,7 +757,14 @@ function normalizeState() {
   const defaults = defaultSettings();
   Object.keys(defaults).forEach(k => { if (state.settings[k] === undefined || state.settings[k] === null || state.settings[k] === '') state.settings[k] = defaults[k]; });
   if (state.settings.groupAccessMessage === LEGACY_GROUP_ACCESS_MESSAGE) state.settings.groupAccessMessage = GROUP_ACCESS_MESSAGE;
-  ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => { if (!Array.isArray(state[k])) state[k] = []; });
+  ['players', 'payments', 'dayEntries', 'expenses', 'games', 'benefits', 'scores', 'awards'].forEach(k => {
+    if (!Array.isArray(state[k])) state[k] = [];
+    state[k].forEach(row => {
+      if (!row || typeof row !== 'object') return;
+      row.id = safeId(row.id);
+      ['playerId', 'gameId'].forEach(f => { if (row[f] !== undefined) row[f] = safeId(row[f]); });
+    });
+  });
   state.games.forEach(g => { if (g && typeof g === 'object') g.canceled = !!g.canceled; });
   if (!state.confirmations || typeof state.confirmations !== 'object' || Array.isArray(state.confirmations)) state.confirmations = {};
   if (!state.checkins || typeof state.checkins !== 'object' || Array.isArray(state.checkins)) state.checkins = {};
@@ -760,7 +789,7 @@ function normalizeState() {
     state.settings.sessionsSeeded = true;
   }
   state.settings.sessions = state.settings.sessions.filter(s => s && typeof s === 'object').map(s => ({
-    id: String(s.id || uid()), name: String(s.name || 'Racha').slice(0, 60),
+    id: safeId(s.id || uid()), name: String(s.name || 'Racha').slice(0, 60),
     day: Math.min(6, Math.max(0, Math.round(num(s.day)))),
     time: /^\d{2}:\d{2}$/.test(String(s.time || '')) ? String(s.time) : '19:00',
     duration: String(s.duration || '1h30').slice(0, 20),
@@ -1985,7 +2014,7 @@ function pageDashboard() {
             ${nextGames.length ? nextGames.map(g => `
               <div class="spread" style="padding:9px 11px;background:var(--panel-2);border-radius:10px">
                 <div><strong class="small">${fmtDate(g.date)}</strong><div class="tiny muted">${state.dayEntries.filter(d => d.gameId === g.id).length} diaristas · ${money(sum(state.dayEntries.filter(d => d.gameId === g.id), d => d.amount))}</div></div>
-                <button class="btn btn-sm ${g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${g.id}">${g.done ? 'Editar' : 'Check-in'}</button>
+                <button class="btn btn-sm ${g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${esc(g.id)}">${g.done ? 'Editar' : 'Check-in'}</button>
               </div>`).join('') : empty('Sem jogos agendados', 'Crie jogos na aba Jogos & Diárias.')}
           </div>
         </div>
@@ -2827,7 +2856,7 @@ function pagePayments() {
             const cells = MONTHS.map((_, i) => {
               const rec = state.payments.find(x => x.playerId === p.id && x.month === i + 1 && x.year === y && x.paid !== false);
               if (rec) total += num(rec.amount);
-              return `<td><button class="pay-cell ${rec ? 'paid' : ''}" data-act="edit-payment" data-player="${p.id}" data-month="${i + 1}" title="${rec ? 'Pago: ' + money(rec.amount) + ' (clique para editar)' : 'Marcar como pago'}">${rec ? '✓' : '—'}</button></td>`;
+              return `<td><button class="pay-cell ${rec ? 'paid' : ''}" data-act="edit-payment" data-player="${esc(p.id)}" data-month="${i + 1}" title="${rec ? 'Pago: ' + money(rec.amount) + ' (clique para editar)' : 'Marcar como pago'}">${rec ? '✓' : '—'}</button></td>`;
             }).join('');
             return `<tr><td>${playerCell(p, roleDef(p.type) && num(playerFee(p)) !== base ? `${p.type} · ${money(playerFee(p))}/mês` : '')}</td>${cells}<td class="num"><strong>${money(total)}</strong></td></tr>`;
           }).join('')}
@@ -2896,13 +2925,13 @@ function pageGames() {
         ${games.map(g => { const ds = state.dayEntries.filter(d => d.gameId === g.id); const conf = gameConfirmedPlayers(g); const pres = gameCheckinPlayers(g); return `<tr>
           <td><strong>${fmtDate(g.date)}</strong>${g.time ? `<div class="tiny muted">${esc(g.time)}</div>` : ''}${g.name ? `<div class="tiny muted">${esc(g.name)}</div>` : ''}${g.location ? `<div class="tiny muted">📍 ${esc(g.location)}</div>` : ''}${g.notes ? `<div class="tiny muted">${esc(g.notes)}</div>` : ''}</td><td>${shortMonth(g.month)}</td>
           <td>${g.canceled ? badge('Cancelado', 'red') : g.done ? badge('Realizado', 'green') : badge('Agendado', 'amber')}</td>
-          <td><button class="btn btn-sm btn-ghost" type="button" data-act="game-presence" data-id="${g.id}">👥 ${conf.length} confirm. · ${pres.length} check-in</button>
+          <td><button class="btn btn-sm btn-ghost" type="button" data-act="game-presence" data-id="${esc(g.id)}">👥 ${conf.length} confirm. · ${pres.length} check-in</button>
             ${conf.length ? `<div class="tiny muted">${conf.slice(0, 3).map(p => esc(p.name)).join(', ')}${conf.length > 3 ? '…' : ''}</div>` : ''}</td>
           <td class="right mono">${ds.length}</td><td class="right mono">${money(sum(ds, d => d.amount))}</td>
           <td class="right"><div class="stack" style="gap:6px;align-items:flex-end">
-            <button class="btn btn-sm ${g.canceled ? 'btn-ghost' : g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${g.id}" ${g.canceled ? 'disabled title="Reative o jogo para fazer check-in"' : ''}>${g.canceled ? 'Check-in indisponível' : g.done ? 'Editar presença' : 'Fazer check-in'}</button>
-            <button class="btn btn-sm btn-ghost" type="button" data-act="game-cancel" data-id="${g.id}">${g.canceled ? '↩ Reativar' : '🚫 Cancelar'}</button>
-            <button class="icon-btn danger" data-act="delete-game" data-id="${g.id}" title="Excluir jogo">🗑️</button>
+            <button class="btn btn-sm ${g.canceled ? 'btn-ghost' : g.done ? 'btn-ghost' : 'btn-primary'}" data-act="checkin" data-id="${esc(g.id)}" ${g.canceled ? 'disabled title="Reative o jogo para fazer check-in"' : ''}>${g.canceled ? 'Check-in indisponível' : g.done ? 'Editar presença' : 'Fazer check-in'}</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-act="game-cancel" data-id="${esc(g.id)}">${g.canceled ? '↩ Reativar' : '🚫 Cancelar'}</button>
+            <button class="icon-btn danger" data-act="delete-game" data-id="${esc(g.id)}" title="Excluir jogo">🗑️</button>
           </div></td></tr>`; }).join('')}
       </tbody></table>` : empty('Nenhum jogo neste filtro', 'Gere os rachas do ano ou cadastre um jogo manualmente.')}</div>
     </div>`;
@@ -2911,7 +2940,7 @@ function pageGames() {
   return tabs + `<div class="card">
     ${section('Diárias recebidas', 'Uma linha por diarista por jogo', `<button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="day">＋ Diária</button>`)}
     <div class="table-wrap">${days.length ? `<table><thead><tr><th>Data</th><th>Jogador</th><th>Tipo</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
-      ${days.slice(0, 300).map(d => `<tr><td>${fmtDate(d.date)}</td><td>${playerCell(playerById(d.playerId))}</td><td>${badge('Diarista', 'blue')}</td><td class="right mono">${money(d.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-day" data-id="${d.id}">🗑️</button></td></tr>`).join('')}
+      ${days.slice(0, 300).map(d => `<tr><td>${fmtDate(d.date)}</td><td>${playerCell(playerById(d.playerId))}</td><td>${badge('Diarista', 'blue')}</td><td class="right mono">${money(d.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-day" data-id="${esc(d.id)}">🗑️</button></td></tr>`).join('')}
     </tbody></table>` : empty('Sem diárias', 'Faça o check-in de um jogo para lançar as diárias em lote.')}</div>
   </div>`;
 }
@@ -2935,7 +2964,7 @@ function pageExpenses() {
         <button class="btn btn-sm btn-ghost" data-act="expense-clear-selected" type="button" ${all.length ? '' : 'disabled'}>🧹 Limpar selecionados</button>
         <button class="btn btn-sm btn-danger" data-act="clear-expenses" type="button" ${state.expenses.length ? '' : 'disabled'} title="Apagar todas as despesas de todos os anos">🧹 Limpar todas</button>`)}
       <div class="table-wrap">${all.length ? `<table><thead><tr><th style="width:34px"><input type="checkbox" id="expense-all" data-act="expense-select-all" title="Selecionar todas" style="width:16px" /></th><th>Data</th><th>Categoria</th><th>Descrição</th><th>Mês</th><th class="right">Valor</th><th class="right">Ações</th></tr></thead><tbody>
-        ${all.map(e => `<tr><td><input type="checkbox" class="expense-check" value="${esc(e.id)}" style="width:16px" /></td><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}${e.fixed ? '<span class="tiny muted"> · fixo</span>' : ''}${e.seriesId ? '<span class="tiny muted"> · repetição</span>' : ''}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${e.id}" title="Excluir este lançamento">🗑️</button>${e.seriesId ? ` <button class="icon-btn danger" data-act="delete-expense-series" data-series="${esc(e.seriesId)}" title="Excluir toda esta repetição">🧹</button>` : ''}</td></tr>`).join('')}
+        ${all.map(e => `<tr><td><input type="checkbox" class="expense-check" value="${esc(e.id)}" style="width:16px" /></td><td>${fmtDate(e.date)}</td><td>${badge(displayExpenseCat(e.category), displayExpenseCat(e.category) === 'Quadra' ? 'green' : displayExpenseCat(e.category) === 'Goleiros' ? 'blue' : 'amber')}</td><td>${esc(e.description || '—')}${e.fixed ? '<span class="tiny muted"> · fixo</span>' : ''}${e.seriesId ? '<span class="tiny muted"> · repetição</span>' : ''}</td><td>${shortMonth(e.month)}</td><td class="right mono">${money(e.amount)}</td><td class="right"><button class="icon-btn danger" data-act="delete-expense" data-id="${esc(e.id)}" title="Excluir este lançamento">🗑️</button>${e.seriesId ? ` <button class="icon-btn danger" data-act="delete-expense-series" data-series="${esc(e.seriesId)}" title="Excluir toda esta repetição">🧹</button>` : ''}</td></tr>`).join('')}
       </tbody></table>` : empty('Sem despesas', 'Lance o aluguel da quadra e os goleiros para começar.')}</div>
     </div>`;
 }
@@ -2953,7 +2982,7 @@ function pageBenefits() {
     <div class="card mt">
       ${section('Benefícios e incentivos · ' + y, 'Camisa, colete, desconto e outros incentivos', `<button class="btn btn-sm btn-primary" data-act="open-modal" data-modal="benefit">＋ Benefício</button>`)}
       <div class="table-wrap">${list.length ? `<table><thead><tr><th>Data</th><th>Jogador</th><th>Tipo</th><th class="right">Valor</th><th>Sai do caixa?</th><th>Mês</th><th>Observação</th><th class="right">Ações</th></tr></thead><tbody>
-        ${list.map(b => `<tr><td>${fmtDate(b.date)}</td><td>${playerCell(playerById(b.playerId))}</td><td class="small">${esc(b.type || '—')}</td><td class="right mono">${money(b.amount)}</td><td>${badge(b.fromCash ? 'Sim' : 'Não', b.fromCash ? 'red' : 'blue')}</td><td>${shortMonth(b.month)}</td><td class="small muted">${esc(b.note || '—')}</td><td class="right"><button class="icon-btn" data-act="edit-benefit" data-id="${b.id}">✏️</button> <button class="icon-btn danger" data-act="delete-benefit" data-id="${b.id}">🗑️</button></td></tr>`).join('')}
+        ${list.map(b => `<tr><td>${fmtDate(b.date)}</td><td>${playerCell(playerById(b.playerId))}</td><td class="small">${esc(b.type || '—')}</td><td class="right mono">${money(b.amount)}</td><td>${badge(b.fromCash ? 'Sim' : 'Não', b.fromCash ? 'red' : 'blue')}</td><td>${shortMonth(b.month)}</td><td class="small muted">${esc(b.note || '—')}</td><td class="right"><button class="icon-btn" data-act="edit-benefit" data-id="${esc(b.id)}">✏️</button> <button class="icon-btn danger" data-act="delete-benefit" data-id="${esc(b.id)}">🗑️</button></td></tr>`).join('')}
       </tbody></table>` : empty('Sem benefícios', 'Lance incentivos e descontos concedidos aos mensalistas.')}</div>
     </div>`;
 }
@@ -2984,7 +3013,7 @@ function pageCash() {
             </div>
             <div class="progress"><span style="width:${goalProgress(g)}%"></span></div>
             <div class="row mt" style="gap:8px;align-items:center">
-              <input type="number" min="0" step="0.01" value="${num(g.progress)}" data-goal-progress="${g.id}" aria-label="Progresso de ${esc(g.name)}" style="width:120px" />
+              <input type="number" min="0" step="0.01" value="${num(g.progress)}" data-goal-progress="${esc(g.id)}" aria-label="Progresso de ${esc(g.name)}" style="width:120px" />
               <span class="tiny muted">atualizar valor arrecadado</span>
             </div>
           </div>`).join('')}
@@ -3130,9 +3159,9 @@ function pageScores() {
         ${players.map(p => {
           const s = existing.get(p.id) || { goals: 0, assists: 0, presence: 0, desarmes: 0, defesas: 0, paredoes: 0, golsSofridos: 0, fairPlay: 0, punctual: 0, farrapou: 0, atrasado: 0, cards: 0 };
           const pts = scorePoints(s);
-          return `<tr data-score-row="${p.id}">
+          return `<tr data-score-row="${esc(p.id)}">
             <td>${playerCell(p)}</td>
-            ${['goals', 'assists', 'presence', 'desarmes', 'defesas', 'paredoes', 'golsSofridos', 'fairPlay', 'punctual', 'farrapou', 'atrasado', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${p.id}" aria-label="${esc(playerName(p.id))} — ${scoreLabels[k] || k}" style="width:66px;text-align:right" /></td>`).join('')}
+            ${['goals', 'assists', 'presence', 'desarmes', 'defesas', 'paredoes', 'golsSofridos', 'fairPlay', 'punctual', 'farrapou', 'atrasado', 'cards'].map(k => `<td class="right"><input type="number" min="0" value="${num(s[k])}" data-score="${k}" data-player="${esc(p.id)}" aria-label="${esc(playerName(p.id))} — ${scoreLabels[k] || k}" style="width:66px;text-align:right" /></td>`).join('')}
             <td class="right mono"><strong id="pts-${p.id}">${pts}</strong></td>
           </tr>`;
         }).join('')}
@@ -3471,7 +3500,7 @@ function pageSettings() {
             ${goals().length ? `<div class="stack">${goals().map(g => `
               <div class="row" style="justify-content:space-between;gap:8px;align-items:center">
                 <span class="small"><strong>${esc(g.name)}</strong> <span class="tiny muted">${g.mode === 'annual' ? `anual ${esc(g.year || year())}` : g.mode === 'monthly' ? 'todo mês' : `${shortMonth(num(g.month))} · mensal`} · ${money(g.amount)}</span></span>
-                <button class="btn btn-sm btn-ghost" type="button" data-act="delete-goal" data-id="${g.id}">Excluir</button>
+                <button class="btn btn-sm btn-ghost" type="button" data-act="delete-goal" data-id="${esc(g.id)}">Excluir</button>
               </div>`).join('')}</div>` : '<p class="tiny muted">Nenhuma meta genérica cadastrada.</p>'}
             <p class="tiny muted">Metas mensais somam na meta de receita. Metas anuais aparecem em Fluxo de caixa com progresso próprio.</p>
           </div>
@@ -3806,9 +3835,9 @@ function renderPaymentPage() {
           </div>
           <div class="mt">${receiptHTML(rec, true)}</div>
           <div class="row mt">
-            <button class="btn btn-ghost btn-sm" data-act="copy-receipt" data-id="${rec.id}">📋 Copiar</button>
-            <button class="btn btn-ghost btn-sm" data-act="download-receipt" data-id="${rec.id}">🖼️ PNG</button>
-            <button class="btn btn-primary btn-sm" data-act="print-receipt" data-id="${rec.id}">🖨️ PDF</button>
+            <button class="btn btn-ghost btn-sm" data-act="copy-receipt" data-id="${esc(rec.id)}">📋 Copiar</button>
+            <button class="btn btn-ghost btn-sm" data-act="download-receipt" data-id="${esc(rec.id)}">🖼️ PNG</button>
+            <button class="btn btn-primary btn-sm" data-act="print-receipt" data-id="${esc(rec.id)}">🖨️ PDF</button>
             <button class="btn btn-ghost btn-sm" data-act="exit-payment" style="margin-left:auto">Voltar ao app</button>
           </div>` : `
           ${code ? `
@@ -3817,7 +3846,7 @@ function renderPaymentPage() {
             <div class="center tiny muted mt">Ou pague com o QR Code do seu banco usando o código acima.</div>
           ` : `<div class="banner" style="margin:0">Configure a chave PIX em Configurações para gerar o código de pagamento.</div>`}
           <label class="field mt">ID da transação (opcional)<input id="txid-input" placeholder="Ex.: E123456789202701011234" /></label>
-          <button class="btn btn-primary btn-block mt" data-act="confirm-payment-link" data-player="${pp.playerId}" data-month="${pp.month}" data-amount="${pp.amount}">✅ Confirmar pagamento e dar baixa</button>
+          <button class="btn btn-primary btn-block mt" data-act="confirm-payment-link" data-player="${esc(pp.playerId)}" data-month="${pp.month}" data-amount="${pp.amount}">✅ Confirmar pagamento e dar baixa</button>
           <p class="tiny muted center mt">Ao confirmar, a mensalidade é marcada como paga automaticamente neste app.</p>
           <button class="btn btn-ghost btn-block mt" data-act="exit-payment">Voltar ao app</button>`}
       </div>
@@ -3991,7 +4020,7 @@ function modalPlayer(id) {
   if (!p) return;
   const nv = (v) => (v === null || v === undefined || v === '') ? '' : num(v);
   openModal(id ? 'Editar jogador' : 'Novo jogador', 'Campos marcados são opcionais', `
-    <form data-form="player" data-id="${id || ''}" class="form-grid">
+    <form data-form="player" data-id="${esc(id || '')}" class="form-grid">
       <label class="field" style="grid-column:1/-1">Nome *<input name="name" required value="${esc(p.name)}" placeholder="Nome completo ou apelido" /></label>
       <label class="field">Tipo<select name="type">${PLAYER_TYPES.map(t => `<option ${p.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="field">Posição<select name="position">${['Linha', 'Meia', 'Zaga', 'Ataque', 'Goleiro'].map(x => `<option ${p.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
@@ -4022,8 +4051,8 @@ function modalPayment(playerId, month) {
       <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="paid" type="checkbox" ${!rec || rec.paid !== false ? 'checked' : ''} style="width:16px" /> Pagamento realizado</span></label>
       <p class="tiny muted" style="grid-column:1/-1;margin:0">Use o valor que entrou no caixa do racha. A taxa do cartão do Mercado Pago fica entre o jogador e o Mercado Pago; se você colar o valor bruto, o app registra apenas o líquido.</p>
       <div class="form-actions" style="grid-column:1/-1">
-        ${rec ? `<button class="btn btn-danger" type="button" data-act="delete-payment" data-id="${rec.id}">Remover</button>` : ''}
-        ${rec?.paidAt ? `<button class="btn btn-ghost" type="button" data-act="view-receipt" data-id="${rec.id}">🧾 Comprovante</button>` : ''}
+        ${rec ? `<button class="btn btn-danger" type="button" data-act="delete-payment" data-id="${esc(rec.id)}">Remover</button>` : ''}
+        ${rec?.paidAt ? `<button class="btn btn-ghost" type="button" data-act="view-receipt" data-id="${esc(rec.id)}">🧾 Comprovante</button>` : ''}
         <button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button>
         <button class="btn btn-primary" type="submit">Salvar</button>
       </div>
@@ -4068,7 +4097,7 @@ function modalCheckin(gameId) {
   const presentes = gameCheckinIds(g);
   const players = activePlayers();
   openModal('Check-in · ' + fmtDate(g.date), 'Marque quem jogou e o valor recebido de cada um', `
-    <form data-form="checkin" data-id="${gameId}" class="form-grid one">
+    <form data-form="checkin" data-id="${esc(gameId)}" class="form-grid one">
       <div class="table-wrap" style="max-height:46vh;overflow:auto">
         <table><thead><tr><th>Jogador</th><th>Tipo</th><th class="right">Valor (R$)</th><th class="center">Presente</th></tr></thead><tbody>
           ${players.map(p => {
@@ -4116,7 +4145,7 @@ function modalGamePresence(gameId) {
         <p class="tiny muted">${faltam.map(p => esc(p.name)).join(' · ')}</p>
       </div></div>` : ''}
       <div class="form-actions"><button class="btn btn-ghost" type="button" data-act="close-modal">Fechar</button>
-        <button class="btn btn-primary" type="button" data-act="checkin" data-id="${g.id}">✏️ Editar check-in</button></div>
+        <button class="btn btn-primary" type="button" data-act="checkin" data-id="${esc(g.id)}">✏️ Editar check-in</button></div>
     </div>`, true);
 }
 
@@ -4207,7 +4236,7 @@ function modalPhoto(id) {
     <div class="form-actions">
       ${p.photo ? '<button class="btn btn-danger" data-act="remove-photo" data-id="' + id + '" type="button">Remover foto</button>' : ''}
       <button class="btn btn-ghost" data-act="close-modal" type="button">Cancelar</button>
-      <button class="btn btn-primary" data-act="save-photo" data-id="${id}" type="button">Salvar foto</button>
+      <button class="btn btn-primary" data-act="save-photo" data-id="${esc(id)}" type="button">Salvar foto</button>
     </div>`);
 }
 
@@ -4246,7 +4275,7 @@ function modalCobranca(playerId) {
     </div>
     <div class="form-actions">
       <button class="btn btn-ghost" data-act="close-modal" type="button">Fechar</button>
-      ${paid ? '' : `<button class="btn btn-primary" data-act="confirm-payment-modal" data-player="${playerId}" data-month="${m}" data-amount="${amount}" type="button">✅ Já recebi — dar baixa</button>`}
+      ${paid ? '' : `<button class="btn btn-primary" data-act="confirm-payment-modal" data-player="${esc(playerId)}" data-month="${m}" data-amount="${amount}" type="button">✅ Já recebi — dar baixa</button>`}
     </div>`, true);
 }
 
@@ -4254,7 +4283,7 @@ function modalBenefit(id) {
   const b = id ? state.benefits.find(x => x.id === id) : null;
   const d = b || { date: controlDateISO(), playerId: activePlayers()[0]?.id || '', type: 'Camisa/colete', amount: 0, fromCash: true, note: '' };
   openModal(id ? 'Editar benefício' : 'Novo benefício', 'Descontos já refletidos na mensalidade devem marcar "Sai do caixa?" como Não', `
-    <form data-form="benefit" data-id="${id || ''}" class="form-grid one">
+    <form data-form="benefit" data-id="${esc(id || '')}" class="form-grid one">
       <label class="field">Data<input name="date" type="date" value="${esc(d.date)}" required /></label>
       <label class="field">Jogador<select name="playerId">${activePlayers().map(p => `<option value="${p.id}" ${p.id === d.playerId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
       <label class="field">Tipo<input name="type" value="${esc(d.type || '')}" placeholder="Ex.: camisa, colete, desconto" /></label>
@@ -4503,7 +4532,7 @@ function modalProfile(id) {
       <div class="card card-pad"><div class="label tiny muted">FINANCEIRO</div><strong>${paid.length} mensalidades pagas</strong><div class="tiny muted mt">${money(sum(paid, x => x.amount))} pagos · ${days.length} diárias · ${money(sum(days, d => d.amount))}</div></div>
       <div class="card card-pad"><div class="label tiny muted">NOTA GERAL</div><strong>${playerRating(p)}</strong><div class="tiny muted mt">média de força e velocidade · ${p.position || 'sem posição'}</div></div>
     </div>
-    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${id}">🔗 Copiar link</button><button class="btn btn-primary" type="button" data-act="send-player-link" data-id="${id}">📤 Enviar no WhatsApp</button><button class="btn btn-ghost" data-act="edit-player" data-id="${id}">Editar jogador</button></div>`);
+    <div class="form-actions"><button class="btn btn-ghost" data-act="close-modal">Fechar</button><button class="btn btn-ghost" type="button" data-act="copy-player-link" data-id="${esc(id)}">🔗 Copiar link</button><button class="btn btn-primary" type="button" data-act="send-player-link" data-id="${esc(id)}">📤 Enviar no WhatsApp</button><button class="btn btn-ghost" data-act="edit-player" data-id="${esc(id)}">Editar jogador</button></div>`);
 }
 
 /* ------------------------------------------------------------
@@ -5710,10 +5739,12 @@ document.addEventListener('change', async (e) => {
       try {
         const data = sanitizeBackupStrings(JSON.parse(reader.result));
         if (!data.settings || !Array.isArray(data.players)) throw new Error('Arquivo inválido');
-        state = data; normalizeState();
-        await hydratePhotos();
-        await persistPhotosFromState();
-        ui.sim = null; save('importou backup', file.name); render(); toast('Backup importado.');
+        confirmAction(`Importar "${file.name}" e substituir todos os dados atuais?`, async () => {
+          state = data; normalizeState();
+          await hydratePhotos();
+          await persistPhotosFromState();
+          ui.sim = null; save('importou backup', file.name); render(); toast('Backup importado.');
+        });
       } catch (err) { toast('Não foi possível importar: ' + err.message, 'err'); }
       el.value = '';
     };
@@ -5747,8 +5778,8 @@ document.addEventListener('change', async (e) => {
   if (el.id === 'draw-game') { ui.drawGame = el.value; render(); return; }
   if (el.id === 'draw-mode') { ui.drawMode = el.value; return; }
   if (el.id === 'draw-size') { ui.drawSize = Math.max(2, Math.min(20, Math.round(num(el.value)) || 6)); return; }
-  if (el.id === 'color-accent') { colors.accent = el.value; saveColors(); return; }
-  if (el.id === 'color-secondary') { colors.secondary = el.value; saveColors(); return; }
+  if (el.id === 'color-accent') { colors.accent = safeColor(el.value, colors.accent); saveColors(); return; }
+  if (el.id === 'color-secondary') { colors.secondary = safeColor(el.value, colors.secondary); saveColors(); return; }
   if (el.id === 'photo-file' && el.files?.[0]) {
     resizePhoto(el.files[0], (data) => {
       if (!data) { toast('Não foi possível ler esta imagem.', 'err'); return; }
@@ -5790,8 +5821,8 @@ document.addEventListener('input', (e) => {
     });
     return;
   }
-  if (el.id === 'color-accent') { colors.accent = el.value; applyColors(); return; }
-  if (el.id === 'color-secondary') { colors.secondary = el.value; applyColors(); return; }
+  if (el.id === 'color-accent') { colors.accent = safeColor(el.value, colors.accent); applyColors(); return; }
+  if (el.id === 'color-secondary') { colors.secondary = safeColor(el.value, colors.secondary); applyColors(); return; }
   if (el.dataset.sim) {
     const v = simValues();
     v[el.dataset.sim] = num(el.value);
@@ -5874,7 +5905,7 @@ window.addEventListener('storage', (e) => {
     } catch (err) { /* ignore */ }
   }
   if (e.key === 'racha-colors') {
-    try { colors = { ...COLOR_PRESETS.padrao, ...(JSON.parse(e.newValue) || {}) }; applyColors(); } catch (err) { /* ignore */ }
+    try { colors = cleanColors(JSON.parse(e.newValue) || {}); applyColors(); } catch (err) { /* ignore */ }
   }
 });
 

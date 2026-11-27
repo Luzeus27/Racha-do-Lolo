@@ -21,6 +21,20 @@
     const d = new Date(iso);
     return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
   };
+  /* Foto vem do registro: só formatos raster conhecidos, blob local ou ícone do app. */
+  const safePhotoUrl = (value) => {
+    if (typeof value !== 'string') return '';
+    const v = value.trim();
+    if (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(v)) return v;
+    if (v.startsWith('blob:' + location.origin + '/')) {
+      try {
+        const u = new URL(v);
+        if (u.protocol === 'blob:' && /^\/[A-Za-z0-9._~-]+$/.test(u.pathname) && !u.search && !u.hash) return v;
+      } catch (_) { /* ignora URL inválida */ }
+      return '';
+    }
+    return /^(?:\.\/|\/)?(?:icon-192|icon-512)\.png$/i.test(v) ? v : '';
+  };
 
   const token = String(new URLSearchParams(location.search).get('v') || '').trim().toUpperCase();
   const PROFILE_KEY = 'racha-perfil-' + token;
@@ -59,8 +73,9 @@
   }
 
   function avatar(p) {
-    if (p && typeof p.photo === 'string' && p.photo.startsWith('data:image/')) {
-      return `<img class="avatar" src="${esc(p.photo)}" alt="">`;
+    const photo = safePhotoUrl(p && p.photo);
+    if (photo) {
+      return `<img class="avatar" src="${esc(photo)}" alt="">`;
     }
     return `<span class="avatar-fallback">${esc(initials(p && p.name))}</span>`;
   }
@@ -213,8 +228,9 @@
     const hasProfile = p.rachaLogo || p.rachaFounded || p.rachaLocation || p.rachaTime ||
       p.rachaDuration || p.rachaRules || (p.rachaName && p.rachaName !== 'Racha do Loló');
     if (!hasProfile) return '';
-    const logo = typeof p.rachaLogo === 'string' && p.rachaLogo.startsWith('data:image/')
-      ? `<img src="${esc(p.rachaLogo)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px">`
+    const logoUrl = safePhotoUrl(p.rachaLogo);
+    const logo = logoUrl
+      ? `<img src="${esc(logoUrl)}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:14px">`
       : `<span class="avatar-fallback" style="width:56px;height:56px;display:grid;place-items:center;border-radius:14px">${esc(initials(name))}</span>`;
     const facts = [];
     if (p.rachaFounded) facts.push('Desde ' + fmtDate(p.rachaFounded));

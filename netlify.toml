@@ -24,7 +24,7 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "geolocation=(), microphone=(), payment=()"
     Strict-Transport-Security = "max-age=31536000; includeSubDomains"
-    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'sha256-fQKrs0NtFbvaiPfKwzOJ8MSvPd1svRU9StTe4OkPKL4' 'sha256-2cOBPk_8yXcnUH3YA850ZmFGMiKgds0G9XoiXeMoo8M' 'unsafe-hashes' 'sha256-MguIPR6qNR8D3B-eAlK-bIRTZe8t3wkOY4B_56Me9FU'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
 
 # Lembretes 24h/2h antes dos jogos (agendado; REMINDER_SECRET é opcional).
 [functions."send-reminders"]
