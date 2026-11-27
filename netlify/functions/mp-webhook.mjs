@@ -461,9 +461,7 @@ export default async (req) => {
 
   /* Nada de consulta ao Mercado Pago nem escrita no Blobs antes da assinatura:
      sem o segredo, um chamador não pode provocar renovação de token. */
-  console.log('diag webhook ' + JSON.stringify({ method: req.method, dataId: String(dataId).slice(0, 40), requestId: String(requestId).slice(0, 40), sig: !!signature.v1, secret: !!secret }));
   const limit = await rateLimit(req, 'webhook', { max: 300, windowMs: 60000 });
-  console.log('diag rate ' + JSON.stringify({ ok: limit.ok, retryAfter: limit.retryAfter || 0 }));
   if (!limit.ok) {
     return json({ received: false, error: 'Muitas notificações. Aguarde um instante.' }, 429, {
       'Retry-After': String(limit.retryAfter)
@@ -471,7 +469,6 @@ export default async (req) => {
   }
 
   const tokenInfo = await tokenForNotification(url);
-  console.log('diag token ' + JSON.stringify({ cliente: !!tokenInfo.cliente, hasToken: !!tokenInfo.token, global: !!process.env.MP_ACCESS_TOKEN }));
   let token = tokenInfo.token;
   if (!token) return json({ received: false, error: 'Pagamentos não configurados.' }, 503);
 
@@ -486,9 +483,7 @@ export default async (req) => {
     ''
   ).toLowerCase();
 
-  const claimed = await claimEvent(requestId, topic, dataId);
-  console.log('diag claim ' + JSON.stringify({ topic, claimed }));
-  if (!claimed) {
+  if (!(await claimEvent(requestId, topic, dataId))) {
     return json({ received: true, duplicate: true }, 200);
   }
 
@@ -557,8 +552,7 @@ export default async (req) => {
 
   if (topic === 'subscription_authorized_payment' || topic === 'invoice') {
     let activeToken = token;
-    const firstCharge = await mpFetch('/authorized_payments/' + encodeURIComponent(id), { token: activeToken });
-    let result = firstCharge;
+    let result = await mpFetch('/authorized_payments/' + encodeURIComponent(id), { token: activeToken });
     if (!result.ok && !tokenInfo.cliente) {
       const found = await findAutoBySubscription(viewStore, id);
       if (found) {
@@ -570,7 +564,6 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
-      console.log('diag charge ' + JSON.stringify({ global: firstCharge.status, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       /* 502 pede reentrega: um 200 aqui faria o MP desistir de avisar e a
          cobrança aprovada nunca seria baixada. */
@@ -599,8 +592,7 @@ export default async (req) => {
 
   if (topic === 'payment') {
     let activeToken = token;
-    const firstPayment = await mpFetch('/v1/payments/' + encodeURIComponent(id), { token: activeToken });
-    let result = firstPayment;
+    let result = await mpFetch('/v1/payments/' + encodeURIComponent(id), { token: activeToken });
     if (!result.ok && !tokenInfo.cliente) {
       const found = await findByMpPaymentId(viewStore, id);
       if (found) {
@@ -612,7 +604,6 @@ export default async (req) => {
       }
     }
     if (!result.ok || !result.data) {
-      console.log('diag payment ' + JSON.stringify({ global: firstPayment.status, final: result.status, err: result.error || '' }));
       await releaseEvent(requestId);
       return json({ received: false, error: 'Não foi possível consultar o pagamento.' }, 502);
     }
