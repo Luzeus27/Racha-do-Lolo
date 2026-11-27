@@ -1,11 +1,11 @@
 # Checklist de segurança — Racha do Loló
 
-Versão enxuta, montada após a análise dos vídeos do Instagram. Atualizado em 25/11/2026.
+Versão enxuta, montada após a análise dos vídeos do Instagram. Atualizado em 27/11/2026.
 Regra: só entra o que passou pelo filtro "serve para o nosso app".
 
 ## Bloqueante — não vender antes disso
 
-- [ ] **Deploy de produção pausado por créditos da Netlify.** A versão publicada está desatualizada: `visualizar.html`, `jogador.html` e `ao-vivo.html` ainda dão **404** no ar. É obrigatório **publicar a versão atual** e conferir: (1) home abre; (2) as três páginas abrem sem 404; (3) os cabeçalhos de segurança do `netlify.toml` aparecem; (4) as funções novas respondem. Quem faz essa verificação é `scripts/security-check.ps1` (somente leitura); não existe um script separado só de deploy.
+- [x] **Deploy de produção liberado e publicado em 27/11/2026** (plano Netlify **Personal** ativo). Conferido no ar: home abre em `v1.1.3`; `visualizar.html`, `jogador.html`, `ao-vivo.html`, `comunidade.html` e `contato.html` respondem **200**; cabeçalhos de segurança do `netlify.toml` presentes; `sw.js` e a função de licença respondem; bateria local **139/139** sem erro de console. `scripts/security-check.ps1` é somente leitura e não existe um script separado só de deploy. O espelho do GitHub Pages também está em `v1.1.3`.
 
 ## Já está feito — não refazer
 
@@ -31,6 +31,16 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 - [x] LGPD: telefone do jogador é opcional; não há dados pessoais completos em logs; a política cita o WhatsApp/Meta como terceiro de envio **manual** e traz o procedimento de incidente com comunicação à ANPD em prazo razoável, conforme a LGPD e a regulamentação da ANPD. O botão **Apagar tudo** pede duas confirmações.
 - [x] Upgrade Básico → PRO usa a mesma chave e a mesma `subscriptionId`: o servidor valida dispositivo, licença ativa e ciclo, altera o valor com `PUT /preapproval/{id}` e não cria segunda assinatura; a confirmação final do valor depende do Mercado Pago.
 
+### Lote 5 — concluído em 27/11/2026
+
+- [x] `mp-webhook` valida a assinatura HMAC **antes** de consultar o Mercado Pago ou gravar no Blobs, e aplica limite de requisições. Sem segredo, sem assinatura válida ou com o Blobs de limite fora, nenhuma notificação é processada.
+- [x] `mp-webhook` aceita apenas GET e POST (o Mercado Pago notifica pelos dois); PUT/DELETE e outros verbos recebem 405.
+- [x] `reconcile-licenses`, `send-reminders` e a transferência de aparelho em `license` comparam segredo/e-mail do titular com `timingSafeEqual`, e as duas funções agendadas também têm limite de requisições.
+- [x] Corpo `null` em `create-checkout`, `create-master`, `cancel-subscription`, `change-plan` e `publish-view` devolve 400, sem exceção não tratada.
+- [x] Mensagens de erro das funções de pagamento não devolvem `err.message` de rede (detalhe de DNS/proxy/endereço interno).
+- [x] Respostas de nota e de resposta do jogador conferem se o `gameId` existe no retrato publicado.
+- [x] Respostas 204 do preflight também saem com `Cache-Control: no-store`.
+
 ## Não se aplica ou não vale a pena agora
 
 - **SQL injection**: não existe banco SQL no projeto.
@@ -39,7 +49,7 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 - **Strix / OpenVAS / wp-scan**: guardar para depois. O Strix é sério, mas exige Docker, chave de modelo e faz testes agressivos. O wp-scan é só para WordPress (nosso app não é). Nenhum dos dois deve ser apontado para produção sem acompanhamento.
 - **Cursos e "skills BLINDAGEM"**: não comprar por medo. O que serve ali nós já revisamos e podemos rever de graça aqui.
 
-## Quando o deploy voltar (retorno previsto após 17/12/2026, se houver upgrade)
+## Pendente no painel (deploy já conferido em 27/11/2026)
 
 1. Confirmar que `https://rachadololo.netlify.app` abre e que `visualizar.html`, `jogador.html` e `ao-vivo.html` não dão 404.
 2. Rodar `scripts/security-check.ps1` (ou conferir a tarefa do Windows **Racha do Lolo - Seguranca**, verificada em 26/11/2026 como habilitada e diária às **09:30**). Ele confere home, as três páginas, os cabeçalhos de segurança, funções com token inválido, segredos no código e o domínio antigo. Ele grava `relatorio-seguranca.txt` na raiz do projeto **somente quando as páginas respondem 200** — com o deploy atual ele encerra sem gravar. É **somente leitura**: não ataca, não envia formulário, não muda nada. Não existe um script separado só de deploy.
@@ -51,9 +61,9 @@ Regra: só entra o que passou pelo filtro "serve para o nosso app".
 
 ## Regras permanentes
 
-- Nunca colar tokens, senhas ou chaves na conversa, nem em print.
-- Não comercializar para terceiros ainda; o visualizador é benefício incluído para assinantes/compradores. Só vender depois de concluir o bloqueante do topo.
-- Não fazer upgrade do Netlify só por causa do aviso de créditos.
+- Nunca colar tokens, senhas ou chaves na conversa, nem em print; variáveis só nos painéis.
+- Não comercializar para terceiros ainda; o visualizador é benefício incluído para assinantes/compradores. Só vender depois de vincular a conta Mercado Pago, cadastrar variáveis, configurar o webhook e testar em sandbox.
+- Upgrade Netlify **Personal** contratado em 27/11/2026 (US$ 9/mês, auto recharge desligado). Não contratar mais nada sem autorização.
 - Manter abertas apenas as abas realmente em uso.
 
 ## Agendamento
