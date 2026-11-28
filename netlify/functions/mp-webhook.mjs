@@ -107,23 +107,13 @@ function signatureIsValid(secret, { ts, v1 }, dataId, requestId) {
   if (dataId) manifests.push('request-id:' + String(requestId || '') + ';ts:' + ts + ';');
 
   const received = String(v1).toLowerCase();
-  const attempts = [];
-  let valid = false;
   for (const manifest of manifests) {
     const expected = createHmac('sha256', secret).update(manifest).digest('hex');
-    const match = expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received));
-    attempts.push({ manifest, exp: expected.slice(0, 6), got: received.slice(0, 6), match });
-    if (match) { valid = true; break; }
+    if (expected.length === received.length && timingSafeEqual(Buffer.from(expected), Buffer.from(received))) {
+      return true;
+    }
   }
-  console.log('DBG sig', JSON.stringify({
-    dataId: String(dataId || '').slice(0, 40),
-    hasRid: !!requestId,
-    ridLen: String(requestId || '').length,
-    tsTail: String(ts || '').slice(-5),
-    v1Len: received.length,
-    attempts
-  }));
-  return valid;
+  return false;
 }
 
 /* Reentrega do mesmo aviso não pode poluir o histórico nem repetir baixas.
@@ -511,15 +501,6 @@ export default async (req) => {
   if (!secrets.length) return json({ received: false, error: 'Webhook sem segredo configurado.' }, 503);
 
   const signature = parseSignature(req.headers.get('x-signature'));
-  console.log('DBG webhook', JSON.stringify({
-    method: req.method,
-    url: String(req.url).slice(0, 200),
-    bodyKeys: Object.keys(payload || {}).slice(0, 12),
-    bodyDataId: String(payload?.data?.id || '').slice(0, 40),
-    infoDataId: String(dataId || '').slice(0, 40),
-    topic: String(topic || '').slice(0, 40),
-    secretsLen: secrets.map((value) => value.length)
-  }));
   if (!secrets.some((secret) => signatureIsValid(secret, signature, dataId, requestId))) {
     return json({ received: false, error: 'Assinatura inválida.' }, 401);
   }
