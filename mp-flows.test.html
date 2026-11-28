@@ -1172,7 +1172,7 @@ await teste('frontend valida foto, backup, redirecionamento e cache com token', 
   includes(visual, "startsWith(location.origin + '/jogador.html?')", 'redirecionamento sem validar origem');
   ok(!jogador.includes('presença e a diária são confirmadas na hora'), 'jogador.js ainda promete baixa automática');
   includes(jogador, 'O administrador dará a baixa.', 'fluxo único de aviso ausente');
-  includes(sw, 'racha-do-lolo-v96', 'cache não foi atualizado');
+  includes(sw, 'racha-do-lolo-v97', 'cache não foi atualizado');
   includes(sw, '/[?&](?:v=VW-|p=VP-)/.test(url.search)', 'tokens ainda entram no cache');
 });
 
@@ -1280,7 +1280,7 @@ await teste('app e documentos explicam o upgrade e usam o cache novo', async () 
   includes(readme, '### Upgrade do Básico para o PRO', 'README sem o passo a passo');
   includes(readme, '### Modalidades de pagamento da assinatura', 'README sem as modalidades');
   includes(termos, '⚡ Fazer upgrade para o PRO', 'Termos sem a cláusula de upgrade');
-  includes(sw, 'racha-do-lolo-v96', 'cache não foi atualizado');
+  includes(sw, 'racha-do-lolo-v97', 'cache não foi atualizado');
 });
 
 await teste('conta master fica só no servidor; clientes não veem plano vitalício', async () => {
@@ -1304,7 +1304,7 @@ await teste('conta master fica só no servidor; clientes não veem plano vitalí
   includes(readme, 'exclusiva do proprietário/desenvolvedor', 'README não identifica o dono');
 });
 
-await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo', async () => {
+await teste('troca de aparelho é self-service: chave + e-mail vinculam até 2 aparelhos', async () => {
   const licenseSrc = await origFetch(new URL('../netlify/functions/license.mjs', location.href)).then((r) => r.text());
   const app = await origFetch(new URL('../app.js', location.href)).then((r) => r.text());
   const readme = await origFetch(new URL('../README.md', location.href)).then((r) => r.text());
@@ -1312,9 +1312,13 @@ await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo'
   ok(!/Use o aparelho original ou fale com o administrador/.test(licenseSrc), 'servidor ainda manda procurar o administrador');
   includes(app, 'confirme o e-mail da assinatura', 'app não explica a troca sozinha');
   includes(app, 'O vínculo é transferido automaticamente', 'app não diz que a troca é automática');
+  includes(app, 'até 2 aparelhos', 'app não informa o limite de 2 aparelhos');
+  includes(licenseSrc, 'MAX_DEVICES', 'servidor não tem limite de aparelhos');
   includes(readme, 'até o titular confirmar o e-mail da compra no aparelho novo', 'README não explica a troca');
+  includes(readme, 'limite de 2 aparelhos', 'README não informa o limite');
 
   const NOVO = 'DEV-BBBBBBBBBBBBBBBBBBBBBBBB';
+  const TERCEIRO = 'DEV-CCCCCCCCCCCCCCCCCCCCCCCC';
   const base = {
     key: KEY, email: 'cliente@exemplo.com', plan: 'monthly', amount: 9.9,
     status: 'active', subscriptionId: 'PRE-1', devices: [DEVICE],
@@ -1327,6 +1331,7 @@ await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo'
   let data = await res.json();
   eq(data.state, 'device_mismatch', 'não avisou que a chave está em outro aparelho');
   includes(data.message, 'Digite o e-mail usado no checkout', 'mensagem não ensina como trocar');
+  includes(data.message, 'até 2 aparelhos', 'mensagem não informa o limite');
   ok(!/fale com o administrador/i.test(data.message), 'mensagem ainda pede contato com o administrador');
 
   res = await post(L, { action: 'transfer', key: KEY, deviceId: NOVO, email: 'errado@exemplo.com' });
@@ -1337,8 +1342,9 @@ await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo'
   data = await res.json();
   eq(res.status, 200, 'troca com e-mail correto falhou');
   eq(data.ok, true, 'resposta sem ok');
-  eq(licenseMap.get(KEY).devices[0], NOVO, 'vínculo não foi movido');
-  eq(licenseMap.get(KEY).devices.length, 1, 'ficou mais de um aparelho vinculado');
+  eq(licenseMap.get(KEY).devices.length, 2, 'aparelho anterior foi derrubado');
+  ok(licenseMap.get(KEY).devices.includes(DEVICE), 'notebook perdeu o vínculo');
+  ok(licenseMap.get(KEY).devices.includes(NOVO), 'celular não foi vinculado');
   ok(licenseMap.get(KEY).history.some((h) => h.event === 'transfer:device'), 'troca não entrou no histórico');
 
   res = await post(L, { key: KEY, deviceId: NOVO });
@@ -1349,7 +1355,19 @@ await teste('troca de aparelho é self-service: chave + e-mail movem o vínculo'
 
   res = await post(L, { key: KEY, deviceId: DEVICE });
   data = await res.json();
-  eq(data.state, 'device_mismatch', 'aparelho antigo continua válido');
+  eq(data.valid, true, 'aparelho antigo deixou de ser válido');
+
+  res = await post(L, { action: 'transfer', key: KEY, deviceId: TERCEIRO, email: 'cliente@exemplo.com' });
+  data = await res.json();
+  eq(res.status, 409, 'terceiro aparelho deveria ser recusado');
+  includes(data.error, '2 aparelhos', 'erro não explica o limite');
+  eq(licenseMap.get(KEY).devices.length, 2, 'terceiro aparelho entrou na lista');
+  ok(!licenseMap.get(KEY).devices.includes(TERCEIRO), 'terceiro aparelho foi vinculado');
+
+  res = await post(L, { action: 'transfer', key: KEY, deviceId: NOVO, email: 'cliente@exemplo.com' });
+  data = await res.json();
+  eq(res.status, 200, 'transferir para o mesmo aparelho falhou');
+  eq(licenseMap.get(KEY).devices.length, 2, 'transferência repetida duplicou o aparelho');
 });
 
 await teste('botão Falar com o Administrador abre formulário com foto', async () => {
@@ -1464,7 +1482,7 @@ await teste('capital selecionada abre pedido de acesso sem pedir criação', asy
 
 await teste('cache offline atualizado com a comunidade', async () => {
   const sw = await origFetch(new URL('../sw.js', location.href)).then((r) => r.text());
-  includes(sw, 'racha-do-lolo-v96', 'versão do cache não foi atualizada');
+  includes(sw, 'racha-do-lolo-v97', 'versão do cache não foi atualizada');
   includes(sw, "'./comunidade.html'", 'página fora do cache offline');
   includes(sw, "'./comunidade.js'", 'código da página fora do cache offline');
   includes(sw, "'./comunidade.json'", 'lista fora do cache offline');

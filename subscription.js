@@ -259,8 +259,8 @@ window.RachaLicense = (function () {
     return data;
   }
 
-  /* Transfere o vínculo da chave para este aparelho após conferir o e-mail
-     usado no checkout. Serve para troca de celular sem exigir suporte. */
+  /* Vincula este aparelho à chave (até 2 aparelhos) após conferir o e-mail
+     usado no checkout. Serve para usar notebook e celular sem exigir suporte. */
   async function transfer(key, email) {
     if (!canUseServer()) {
       return { ok: false, error: 'Disponível apenas no site principal.' };

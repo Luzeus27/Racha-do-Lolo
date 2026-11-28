@@ -3884,7 +3884,7 @@ function pageSubscription() {
               </div>
               ${canUpgrade ? `<p class="tiny muted">Sua chave e sua data de cobrança continuam as mesmas: o valor da assinatura atual é alterado, sem nova assinatura e sem duas cobranças.</p>` : ''}
               ${known?.plan === 'lifetime' ? `<p class="tiny" style="color:var(--accent)">Conta de administrador — sem cobranças e sem renovação.</p>` : ''}
-              <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Trocar de aparelho? Digite a chave aqui no aparelho novo e confirme o e-mail da assinatura. Você faz isso sozinho.</p>
+              <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Usar em outro aparelho? Digite a chave aqui no aparelho novo e confirme o e-mail da assinatura. São até 2 aparelhos; você faz isso sozinho.</p>
               ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
               ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
               ${known?.cancelRequestedAt ? `<p class="tiny" style="color:var(--amber)">Cancelamento solicitado. O acesso segue até ${esc(String(known.nextPaymentAt || '').slice(0, 10))}.</p>` : ''}
@@ -3905,7 +3905,7 @@ function pageSubscription() {
                 <input name="email" type="email" placeholder="E-mail usado no checkout" aria-label="E-mail da assinatura" />
                 <button class="btn btn-primary" type="submit">Vincular este aparelho</button>
               </form>
-              <p class="tiny muted">Informe o e-mail usado na assinatura para mover o vínculo para este aparelho.</p>
+              <p class="tiny muted">Informe o e-mail usado na assinatura para vincular este aparelho. A chave pode ficar em até 2 aparelhos, sem derrubar o anterior.</p>
             ` : ''}
           </div>
         </div>
@@ -3916,7 +3916,7 @@ function pageSubscription() {
               <div class="sub-step"><span>Use grátis por 14 dias e teste tudo, sem cartão.</span></div>
               <div class="sub-step"><span>Escolha Básico ou PRO, mensal ou anual, e informe seu e-mail. Você será levado ao Mercado Pago.</span></div>
               <div class="sub-step"><span>Ao concluir o pagamento, a licença é confirmada automaticamente e o app volta a liberar a edição.</span></div>
-              <div class="sub-step"><span>Guarde a chave de licença: ela fica vinculada a este aparelho. Para usar em outro dispositivo, abra <strong>Assinatura</strong> no aparelho novo, digite a chave e informe o e-mail usado na compra. O vínculo é transferido automaticamente, sem precisar de ajuda.</span></div>
+              <div class="sub-step"><span>Guarde a chave de licença: ela pode ficar vinculada a até <strong>2 aparelhos</strong> (por exemplo, notebook e celular). Para usar em outro dispositivo, abra <strong>Assinatura</strong> no aparelho novo, digite a chave e informe o e-mail usado na compra. O vínculo é transferido automaticamente, sem precisar de ajuda, e o aparelho anterior continua funcionando.</span></div>
               <div class="sub-step"><span>Para subir do Básico ao PRO, use <strong>⚡ Fazer upgrade para o PRO</strong> na sua chave: o valor da assinatura atual muda, sem nova chave e sem duas cobranças. O botão aparece apenas para planos ativos no mesmo ciclo (mensal ou anual).</span></div>
               <div class="sub-step"><span>Para cancelar, use o botão na sua chave de licença. O acesso permanece até o fim do período já pago.</span></div>
             </div>
@@ -5622,7 +5622,7 @@ document.addEventListener('submit', async (e) => {
       return;
     }
     if (data && data.state === 'device_mismatch') {
-      toast('Esta chave está em outro aparelho. Use o formulário abaixo para transferir.', 'err');
+      toast('Esta chave está em outro aparelho. Use o formulário abaixo para vincular este aparelho (até 2).', 'err');
       render();
       return;
     }
