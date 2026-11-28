@@ -156,6 +156,10 @@ export default async (req) => {
 
   let status = record.status === 'active' && validUntil(record.nextPaymentAt) ? 'active' : record.status || 'pending';
 
+  /* Chave de teste: a data guardada em nextPaymentAt já desconta a tolerância
+     de 3 dias do validUntil(); expiresAt é o fim real, sem tolerância. */
+  if (record.temporary && record.expiresAt && Date.parse(record.expiresAt) <= Date.now()) status = 'inactive';
+
   /* Cancelamento solicitado: o acesso permanece até o fim do período já pago. */
   if (record.cancelRequestedAt && record.nextPaymentAt) {
     const end = Date.parse(record.nextPaymentAt);
@@ -172,7 +176,7 @@ export default async (req) => {
     plan: record.plan || 'monthly',
     amount: record.amount || null,
     emailMasked: maskEmail(record.email),
-    nextPaymentAt: record.nextPaymentAt || null,
+    nextPaymentAt: (record.temporary && record.expiresAt) ? record.expiresAt : (record.nextPaymentAt || null),
     lastPaymentAt: record.lastPaymentAt || null,
     cancelRequestedAt: record.cancelRequestedAt || null,
     updatedAt: record.updatedAt || record.createdAt || null

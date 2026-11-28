@@ -95,7 +95,7 @@ export function plans() {
    é o administrador no PIX manual ou o webhook no Mercado Pago. */
 export function planTier(plan) {
   const value = String(plan || 'monthly');
-  return value === 'lifetime' || value.startsWith('intermediate_') ? 'intermediate' : 'basic';
+  return value === 'lifetime' || value === 'temporary_pro' || value.startsWith('intermediate_') ? 'intermediate' : 'basic';
 }
 
 /* Padrão do modelo de cobrança: PIX manual com a chave do administrador.
