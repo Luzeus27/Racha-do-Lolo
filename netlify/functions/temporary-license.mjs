@@ -120,7 +120,7 @@ export default async (req) => {
     && master.status === 'active' && deviceAllowed(master, masterDevice);
   if (!isOwner) return json({ error: 'Não autorizado.' }, 403);
 
-  const action = ACTIONS.includes(String(body.action || '').toLowerCase())
+  let action = ACTIONS.includes(String(body.action || '').toLowerCase())
     ? String(body.action).toLowerCase()
     : 'create';
   const email = cleanEmail(body.email);
