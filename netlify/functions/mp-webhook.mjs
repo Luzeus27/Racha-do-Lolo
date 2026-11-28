@@ -96,16 +96,22 @@ function signatureIsValid(secret, { ts, v1 }, dataId, requestId) {
   if (tsMs < 1e12) tsMs *= 1000;
   if (Math.abs(Date.now() - tsMs) > 10 * 60 * 1000) return false;
 
-  const manifest = [
-    dataId ? 'id:' + String(dataId).toLowerCase() + ';' : '',
-    requestId ? 'request-id:' + requestId + ';' : '',
-    'ts:' + ts + ';'
-  ].join('');
+  const id = String(dataId || '').toLowerCase();
+  /* O Mercado Pago sempre inclui `request-id:` no manifesto, mesmo quando o
+     cabeçalho não vem na simulação do painel. Aceitar as duas formas mantém
+     a validação correta tanto para notificações reais quanto para o painel. */
+  const manifests = [
+    'id:' + id + ';request-id:' + String(requestId || '') + ';ts:' + ts + ';'
+  ];
+  if (requestId) manifests.push('id:' + id + ';ts:' + ts + ';');
+  if (dataId) manifests.push('request-id:' + String(requestId || '') + ';ts:' + ts + ';');
 
-  const expected = createHmac('sha256', secret).update(manifest).digest('hex');
   const received = String(v1).toLowerCase();
-  if (expected.length !== received.length) return false;
-  return timingSafeEqual(Buffer.from(expected), Buffer.from(received));
+  return manifests.some((manifest) => {
+    const expected = createHmac('sha256', secret).update(manifest).digest('hex');
+    if (expected.length !== received.length) return false;
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(received));
+  });
 }
 
 /* Reentrega do mesmo aviso não pode poluir o histórico nem repetir baixas.
@@ -487,12 +493,13 @@ export default async (req) => {
   const info = notificationInfo(req.url, payload);
   const { url, dataId, cliente, topic } = info;
   const requestId = req.headers.get('x-request-id') || '';
-  const secret = process.env.MP_WEBHOOK_SECRET;
+  const secrets = [process.env.MP_WEBHOOK_SECRET, process.env.MP_WEBHOOK_SECRET_TEST]
+    .map((value) => String(value || '').trim()).filter(Boolean);
   /* Falha fechada: sem segredo configurado, nenhuma notificação é aceita. */
-  if (!secret) return json({ received: false, error: 'Webhook sem segredo configurado.' }, 503);
+  if (!secrets.length) return json({ received: false, error: 'Webhook sem segredo configurado.' }, 503);
 
   const signature = parseSignature(req.headers.get('x-signature'));
-  if (!signatureIsValid(secret, signature, dataId, requestId)) {
+  if (!secrets.some((secret) => signatureIsValid(secret, signature, dataId, requestId))) {
     return json({ received: false, error: 'Assinatura inválida.' }, 401);
   }
 
