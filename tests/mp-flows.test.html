@@ -476,7 +476,7 @@ await teste('modo manual recusa criação de PIX no MP', async () => {
   const res = await dailyCall();
   eq(res.status, 410);
 });
-await teste('PIX da diária usa token do dono, valor líquido e ?cliente=', async () => {
+await teste('PIX da diária usa token do dono e valor líquido', async () => {
   reset({ view: baseView({ playerRoles: { [PLAYER]: 'daily' }, snapshot: { players: [{ id: PLAYER, name: 'Ana', type: 'diarista' }] } }) });
   const res = await dailyCall();
   const data = await res.json();
@@ -486,7 +486,7 @@ await teste('PIX da diária usa token do dono, valor líquido e ?cliente=', asyn
   eq(mpCalls[0].auth, 'Bearer ACCESS_TOKEN_TESTE');
   eq(mpCalls[0].body.transaction_amount, 60);
   eq(mpCalls[0].body.payment_method_id, 'pix');
-  includes(mpCalls[0].body.notification_url, '?cliente=' + encodeURIComponent(KEY));
+  eq(mpCalls[0].body.notification_url, 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook');
   ok(data.payment.qrCode.startsWith('000201'), 'QR não devolvido');
 });
 await teste('segundo toque reaproveita o mesmo QR', async () => {
@@ -614,6 +614,36 @@ await teste('diária aprovada libera presença e usa token do cliente no ?client
   eq(viewMap.get(V).dailyPayments['DP-1111111111111111'].status, 'confirmed');
   eq(viewMap.get(V).responses[GAME][PLAYER], 'yes');
 });
+await teste('webhook aceita URL antiga com ?cliente= e data.id colados', async () => {
+  reset({
+    view: baseView({ playerRoles: { [PLAYER]: 'daily' } }),
+    mpHandler: (url, init) => {
+      if (url.includes('/v1/payments/')) return { ok: true, status: 200, data: {
+        id: 'MP-LEGADO', status: 'approved', transaction_amount: 60,
+        external_reference: 'DIARIA|' + V + '|DP-3333333333333333',
+        date_approved: new Date().toISOString()
+      } };
+      return defaultMpHandler(url, init);
+    }
+  });
+  const view = viewMap.get(V);
+  view.dailyPayments['DP-3333333333333333'] = {
+    paymentId: 'DP-3333333333333333', gameId: GAME, playerId: PLAYER,
+    amount: 60, status: 'pending', mpPaymentId: 'MP-LEGADO',
+    externalReference: 'DIARIA|' + V + '|DP-3333333333333333'
+  };
+  const url = 'https://rachadololo.netlify.app/.netlify/functions/mp-webhook?cliente=' +
+    KEY + '?topic=payment&data.id=MP-LEGADO';
+  const res = await globalThis.__mods['mp-webhook'].default(new Request(url, {
+    method: 'GET', headers: webhookHeaders('MP-LEGADO', 'req-legado')
+  }));
+  const data = await res.json();
+  eq(res.status, 200);
+  eq(data.status, 'confirmed');
+  eq(viewMap.get(V).dailyPayments['DP-3333333333333333'].status, 'confirmed');
+  eq(viewMap.get(V).responses[GAME][PLAYER], 'yes');
+});
+
 await teste('pagamento aprovado após cancelamento é estornado', async () => {
   reset({
     mpHandler: (url, init) => {
