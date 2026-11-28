@@ -11,8 +11,8 @@ import {
 
 /* Cada cobrança de jogador avisa com ?cliente=RL-...; assim a consulta ao MP
    usa o token da conta daquele administrador, não o token da assinatura do app. */
-async function tokenForNotification(url) {
-  const cliente = cleanLicenseKey(url.searchParams.get('cliente') || '');
+async function tokenForNotification(clienteRaw) {
+  const cliente = cleanLicenseKey(clienteRaw);
   const owned = cliente ? await mpTokenFor(cliente) : '';
   if (owned) return { token: owned, cliente };
   return { token: String(process.env.MP_ACCESS_TOKEN || '').trim(), cliente };
@@ -52,6 +52,36 @@ function parseSignature(header) {
     if (idx > 0) result[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
   });
   return { ts: result.ts || '', v1: result.v1 || '' };
+}
+
+/* O Mercado Pago anexa `?data.id=...&type=...` à URL de notificação. Quando a
+   URL já tinha `?cliente=`, ele anexa outro `?` em vez de `&`: o id acaba
+   colado dentro do valor de cliente. Este parser aceita os dois formatos. */
+function notificationInfo(rawUrl, payload = {}) {
+  const url = new URL(rawUrl);
+  let dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') || '';
+  let clienteRaw = url.searchParams.get('cliente') || '';
+  if (!dataId && clienteRaw) {
+    const found = /(?:^|[?&])(?:data\.id|data_id)=([^&]+)/i.exec(clienteRaw);
+    if (found) {
+      try { dataId = decodeURIComponent(found[1]); } catch (e) { dataId = found[1]; }
+    }
+  }
+  let topic = String(
+    url.searchParams.get('topic') ||
+    url.searchParams.get('type') ||
+    payload.type ||
+    payload.topic ||
+    ''
+  ).toLowerCase();
+  if (!topic && clienteRaw) {
+    const found = /(?:^|[?&])(?:topic|type)=([^&]+)/i.exec(clienteRaw);
+    if (found) {
+      try { topic = decodeURIComponent(found[1]).toLowerCase(); } catch (e) { topic = found[1].toLowerCase(); }
+    }
+  }
+  const cliente = cleanLicenseKey(clienteRaw.split(/[?&]/)[0]);
+  return { url, dataId, cliente, topic };
 }
 
 function signatureIsValid(secret, { ts, v1 }, dataId, requestId) {
@@ -447,8 +477,11 @@ export default async (req) => {
     return json({ received: false, error: 'Método não permitido.' }, 405);
   }
 
-  const url = new URL(req.url);
-  const dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') || '';
+  let payload = {};
+  try { payload = await req.json(); } catch (e) { payload = {}; }
+
+  const info = notificationInfo(req.url, payload);
+  const { url, dataId, cliente, topic } = info;
   const requestId = req.headers.get('x-request-id') || '';
   const secret = process.env.MP_WEBHOOK_SECRET;
   /* Falha fechada: sem segredo configurado, nenhuma notificação é aceita. */
@@ -468,20 +501,9 @@ export default async (req) => {
     });
   }
 
-  const tokenInfo = await tokenForNotification(url);
+  const tokenInfo = await tokenForNotification(cliente);
   let token = tokenInfo.token;
   if (!token) return json({ received: false, error: 'Pagamentos não configurados.' }, 503);
-
-  let payload = {};
-  try { payload = await req.json(); } catch (e) { payload = {}; }
-
-  const topic = String(
-    url.searchParams.get('topic') ||
-    url.searchParams.get('type') ||
-    payload.type ||
-    payload.topic ||
-    ''
-  ).toLowerCase();
 
   if (!(await claimEvent(requestId, topic, dataId))) {
     return json({ received: true, duplicate: true }, 200);

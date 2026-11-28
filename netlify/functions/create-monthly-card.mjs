@@ -130,7 +130,7 @@ export default async (req) => {
           unit_price: gross
         }],
         external_reference: externalReference,
-        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook',
         back_urls: {
           success: back + '&status=ok',
           pending: back + '&status=pending',

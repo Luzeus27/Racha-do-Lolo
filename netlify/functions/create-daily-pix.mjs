@@ -225,7 +225,7 @@ export default async (req) => {
         transaction_amount: amount,
         description: gameLabel(game),
         external_reference: externalReference,
-        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+        notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook',
         payment_method_id: 'pix',
         date_of_expiration: expiresAt,
         payer: { email: payerEmail(v, playerId) }

@@ -107,7 +107,7 @@ export default async (req) => {
         currency_id: 'BRL'
       },
       back_url: back,
-      notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook?cliente=' + encodeURIComponent(String(record.ownerKey || '')),
+      notification_url: siteUrl(req) + '/.netlify/functions/mp-webhook',
       status: 'pending'
     }
   });
