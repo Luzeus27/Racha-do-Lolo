@@ -3,7 +3,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { getStore } from '@netlify/blobs';
 import { json, siteUrl, setCorsOrigin, viewUnavailable, rateLimit } from './_shared.mjs';
-import { hoursUntilLocal, todayBR } from './_daily.mjs';
+import { hoursUntilLocal, paidMonthlyKeys, todayBR } from './_daily.mjs';
 
 const MAX_REMINDERS = 200;
 const MAX_PAGES = 50;
@@ -104,8 +104,19 @@ function labelBR(date) {
 
 const DEFAULT_REMINDER_TEXT = {
   group: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
-  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}'
+  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença: {link}',
+  dueGroup: '📢 Mensalidade do racha: {aviso}. Vencimento: {vencimento}. Acesse seu link para regularizar: {link}',
+  duePlayer: '🔔 {jogador}, mensalidade de {mes}/{ano}: {aviso}. Valor {valor}; vencimento {vencimento}. Pague pelo seu link: {link}'
 };
+
+function shiftDate(date, days) {
+  const m = DATE_ONLY.exec(String(date || ''));
+  if (!m) return '';
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + days);
+  return [d.getUTCFullYear(), String(d.getUTCMonth() + 1).padStart(2, '0'), String(d.getUTCDate()).padStart(2, '0')].join('-');
+}
 
 /* Mesmos placeholders do painel: {jogo}, {data}, {horario}, {link}, {jogador}. */
 function renderReminderText(template, ctx) {
@@ -116,6 +127,23 @@ function renderReminderText(template, ctx) {
     .replace(/\{data\}/gi, text(ctx.date, 30))
     .replace(/\{horario\}/gi, text(ctx.time || 'horário a definir', 20))
     .replace(/\{jogador\}/gi, String(ctx.playerName || '').split(' ')[0].slice(0, 40))
+    .replace(/\{link\}/gi, text(ctx.link, 400));
+  return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
+}
+
+/* Placeholders da mensalidade. O grupo recebe só o aviso genérico; nomes,
+   valores e o link VP aparecem apenas na cobrança individual. */
+function renderDueText(template, ctx) {
+  const raw = String(template || '').replace(/\r\n?/g, '\n').slice(0, 700);
+  const hasLink = /\{link\}/i.test(raw);
+  const amount = Number(ctx.amount) || 0;
+  const out = raw
+    .replace(/\{jogador\}/gi, String(ctx.playerName || '').split(' ')[0].slice(0, 40))
+    .replace(/\{mes\}/gi, String(Math.floor(Number(ctx.month) || 0)).padStart(2, '0'))
+    .replace(/\{ano\}/gi, String(Math.floor(Number(ctx.year) || 0)))
+    .replace(/\{vencimento\}/gi, text(ctx.dueLabel, 30))
+    .replace(/\{valor\}/gi, new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(amount))
+    .replace(/\{aviso\}/gi, text(ctx.notice, 80))
     .replace(/\{link\}/gi, text(ctx.link, 400));
   return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
 }
@@ -159,6 +187,8 @@ export default async (req) => {
     const custom = isObject(record.reminderTexts) ? record.reminderTexts : {};
     const groupTemplate = String(custom.group || DEFAULT_REMINDER_TEXT.group);
     const playerTemplate = String(custom.player || DEFAULT_REMINDER_TEXT.player);
+    const dueGroupTemplate = String(custom.dueGroup || DEFAULT_REMINDER_TEXT.dueGroup);
+    const duePlayerTemplate = String(custom.duePlayer || DEFAULT_REMINDER_TEXT.duePlayer);
     const names = Object.create(null);
     (Array.isArray(snapshot.players) ? snapshot.players : []).forEach((p) => {
       const id = text(p && p.id, 60);
@@ -167,6 +197,69 @@ export default async (req) => {
     const players = Object.entries(tokens).slice(0, 200)
       .filter(([id, token]) => !!text(id, 60) && PLAYER_TOKEN.test(String(token)))
       .map(([id, token]) => [text(id, 60), String(token)]);
+
+    /* Mensalidade: só no vencimento e 3 dias depois. O vencimento é manual;
+       sem data não há lembrete, para não inventar dia. */
+    const late = shiftDate(today, -3);
+    const paidMonthly = paidMonthlyKeys(record);
+    const dues = isObject(snapshot.dues) ? snapshot.dues : {};
+    const dueRows = [];
+    Object.keys(dues).slice(0, 200).forEach((rawId) => {
+      const playerId = text(rawId, 60);
+      if (!playerId) return;
+      (Array.isArray(dues[rawId]) ? dues[rawId] : []).slice(0, 36).forEach((value) => {
+        const row = isObject(value) ? value : {};
+        const month = Math.floor(Number(row.month) || 0);
+        const year = Math.floor(Number(row.year) || 0);
+        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(row.dueDate || '')) ? String(row.dueDate) : '';
+        if (!month || !year || !due || (due !== today && due !== late)) return;
+        if (paidMonthly.has(playerId + '|' + month + '|' + year)) return;
+        dueRows.push({
+          playerId, month, year, due,
+          amount: Number(row.amount) || 0,
+          when: due === today ? 'vencimento' : '3 dias depois'
+        });
+      });
+    });
+
+    if (dueRows.length) {
+      const first = dueRows[0];
+      const baseCtx = {
+        dueLabel: labelBR(first.due),
+        notice: first.when === 'vencimento' ? 'vence hoje' : 'está em atraso',
+        link: base + '/visualizar.html?v=' + vw
+      };
+      if (reminders.length < MAX_REMINDERS) {
+        reminders.push({
+          vw, gameId: '', date: first.due, when: first.when,
+          playerId: '', group: true, direct: false,
+          kind: 'monthly',
+          url: 'https://wa.me/?text=' + encodeURIComponent(renderDueText(dueGroupTemplate, baseCtx))
+        });
+      }
+      for (const [playerId, playerToken] of players) {
+        if (reminders.length >= MAX_REMINDERS) break;
+        const row = dueRows.find((r) => r.playerId === playerId);
+        if (!row) continue;
+        const link = base + '/jogador.html?v=' + vw + '&p=' + playerToken;
+        const message = renderDueText(duePlayerTemplate, {
+          ...baseCtx,
+          link,
+          playerName: names[playerId] || '',
+          month: row.month, year: row.year, amount: row.amount,
+          notice: row.when === 'vencimento' ? 'vence hoje' : 'está em atraso desde ' + labelBR(row.due)
+        });
+        const rawNumber = String(contacts[playerId] || '');
+        const number = /^55\d{10,11}$/.test(rawNumber) ? rawNumber : '';
+        reminders.push({
+          vw, gameId: '', date: row.due, when: row.when, playerId,
+          group: false, direct: !!number, kind: 'monthly',
+          url: number
+            ? 'https://wa.me/' + number + '?text=' + encodeURIComponent(message)
+            : 'https://wa.me/?text=' + encodeURIComponent(message)
+        });
+      }
+    }
 
     for (const value of games) {
       if (reminders.length >= MAX_REMINDERS) break;
@@ -180,8 +273,9 @@ export default async (req) => {
       const gameId = text(game.id, 60);
       if (!gameId) continue;
 
-      /* Aviso único para o grupo: apenas o retrato público (VW). Nunca inclui
-         tokens VP, telefones, mensalidades ou qualquer dado individual. */
+      /* Aviso de jogo para o grupo: apenas o retrato público (VW). Nunca inclui
+         tokens VP, telefones ou dados individuais. A mensalidade tem aviso
+         genérico separado, sem nomes nem valores. */
       const groupLink = base + '/visualizar.html?v=' + vw;
       const gameContext = {
         gameName: text(game.name, 90).trim() || 'Racha do Loló',

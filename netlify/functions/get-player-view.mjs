@@ -2,7 +2,7 @@
    Nunca devolve tokens de outros jogadores nem dados de contato. */
 import { getStore } from '@netlify/blobs';
 import { cardFeeRate, cardGross, json, paymentModeFor, setCorsOrigin, viewUnavailable } from './_shared.mjs';
-import { copyAutoPayments, copyCredits, latestMonthlyPayment, latestPayment, manualPixCode, playerMonthlyFee, playerRole, unpaidMonths } from './_daily.mjs';
+import { copyAutoPayments, copyCredits, latestMonthlyPayment, latestPayment, manualPixCode, monthlyKey, paidMonthlyKeys, playerMonthlyFee, playerRole, unpaidMonths } from './_daily.mjs';
 
 const VIEW_TOKEN = /^VW-[A-F0-9]{16}$/;
 const PLAYER_TOKEN = /^VP-[A-F0-9]{16}$/;
@@ -85,6 +85,8 @@ function duesWithPayment(record, playerId, list) {
       year: d.year,
       amount: d.amount,
       paid: false,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(d.dueDate || '')) ? String(d.dueDate) : '',
+      paidAt: text(d.paidAt, 40) || text(row?.paidAt, 40),
       pix: manualPixCode(record.snapshot?.settings, d.amount, txid) || oldCode,
       txid,
       payment: row ? {
@@ -102,6 +104,29 @@ function duesWithPayment(record, playerId, list) {
       } : null
     };
   });
+}
+
+/* Histórico de mensalidades baixadas: mostra vencimento e data do pagamento. */
+function paidDuesForPlayer(record, playerId, list) {
+  const paid = paidMonthlyKeys(record);
+  return (Array.isArray(list) ? list : []).slice(0, 36).map((d) => {
+    const row = isObject(d) ? d : {};
+    const month = Math.floor(number(row.month));
+    const year = Math.floor(number(row.year));
+    if (!month || !year) return null;
+    const latest = latestMonthlyPayment(record, playerId, month, year);
+    if (latest && ['refunded', 'cancelled', 'failed', 'expired'].includes(latest.status)) return null;
+    if (!latest && !paid.has(monthlyKey(playerId, month, year)) && row.paid !== true) return null;
+    return {
+      month,
+      year,
+      amount: number(row.amount),
+      paid: true,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(row.dueDate || '')) ? String(row.dueDate) : '',
+      paidAt: text(row.paidAt, 40) || text(latest?.paidAt, 40),
+      receiptId: text(row.receiptId, 80)
+    };
+  }).filter(Boolean);
 }
 
 export default async (req) => {
@@ -240,6 +265,9 @@ export default async (req) => {
     card,
     auto,
     dues: duesWithPayment(record, playerId, kind === 'monthly' ? unpaid : []),
+    paidDues: kind === 'monthly'
+      ? paidDuesForPlayer(record, playerId, record.snapshot?.paidDues?.[playerId] || [])
+      : [],
     updatedAt: record.updatedAt || null
   });
 };

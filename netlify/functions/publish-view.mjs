@@ -88,9 +88,38 @@ function sanitizeDues(raw) {
         month: number(row.month),
         year: number(row.year),
         amount: number(row.amount),
-        paid: row.paid === true,
+        paid: false,
+        dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(row.dueDate || '')) ? String(row.dueDate) : '',
+        paidAt: '',
         pix,
         txid: text(row.txid, 80),
+        receiptId: text(row.receiptId, 80)
+      };
+    });
+  });
+  return out;
+}
+
+/* Histórico pago: o jogador precisa ver vencimento e data em que a baixa entrou.
+   Continua fora do retrato público. */
+function sanitizePaidDues(raw) {
+  const src = isObject(raw) ? raw : {};
+  const out = dict();
+  let players = 0;
+  Object.keys(src).slice(0, 200).forEach((key) => {
+    if (players >= 200) return;
+    const playerId = text(key, 60);
+    if (!playerId) return;
+    players += 1;
+    out[playerId] = (Array.isArray(src[key]) ? src[key] : []).slice(0, 36).map((item) => {
+      const row = isObject(item) ? item : {};
+      return {
+        month: number(row.month),
+        year: number(row.year),
+        amount: number(row.amount),
+        paid: true,
+        dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(row.dueDate || '')) ? String(row.dueDate) : '',
+        paidAt: text(row.paidAt, 40),
         receiptId: text(row.receiptId, 80)
       };
     });
@@ -133,7 +162,9 @@ function sanitizeSettings(raw) {
 
 const DEFAULT_REMINDER_TEXT = {
   group: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
-  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}'
+  player: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}',
+  dueGroup: '📢 Mensalidade do racha: {aviso}. Vencimento: {vencimento}. Acesse seu link para regularizar: {link}',
+  duePlayer: '🔔 {jogador}, mensalidade de {mes}/{ano}: {aviso}. Valor {valor}; vencimento {vencimento}. Pague pelo seu link: {link}'
 };
 
 /* Frases editáveis ficam FORA do snapshot público: somente send-reminders as lê. */
@@ -143,7 +174,12 @@ function privateTexts(raw) {
     const s = String(value == null ? '' : value).replace(/\r\n?/g, '\n').trim().slice(0, 700);
     return s || fallback;
   };
-  return { group: clean(src.group, DEFAULT_REMINDER_TEXT.group), player: clean(src.player, DEFAULT_REMINDER_TEXT.player) };
+  return {
+    group: clean(src.group, DEFAULT_REMINDER_TEXT.group),
+    player: clean(src.player, DEFAULT_REMINDER_TEXT.player),
+    dueGroup: clean(src.dueGroup, DEFAULT_REMINDER_TEXT.dueGroup),
+    duePlayer: clean(src.duePlayer, DEFAULT_REMINDER_TEXT.duePlayer)
+  };
 }
 
 /* Contatos privados ficam FORA do snapshot público. O app envia os telefones
@@ -262,7 +298,8 @@ function sanitize(raw) {
     }),
     scores,
     finance,
-    dues: sanitizeDues(src.dues)
+    dues: sanitizeDues(src.dues),
+    paidDues: sanitizePaidDues(src.paidDues)
   };
 }
 

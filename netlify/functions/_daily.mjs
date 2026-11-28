@@ -442,6 +442,8 @@ export function unpaidMonths(record, playerId) {
       month: Math.floor(number(d.month)),
       year: Math.floor(number(d.year)),
       amount: number(d.amount),
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(d.dueDate || '')) ? String(d.dueDate) : '',
+      paidAt: text(d.paidAt, 40),
       pix: typeof d.pix === 'string' ? d.pix.slice(0, 800) : '',
       txid: text(d.txid, 80)
     }))

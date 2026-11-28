@@ -7,7 +7,7 @@ import {
 } from './_shared.mjs';
 import {
   VIEW_TOKEN, copyCredits, copyDailyPayments, copyMonthlyPayments, copyReservations,
-  copyResponses, copyWaitlist, isObject, readJson, text
+  copyResponses, copyWaitlist, dict, isObject, readJson, text
 } from './_daily.mjs';
 
 function cleanKey(value) {
@@ -115,11 +115,27 @@ export default async (req) => {
       .filter((row) => row && (row.paid || row.pending || row.credited || row.refunded || row.cancelled))
       .slice(0, 60);
 
+    /* IDs já aparecem no retrato do grupo; aqui só dizem quais pagamentos
+       foram baixados, para o painel aplicar a regra de elegibilidade. */
+    const paidByGame = dict();
+    Object.values(payments).forEach((row) => {
+      if (row.status !== 'confirmed' || !row.gameId || !row.playerId) return;
+      if (!Array.isArray(paidByGame[row.gameId])) paidByGame[row.gameId] = [];
+      if (!paidByGame[row.gameId].includes(row.playerId)) paidByGame[row.gameId].push(row.playerId);
+    });
+
     const monthlyRows = Object.values(copyMonthlyPayments(view.monthlyPayments));
-    const monthlyPaid = monthlyRows.filter((row) => row.status === 'confirmed');
+    const monthlyConfirmed = monthlyRows.filter((row) => row.status === 'confirmed');
+    const monthlyPaid = dict();
+    monthlyConfirmed.forEach((row) => {
+      if (!row.playerId || !row.month || !row.year) return;
+      const key = row.year + '-' + String(row.month).padStart(2, '0');
+      if (!Array.isArray(monthlyPaid[row.playerId])) monthlyPaid[row.playerId] = [];
+      if (!monthlyPaid[row.playerId].includes(key)) monthlyPaid[row.playerId].push(key);
+    });
     const monthly = {
-      paid: monthlyPaid.length,
-      paidAmount: Math.round(monthlyPaid.reduce((sum, row) => sum + row.amount, 0) * 100) / 100,
+      paid: monthlyConfirmed.length,
+      paidAmount: Math.round(monthlyConfirmed.reduce((sum, row) => sum + row.amount, 0) * 100) / 100,
       pending: monthlyRows.filter((row) => row.status === 'pending').length,
       refunded: monthlyRows.filter((row) => row.status === 'refunded').length
     };
@@ -144,6 +160,8 @@ export default async (req) => {
       ok: true,
       games,
       monthly,
+      paidByGame,
+      monthlyPaid,
       notices,
       autoCheckin: view.autoCheckin === true,
       totalCredit: Math.round(Object.values(credits).reduce((sum, value) => sum + value, 0) * 100) / 100,
