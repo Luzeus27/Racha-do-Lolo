@@ -59,7 +59,11 @@ function parseSignature(header) {
    colado dentro do valor de cliente. Este parser aceita os dois formatos. */
 function notificationInfo(rawUrl, payload = {}) {
   const url = new URL(rawUrl);
-  let dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') || '';
+  /* O painel do Mercado Pago simula com POST e o id somente no corpo; as
+     notificações reais trazem o id na URL. Os dois formatos são assinados
+     com o mesmo `data.id`, então a assinatura usa sempre este valor. */
+  let dataId = url.searchParams.get('data.id') || url.searchParams.get('data_id') ||
+    String(payload?.data?.id || payload?.data_id || '');
   let clienteRaw = url.searchParams.get('cliente') || '';
   if (!dataId && clienteRaw) {
     const found = /(?:^|[?&])(?:data\.id|data_id)=([^&]+)/i.exec(clienteRaw);
