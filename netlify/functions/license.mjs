@@ -9,6 +9,9 @@ function cleanKey(value) {
   return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
 }
 
+/* Notebook + celular: a mesma chave pode ficar em até 2 aparelhos. */
+const MAX_DEVICES = 2;
+
 /* Confere direto no Mercado Pago quando o usuário volta do checkout.
    Serve como rede de segurança se o webhook atrasar ou não chegar. */
 async function syncFromMercadoPago(store, key, record) {
@@ -94,8 +97,8 @@ export default async (req) => {
     return json({ ...publicInfo, valid: false, state: 'not_found' }, 200);
   }
 
-  /* Troca de aparelho: confirma o e-mail do titular e move o vínculo.
-     Mantém uma licença ativa por dispositivo por vez. */
+  /* Vincula até 2 aparelhos: confirma o e-mail do titular e acrescenta o novo,
+     sem derrubar o aparelho já autorizado (notebook + celular, por exemplo). */
   if (action === 'transfer') {
     if (!device) return json({ ...publicInfo, error: 'Dispositivo não identificado.' }, 400);
     const ownerEmail = String(record.email || '').toLowerCase();
@@ -104,15 +107,30 @@ export default async (req) => {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || a.length !== b.length || !timingSafeEqual(a, b)) {
       return json({ ...publicInfo, valid: false, error: 'O e-mail informado não corresponde ao titular da assinatura.' }, 403);
     }
+    const devices = Array.isArray(record.devices) ? record.devices.slice(0, MAX_DEVICES) : [];
+    if (!devices.includes(device)) {
+      if (devices.length >= MAX_DEVICES) {
+        return json({
+          ...publicInfo,
+          valid: false,
+          error: 'Esta chave já está vinculada a 2 aparelhos. Desvincule um aparelho antes de adicionar outro.'
+        }, 409);
+      }
+      devices.push(device);
+    }
     const now = new Date().toISOString();
     record = {
       ...record,
-      devices: [device],
+      devices,
       updatedAt: now,
       history: [...(record.history || []), { at: now, event: 'transfer:device' }].slice(-20)
     };
     await store.setJSON(key, record);
-    return json({ ...publicInfo, ok: true, message: 'Chave vinculada a este aparelho.' }, 200);
+    return json({
+      ...publicInfo,
+      ok: true,
+      message: 'Chave vinculada a este aparelho. Você pode usar a chave em até 2 aparelhos.'
+    }, 200);
   }
 
   /* Chave vinculada a outro aparelho: não revela e-mail nem dados da assinatura. */
@@ -121,7 +139,7 @@ export default async (req) => {
       ...publicInfo,
       valid: false,
       state: 'device_mismatch',
-      message: 'Esta chave está vinculada a outro dispositivo. Digite o e-mail usado no checkout no formulário abaixo para mover o vínculo para este aparelho.'
+      message: 'Esta chave está vinculada a outro dispositivo. Digite o e-mail usado no checkout no formulário abaixo para vincular este aparelho (até 2 aparelhos).'
     }, 200);
   }
 
