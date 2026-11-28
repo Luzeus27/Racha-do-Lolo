@@ -3880,13 +3880,14 @@ function pageSubscription() {
                 <button class="btn btn-sm btn-ghost" type="button" data-act="copy-license">📋 Copiar chave</button>
                 <button class="btn btn-sm btn-ghost" type="button" data-act="refresh-license">🔄 Verificar agora</button>
                 ${canUpgrade ? `<button class="btn btn-sm btn-primary" type="button" data-act="upgrade" data-plan="${esc(upgradePlan)}">⚡ Fazer upgrade para o PRO</button>` : ''}
-                ${L.lastKnown?.state === 'active' && known?.plan !== 'lifetime' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
+                ${L.lastKnown?.state === 'active' && known?.plan !== 'lifetime' && known?.plan !== 'temporary_pro' ? `<button class="btn btn-sm btn-ghost" type="button" data-act="cancel-license">Cancelar assinatura</button>` : ''}
               </div>
               ${canUpgrade ? `<p class="tiny muted">Sua chave e sua data de cobrança continuam as mesmas: o valor da assinatura atual é alterado, sem nova assinatura e sem duas cobranças.</p>` : ''}
               ${known?.plan === 'lifetime' ? `<p class="tiny" style="color:var(--accent)">Conta de administrador — sem cobranças e sem renovação.</p>` : ''}
+              ${known?.plan === 'temporary_pro' ? `<p class="tiny" style="color:var(--accent)">Acesso temporário de teste — sem cobranças. O administrador prorroga ou revoga esta chave.</p>` : ''}
               <p class="tiny muted">Aparelho: ${esc(String(window.RachaLicense.deviceId()).slice(0, 12))}… · Usar em outro aparelho? Digite a chave aqui no aparelho novo e confirme o e-mail da assinatura. São até 2 aparelhos; você faz isso sozinho.</p>
               ${known?.emailMasked ? `<p class="tiny muted">Conta: ${esc(known.emailMasked)}</p>` : ''}
-              ${known?.nextPaymentAt ? `<p class="tiny muted">Próxima cobrança: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
+              ${known?.nextPaymentAt ? `<p class="tiny muted">${known.plan === 'temporary_pro' ? 'Válido até' : 'Próxima cobrança'}: ${esc(String(known.nextPaymentAt).slice(0, 10))}</p>` : ''}
               ${known?.cancelRequestedAt ? `<p class="tiny" style="color:var(--amber)">Cancelamento solicitado. O acesso segue até ${esc(String(known.nextPaymentAt || '').slice(0, 10))}.</p>` : ''}
               ${L.lastError ? `<p class="tiny" style="color:var(--amber)">Sem conexão com o servidor neste momento. A licença continua válida por até 3 dias offline.</p>` : ''}
             ` : `

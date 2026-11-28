@@ -20,12 +20,12 @@ window.RachaLicense = (function () {
   const PLAN_TIERS = {
     monthly: 'basic', yearly: 'basic',
     intermediate_monthly: 'intermediate', intermediate_yearly: 'intermediate',
-    lifetime: 'intermediate'
+    lifetime: 'intermediate', temporary_pro: 'intermediate'
   };
   const PLAN_LABELS = {
     monthly: 'Básico mensal', yearly: 'Básico anual',
     intermediate_monthly: 'PRO mensal', intermediate_yearly: 'PRO anual',
-    lifetime: 'Acesso vitalício'
+    lifetime: 'Acesso vitalício', temporary_pro: 'Acesso temporário (PRO)'
   };
 
   let listeners = [];

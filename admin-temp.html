@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Chave temporária — Racha do Loló</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d1117; --card:#161b22; --line:#30363d; --txt:#e6edf3; --muted:#9aa7b4; --accent:#4ade80; --err:#f87171; }
+    * { box-sizing:border-box }
+    body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:24px 16px }
+    main { max-width:680px; margin:0 auto }
+    h1 { font-size:1.5rem; margin:0 0 4px }
+    h2 { font-size:1.1rem; margin:0 0 10px }
+    p { margin:8px 0 }
+    .muted { color:var(--muted); font-size:.9rem }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-top:18px }
+    label { display:block; font-weight:600; margin-bottom:12px }
+    input, select { width:100%; margin-top:5px; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:#0b0f14; color:var(--txt); font:inherit }
+    input:focus, select:focus { outline:2px solid var(--accent); outline-offset:1px }
+    button { padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:#21262d; color:var(--txt); font:inherit; cursor:pointer }
+    button.primary { background:var(--accent); border-color:var(--accent); color:#06280f; font-weight:700 }
+    button:disabled { opacity:.55; cursor:not-allowed }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+    code { display:block; word-break:break-all; background:#0b0f14; border:1px dashed var(--line); border-radius:8px; padding:12px; margin:10px 0; font-size:1.05rem; color:var(--accent) }
+    #temp-msg { min-height:1.4em }
+    .ok { color:var(--accent) }
+    .err { color:var(--err) }
+    [hidden] { display:none !important }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Chave temporária de teste</h1>
+    <p class="muted">Ferramenta do proprietário. Usa a chave master salva neste navegador; nada é exibido aqui fora da chave de teste.</p>
+
+    <form id="temp-form" class="card">
+      <label>E-mail de quem vai testar
+        <input id="temp-email" name="email" type="email" autocomplete="email" placeholder="nome@email.com" required>
+      </label>
+      <label>Prazo em dias
+        <input id="temp-days" name="days" type="number" min="1" max="365" value="60" required>
+      </label>
+      <label>Ação
+        <select id="temp-action" name="action">
+          <option value="create">Criar (ou prorrogar se já existir)</option>
+          <option value="extend">Prorrogar a mesma chave</option>
+          <option value="status">Consultar validade</option>
+          <option value="revoke">Revogar acesso</option>
+        </select>
+      </label>
+      <button id="temp-submit" class="primary" type="submit">Executar</button>
+    </form>
+
+    <p id="temp-msg" role="status" aria-live="polite"></p>
+
+    <section id="temp-result" class="card" hidden>
+      <h2>Chave de teste</h2>
+      <code id="temp-key"></code>
+      <div class="row">
+        <button id="temp-copy" type="button">Copiar chave</button>
+        <button id="temp-download" type="button">Baixar arquivo .txt</button>
+      </div>
+      <p id="temp-detail" class="muted"></p>
+      <p class="muted">Envie o arquivo ou a chave ao avaliador. No app, ele abre <strong>Assinatura</strong>, cola a chave em “Chave de licença” e toca em <strong>Ativar</strong>. Se pedir e-mail, usa o mesmo informado acima. O acesso é PRO e não gera cobrança.</p>
+    </section>
+
+    <p class="muted">Prorrogar usa a mesma chave: escolha <strong>Prorrogar</strong>, informe o e-mail e o total de dias a acrescentar. <strong>Revogar</strong> encerra antes do prazo.</p>
+  </main>
+  <script src="admin-temp.js"></script>
+</body>
+</html>

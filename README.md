@@ -72,7 +72,7 @@ Este projeto é de uso exclusivo do titular. O código, o nome, a identidade vis
 
 ## Arquivos
 
-`index.html`, `styles.css`, `app.js`, `subscription.js`, `visualizar.html`, `visualizar.js`, `jogador.html`, `jogador.js`, `ao-vivo.html`, `ao-vivo.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, cancelamento, conta master, publicação/revogação da visualização do grupo, respostas, notas, placar ao vivo, lembretes e reconciliação), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular), `contato.html` (formulário de contato), `comunidade.html`, `comunidade.js` e `comunidade.json` (comunidade por cidade), `tests/mp-flows.test.html` (bateria automática) e este README.
+`index.html`, `styles.css`, `app.js`, `subscription.js`, `admin-temp.html`, `admin-temp.js`, `visualizar.html`, `visualizar.js`, `jogador.html`, `jogador.js`, `ao-vivo.html`, `ao-vivo.js`, `manifest.webmanifest`, `sw.js`, `icon.svg`, `icon-192.png`, `icon-512.png`, `termos.html`, `privacidade.html`, `netlify.toml`, `package.json`, `LICENSE`, `netlify/functions/*.mjs` (checkout, webhook, licença, chave temporária, cancelamento, conta master, publicação/revogação da visualização do grupo, respostas, notas, placar ao vivo, lembretes e reconciliação), `servir.bat` / `servir.ps1` (servidor local), `servir-celular.bat` / `servir-celular.ps1` (servidor para testar no celular), `contato.html` (formulário de contato), `comunidade.html`, `comunidade.js` e `comunidade.json` (comunidade por cidade), `tests/mp-flows.test.html` (bateria automática) e este README.
 
 ## Como usar
 
@@ -240,6 +240,7 @@ O **período gratuito de 14 dias** libera todos os recursos dos dois planos. A *
 6. Cada assinatura gera uma **chave de licença** (ex.: `RL-1A2B3C4D5E6F`), copiável na tela Assinatura. A chave pode ficar vinculada a até **2 aparelhos** — se alguém tentar usá-la em outro dispositivo, o acesso é bloqueado até o titular confirmar o e-mail da compra no aparelho novo.
 7. Para usar a mesma chave no notebook e no celular, abra **Assinatura** no aparelho novo, digite a chave e informe o **e-mail usado no checkout**: o vínculo é acrescentado, sem derrubar o aparelho anterior (limite de 2 aparelhos).
 8. O próprio titular pode cancelar a recorrência em **Assinatura → Cancelar assinatura**. O acesso continua até o fim do período já pago, sem multa, conforme o CDC (art. 49 garante 7 dias de arrependimento).
+9. Para dar acesso temporário a um avaliador, o proprietário abre `admin-temp.html` no site principal, informa o e-mail e o prazo e cria uma **chave PRO de teste**, sem cobrança. A mesma chave é prorrogada ou revogada nessa página, sem gerar outra e sem novo deploy. Ela aparece no app como **Acesso temporário (PRO)** e usa a mesma regra de até 2 aparelhos.
 
 ### Upgrade do Básico para o PRO
 
