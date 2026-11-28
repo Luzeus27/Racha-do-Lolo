@@ -327,6 +327,18 @@ function fmtDateTime(iso) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 }
+function toDateTimeLocal(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fromDateTimeLocal(raw) {
+  if (!raw) return '';
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? '' : d.toISOString();
+}
 function ensureReceipt(rec) {
   if (!rec.receiptId) rec.receiptId = 'RL-' + rec.year + '-' + String(rec.month).padStart(2, '0') + '-' + String(rec.playerId).slice(-4).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();
   if (!rec.paidAt) rec.paidAt = new Date().toISOString();
@@ -337,6 +349,7 @@ function receiptLines(rec) {
   return [
     ['Pagamento recebido de', p?.name || 'Jogador'],
     ['Mensalidade', monthName(rec.month) + '/' + rec.year],
+    ['Vencimento', /^\d{4}-\d{2}-\d{2}$/.test(String(rec.dueDate || '')) ? fmtDate(rec.dueDate) : 'Não informado'],
     ['Valor', money(rec.amount)],
     ['Forma de pagamento', rec.origem === 'link' ? 'PIX / Link de cobrança' : 'Baixa registrada no app'],
     ['ID da transação', rec.txid || 'Não informado'],
@@ -626,7 +639,9 @@ function defaultSettings() {
     dailyPaymentEnabled: true,
     groupAccessMessage: GROUP_ACCESS_MESSAGE,
     reminderGroup: '⚽ {jogo}: jogo em {data} ({horario})!\nAbra o link, vá em Jogadores, encontre seu nome e faça seu check-in/pagamento: {link}\nMensalista paga a mensalidade; diarista paga a diária na sua área.',
-    reminderPlayer: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}'
+    reminderPlayer: '🏽 {jogo}: jogo em {data} ({horario})! Confirme sua presença (mensalidade/diária pelo PIX no seu link): {link}',
+    reminderDueGroup: '📢 Mensalidade do racha: {aviso}. Vencimento: {vencimento}. Acesse seu link para regularizar: {link}',
+    reminderDuePlayer: '🔔 {jogador}, mensalidade de {mes}/{ano}: {aviso}. Valor {valor}; vencimento {vencimento}. Pague pelo seu link: {link}'
   };
 }
 
@@ -1173,20 +1188,30 @@ function viewUrl(token) {
 function publicSnapshot() {
   const paidByMonth = {};
   const dues = {};
+  const paidDues = {};
   let paid = 0, open = 0;
   (state.payments || []).forEach((p) => {
     const key = (num(p.year) || 0) + '-' + (num(p.month) || 0);
     const row = paidByMonth[key] || (paidByMonth[key] = { year: num(p.year), month: num(p.month), paid: 0, open: 0 });
     const amount = num(p.amount);
-    if (p.paid) { row.paid += amount; paid += amount; }
-    else {
+    const pid = String(p.playerId || '');
+    if (p.paid) {
+      row.paid += amount; paid += amount;
+      if (pid) {
+        (paidDues[pid] || (paidDues[pid] = [])).push({
+          month: num(p.month), year: num(p.year), amount, paid: true,
+          dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(p.dueDate || '')) ? String(p.dueDate) : '',
+          paidAt: String(p.paidAt || ''), receiptId: p.receiptId || ''
+        });
+      }
+    } else {
       row.open += amount; open += amount;
-      const pid = String(p.playerId || '');
       if (pid) {
         const txid = txidFor(pid, num(p.month), num(p.year));
         (dues[pid] || (dues[pid] = [])).push({
           month: num(p.month), year: num(p.year), amount, paid: false,
-          pix: pixCode(amount, txid), txid, receiptId: p.receiptId || ''
+          dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(p.dueDate || '')) ? String(p.dueDate) : '',
+          paidAt: '', pix: pixCode(amount, txid), txid, receiptId: p.receiptId || ''
         });
       }
     }
@@ -1239,9 +1264,10 @@ function publicSnapshot() {
       defesas: num(s.defesas), paredoes: num(s.paredoes), golsSofridos: num(s.golsSofridos)
     })),
     finance: { paid, open, byMonth: Object.values(paidByMonth) },
-    /* dues NÃO vai no retrato público: o get-view remove antes de servir.
-       Cada jogador vê apenas as próprias pendências em jogador.html. */
-    dues
+    /* dues/paidDues NÃO vão no retrato público: o get-view remove antes de servir.
+       Cada jogador vê apenas o que é dele em jogador.html. */
+    dues,
+    paidDues
   };
 }
 
@@ -1264,7 +1290,10 @@ async function publishView(silent) {
         deviceId: window.RachaLicense.deviceId(),
         token: viewToken || undefined,
         expiresAt: settings().viewExpiresAt || null,
-        reminderTexts: { group: settings().reminderGroup, player: settings().reminderPlayer },
+        reminderTexts: {
+          group: settings().reminderGroup, player: settings().reminderPlayer,
+          dueGroup: settings().reminderDueGroup, duePlayer: settings().reminderDuePlayer
+        },
         /* Telefones NÃO entram no retrato público: vão separados, só para o
            servidor confirmar o perfil do jogador e abrir o chat do lembrete. */
         playerPhones: Object.fromEntries((state.players || [])
@@ -1574,11 +1603,75 @@ function renderReminderText(template, ctx) {
   return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
 }
 
+/* Mensalidade: vencimento manual e cobrança só no vencimento e 3 dias depois. */
+function shiftDateISO(iso, days) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return '';
+  const d = new Date(Date.UTC(num(m[1]), num(m[2]) - 1, num(m[3])));
+  if (isNaN(d.getTime())) return '';
+  d.setUTCDate(d.getUTCDate() + days);
+  return isoDate(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+function renderDueText(template, ctx) {
+  const raw = String(template || '').replace(/\r\n?/g, '\n').slice(0, 700);
+  const hasLink = /\{link\}/i.test(raw);
+  const out = raw
+    .replace(/\{jogador\}/gi, String(ctx.playerName || '').split(' ')[0].slice(0, 40))
+    .replace(/\{mes\}/gi, String(num(ctx.month)).padStart(2, '0'))
+    .replace(/\{ano\}/gi, String(num(ctx.year)))
+    .replace(/\{vencimento\}/gi, String(ctx.dueLabel || '—').slice(0, 30))
+    .replace(/\{valor\}/gi, money(ctx.amount))
+    .replace(/\{aviso\}/gi, String(ctx.notice || '').slice(0, 80))
+    .replace(/\{link\}/gi, String(ctx.link || '').slice(0, 400));
+  return hasLink ? out.trim() : [out.trim(), ctx.link].filter(Boolean).join('\n').trim();
+}
+function monthlyReminderLinks() {
+  const today = todayISO(), late = shiftDateISO(today, -3), out = [];
+  if (!today) return out;
+  const paid = new Set();
+  (dailySummary?.monthlyPaid || {}) && Object.entries(dailySummary.monthlyPaid).forEach(([pid, months]) => {
+    (Array.isArray(months) ? months : []).forEach(k => paid.add(pid + '|' + k));
+  });
+  const rows = [];
+  (state.payments || []).forEach(p => {
+    if (p.paid !== false) return;
+    const due = /^\d{4}-\d{2}-\d{2}$/.test(String(p.dueDate || '')) ? String(p.dueDate) : '';
+    if (due !== today && due !== late) return;
+    if (paid.has(p.playerId + '|' + p.year + '-' + String(num(p.month)).padStart(2, '0'))) return;
+    rows.push({ ...p, due });
+  });
+  if (!rows.length) return out;
+  const ctxBase = {
+    dueLabel: fmtDate(rows[0].due),
+    notice: rows[0].due === today ? 'vence hoje' : 'está em atraso',
+    link: viewToken ? viewUrl(viewToken) : ''
+  };
+  if (ctxBase.link) out.push({
+    when: rows[0].due === today ? 'vencimento' : '3 dias depois',
+    name: 'Grupo do racha', group: true, url: waLink(renderDueText(settings().reminderDueGroup, ctxBase)), direct: false
+  });
+  Object.entries(playerLinks || {}).forEach(([pid, url]) => {
+    const row = rows.find(r => r.playerId === pid);
+    const p = playerById(pid);
+    if (!row || !p || !url) return;
+    out.push({
+      when: row.due === today ? 'vencimento' : '3 dias depois',
+      name: p.name,
+      url: waDirect(p.phone, renderDueText(settings().reminderDuePlayer, {
+        ...ctxBase, link: url, playerName: p.name,
+        month: row.month, year: row.year, amount: num(row.amount),
+        notice: row.due === today ? 'vence hoje' : 'está em atraso desde ' + fmtDate(row.due)
+      })),
+      direct: !!waNumber(p.phone)
+    });
+  });
+  return out;
+}
 function reminderLinks() {
   const now = Date.now();
   const games = (viewData?.snapshot?.games || []).filter(g => g.date && !g.done && !g.canceled).slice(0, 20);
   const entries = Object.entries(playerLinks || {});
-  const out = [];
+  const out = monthlyReminderLinks();
   games.forEach(g => {
     const hours = (new Date(g.date + 'T12:00:00').getTime() - now) / 3600000;
     const when = hours >= 23 && hours <= 25 ? '24h' : hours >= 1 && hours <= 3 ? '2h' : '';
@@ -1605,10 +1698,10 @@ function reminderLinks() {
 
 function modalReminders() {
   const list = reminderLinks();
-  openModal('Lembretes para o grupo', 'Jogos nas janelas de 24h e 2h', list.length ? `
-    <p class="small muted"><strong>📢 Grupo</strong> avisa todo mundo com o link da visão do grupo (sem links individuais, telefones ou valores). <strong>🔔</strong> abre o chat privado de cada jogador. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. As frases podem ser editadas em Configurações → Lembretes automáticos; a função agendada usa as mesmas frases.</p>
+  openModal('Lembretes para o grupo', 'Jogos em 24h/2h e mensalidade no vencimento + 3 dias', list.length ? `
+    <p class="small muted"><strong>📢 Grupo</strong> avisa todo mundo com o link público (sem nomes, valores, telefones ou links individuais). <strong>🔔</strong> abre o chat privado de cada jogador. Quem não tem telefone cadastrado abre o WhatsApp para você escolher o contato. As frases podem ser editadas em Configurações → Lembretes automáticos; a função agendada usa as mesmas frases.</p>
     <div class="stack mt">${list.map(r => `<a class="btn ${r.group ? 'btn-primary' : 'btn-ghost'}" href="${esc(r.url)}" target="_blank" rel="noopener">${r.group ? '📢 Grupo' : '🔔 ' + esc(r.name)} · ${esc(r.when)}</a>`).join('')}</div>` : `
-    <p class="small muted">Nenhum jogo cai nas janelas de 24h ou 2h agora. Volte mais perto da partida.</p>`);
+    <p class="small muted">Nenhum lembrete cai nas janelas de agora. Volte mais perto do jogo ou do vencimento.</p>`);
 }
 
 async function publishLive(body) {
@@ -2120,7 +2213,8 @@ function confirmedIds(gameKey) {
 }
 function gameConfirmedPlayers(g) {
   if (!g) return [];
-  return sortByArrival(confirmedIds(g.id).map(playerById).filter(Boolean), g.id);
+  const allowed = new Set(eligibleForGame(g).map(p => p.id));
+  return sortByArrival(confirmedIds(g.id).map(playerById).filter(Boolean).filter(p => allowed.has(p.id)), g.id);
 }
 function gameCheckinIds(g) {
   if (!g) return [];
@@ -2129,6 +2223,56 @@ function gameCheckinIds(g) {
 }
 function gameCheckinPlayers(g) {
   return gameCheckinIds(g).map(playerById).filter(Boolean);
+}
+
+/* Regra do painel: mensalista precisa estar em dia e ter respondido “Vou jogar”;
+   diarista precisa ter a diária paga. O link público continua mostrando todos. */
+function monthlyPaidKeys() {
+  const out = new Set();
+  (state.payments || []).forEach(p => {
+    if (p && p.paid !== false && p.playerId && num(p.month) > 0 && num(p.year) > 0) {
+      out.add(String(p.playerId) + '|' + num(p.year) + '-' + String(num(p.month)).padStart(2, '0'));
+    }
+  });
+  const map = dailySummary && dailySummary.monthlyPaid;
+  if (map && typeof map === 'object') {
+    Object.keys(map).forEach(pid => {
+      (Array.isArray(map[pid]) ? map[pid] : []).forEach(k => out.add(String(pid) + '|' + String(k)));
+    });
+  }
+  return out;
+}
+function monthlyUpToDate(p, month, y) {
+  if (!p) return false;
+  const paid = monthlyPaidKeys();
+  return !(state.payments || []).some(x => x && x.playerId === p.id && num(x.year) === y && num(x.month) <= month &&
+    x.paid === false && !paid.has(String(p.id) + '|' + num(x.year) + '-' + String(num(x.month)).padStart(2, '0')));
+}
+function paidDailyIds(key) {
+  const out = new Set();
+  const map = dailySummary && dailySummary.paidByGame;
+  if (map && typeof map === 'object') {
+    (Array.isArray(map[key]) ? map[key] : []).forEach(id => out.add(String(id)));
+  }
+  (state.dayEntries || []).forEach(d => {
+    if (d && d.gameId === key && num(d.amount) > 0 && d.playerId) out.add(String(d.playerId));
+  });
+  return out;
+}
+function respondedYes(key, playerId) {
+  return (viewData?.responses?.[key] || {})[playerId] === 'yes';
+}
+function eligibleForGame(g) {
+  if (!g) return [];
+  const key = String(g.id || '__manual__');
+  const month = num(g.month) || currentMonth();
+  const y = num(g.year) || year();
+  const daily = paidDailyIds(key);
+  return activePlayers().filter(p => {
+    if (p.active === false) return false;
+    if (isMonthlyPlayer(p)) return respondedYes(key, p.id) && monthlyUpToDate(p, month, y);
+    return daily.has(p.id);
+  });
 }
 function drawGameLabel(key) {
   if (key === '__manual__') return 'Avulso';
@@ -2279,7 +2423,9 @@ function drawModeLabel(mode) {
 
 function doDraw() {
   const key = drawGameKey();
-  const players = confirmedIds(key).map(playerById).filter(Boolean).filter(p => p.active !== false);
+  const game = state.games.find(x => x.id === key) || { id: '__manual__', month: currentMonth(), year: year() };
+  const allowed = new Set(eligibleForGame(game).map(p => p.id));
+  const players = confirmedIds(key).map(playerById).filter(Boolean).filter(p => p.active !== false && allowed.has(p.id));
   const size = Math.max(2, Math.min(20, Math.round(num(ui.drawSize) || 6)));
   ui.drawSize = size;
   if (players.length < 4) { toast('Confirme pelo menos 4 jogadores para sortear.', 'err'); return; }
@@ -2475,8 +2621,9 @@ function pageSorteador() {
   const games = drawGameOptions();
   if (ui.drawGame && ui.drawGame !== '__manual__' && !games.some(g => g.id === ui.drawGame)) ui.drawGame = null;
   const key = drawGameKey();
+  const game = state.games.find(x => x.id === key) || { id: '__manual__', month: currentMonth(), year: year() };
   const ids = new Set(confirmedIds(key));
-  const players = activePlayers();
+  const players = eligibleForGame(game);
   const confirmed = players.filter(p => ids.has(p.id));
   const last = state.drawHistory[0] || null;
 
@@ -2507,12 +2654,13 @@ function pageSorteador() {
 
   return `
     <div class="card">
-      ${section('Jogadores confirmados', 'Toque no nome para confirmar e registrar a chegada, nesta ordem', `
+      ${section('Jogadores confirmados', 'Mensalista em dia + “Vou jogar”; diarista pago · toque para confirmar a chegada', `
         <select id="draw-game" style="width:200px">${gameOptions}</select>
+        <button class="btn btn-sm btn-ghost" data-act="refresh-view-data">🔄 Atualizar respostas</button>
         <button class="btn btn-sm btn-ghost" data-act="confirm-all">Marcar todos</button>
         <button class="btn btn-sm btn-ghost" data-act="confirm-none">Limpar</button>`)}
       <div class="card-body">
-        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores confirmados. O número no selo é a ordem de chegada. A nota usa força ou velocidade quando informada; sem os dois, é 50.</p>
+        <p class="tiny muted" style="margin-bottom:12px"><strong>${confirmed.length}</strong> de ${players.length} jogadores elegíveis confirmados. Quem não está em dia, não respondeu “Vou jogar” ou não pagou a diária não aparece aqui. O número no selo é a ordem de chegada; a nota usa força ou velocidade quando informada.</p>
         ${renderArrivalOrder(key)}
         ${drawControls}
         ${players.length ? `<div class="chip-grid">
@@ -2522,7 +2670,7 @@ function pageSorteador() {
               ${at ? `<span class="badge green">${at}º</span>` : ''}
               ${avatarHTML(p, true)}<span class="chip-name">${esc(p.name)}</span><span class="chip-cat">${esc(playerCategory(p))}</span><span class="chip-rating">${playerRating(p)}</span></button>`;
           }).join(''); })()}
-        </div>` : empty('Sem jogadores', 'Cadastre jogadores para poder sortear as equipes.')}
+        </div>` : empty('Sem jogadores elegíveis', 'Mensalista precisa estar em dia e ter respondido “Vou jogar”; diarista precisa ter a diária paga.')}
         ${!manual && confirmed.length >= 2 ? `<div class="row mt" style="justify-content:flex-end"><button class="btn btn-primary" data-act="do-draw" type="button">🎲 ${last ? 'Refazer sorteio' : 'Sortear equipes'}</button></div>` : ''}
       </div>
     </div>
@@ -2868,6 +3016,17 @@ function pagePayments() {
           <tr><td>Em aberto</td>${totals.map(t => `<td class="num warn">${compactMoney(Math.max(0, expected - t.received))}</td>`).join('')}<td></td></tr>
         </tfoot>
       </table></div>
+    </div>
+    <div class="card mt">
+      ${section('Datas de ' + monthName(num(ui.payMonth) || m) + '/' + y, 'Vencimento e data da baixa · clique no nome para editar')}
+      <div class="card-body stack">
+        ${players.map(p => {
+          const rec = state.payments.find(x => x.playerId === p.id && x.month === (num(ui.payMonth) || m) && x.year === y);
+          const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(rec?.dueDate || '')) ? fmtDate(rec.dueDate) : '—';
+          const pago = rec?.paidAt ? fmtDateTime(rec.paidAt) : '—';
+          return `<div class="person"><span>${rec && rec.paid !== false ? '✅' : '◻️'}</span><button class="btn btn-sm btn-ghost" data-act="edit-payment" data-player="${esc(p.id)}" data-month="${num(ui.payMonth) || m}" style="flex:1;text-align:left;justify-content:flex-start"><strong>${esc(p.name)}</strong><div class="tiny muted">Vencimento ${esc(venc)} · pago em ${esc(pago)}</div></button></div>`;
+        }).join('') || '<p class="small muted">Nenhum mensalista ativo.</p>'}
+      </div>
     </div>`;
 }
 
@@ -3587,12 +3746,14 @@ function pageSettings() {
           <div class="card-body stack">${manualConfirmHtml()}</div>
         </div>
         <div class="card">
-          ${section('Lembretes automáticos', '24h e 2h antes de cada jogo · frases editáveis', `<button class="btn btn-sm btn-ghost" type="button" data-act="reset-reminders">Restaurar padrão</button>`)}
+          ${section('Lembretes automáticos', 'Jogo em 24h/2h · mensalidade no vencimento e 3 dias depois', `<button class="btn btn-sm btn-ghost" type="button" data-act="reset-reminders">Restaurar padrão</button>`)}
           <div class="card-body stack">
-            <p class="small muted">As frases abaixo valem para os lembretes do painel e para a função agendada <code>send-reminders</code>. Use <code>{jogo}</code>, <code>{data}</code>, <code>{horario}</code> e <code>{link}</code>; no lembrete individual também <code>{jogador}</code>. Se você não escrever <code>{link}</code>, ele é acrescentado no fim.</p>
-            <label class="field" style="align-items:flex-start">Frase do aviso para o grupo<textarea name="reminderGroup" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderGroup)}</textarea></label>
-            <label class="field" style="align-items:flex-start">Frase do lembrete individual<textarea name="reminderPlayer" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderPlayer)}</textarea></label>
-            <p class="tiny muted">Para usar nome e horário, preencha os campos opcionais ao criar o jogo. Sem eles, a frase mostra “Racha do Loló” e “horário a definir”. Salve com <strong>Salvar premissas</strong> ao final da página.</p>
+            <p class="small muted">As frases abaixo valem para o painel e para a função agendada <code>send-reminders</code>. Nos lembretes de jogo use <code>{jogo}</code>, <code>{data}</code>, <code>{horario}</code>, <code>{jogador}</code> e <code>{link}</code>. Na mensalidade use <code>{aviso}</code>, <code>{vencimento}</code>, <code>{mes}</code>, <code>{ano}</code>, <code>{valor}</code>, <code>{jogador}</code> e <code>{link}</code>. Sem <code>{link}</code>, ele vai no fim.</p>
+            <label class="field" style="align-items:flex-start">Jogo · aviso para o grupo<textarea name="reminderGroup" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderGroup)}</textarea></label>
+            <label class="field" style="align-items:flex-start">Jogo · lembrete individual<textarea name="reminderPlayer" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderPlayer)}</textarea></label>
+            <label class="field" style="align-items:flex-start">Mensalidade · aviso genérico no grupo<textarea name="reminderDueGroup" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderDueGroup || defaultSettings().reminderDueGroup)}</textarea></label>
+            <label class="field" style="align-items:flex-start">Mensalidade · cobrança individual<textarea name="reminderDuePlayer" rows="3" style="min-height:84px;resize:vertical">${esc(s.reminderDuePlayer || defaultSettings().reminderDuePlayer)}</textarea></label>
+            <p class="tiny muted">No grupo, a mensalidade sai só como aviso genérico: sem nomes, valores ou links individuais. A cobrança individual vai apenas para o chat do jogador. O vencimento é o campo manual em Pagamentos. Salve com <strong>Salvar premissas</strong> ao final da página.</p>
             <button class="btn btn-ghost" type="button" data-act="show-reminders">🔔 Ver lembretes de agora</button>
           </div>
         </div>
@@ -4047,9 +4208,11 @@ function modalPayment(playerId, month) {
       <input type="hidden" name="playerId" value="${playerId}" /><input type="hidden" name="month" value="${month}" />
       <label class="field">Jogador<select name="playerSelect" disabled>${activePlayers().filter(isMonthlyPlayer).map(x => `<option ${x.id === playerId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
       <label class="field">Mês<select disabled><option>${shortMonth(month)}/${y}</option></select></label>
+      <label class="field">Vencimento<input name="dueDate" type="date" value="${esc(rec?.dueDate || '')}" /></label>
       <label class="field">Valor pago (R$)<input name="amount" type="number" step="0.01" value="${rec ? num(rec.amount) : playerFee(p)}" /></label>
+      <label class="field">Data do pagamento<input name="paidAt" type="datetime-local" value="${esc(toDateTimeLocal(rec?.paidAt))}" /></label>
       <label class="field" style="justify-content:flex-end"><span style="display:flex;align-items:center;gap:8px"><input name="paid" type="checkbox" ${!rec || rec.paid !== false ? 'checked' : ''} style="width:16px" /> Pagamento realizado</span></label>
-      <p class="tiny muted" style="grid-column:1/-1;margin:0">Use o valor que entrou no caixa do racha. A taxa do cartão do Mercado Pago fica entre o jogador e o Mercado Pago; se você colar o valor bruto, o app registra apenas o líquido.</p>
+      <p class="tiny muted" style="grid-column:1/-1;margin:0">Vencimento e data do pagamento ficam no registro e aparecem para o jogador. Se pagar agora e deixar a data em branco, o app usa a hora atual. Use o valor que entrou no caixa do racha: a taxa do cartão do Mercado Pago fica entre o jogador e o Mercado Pago.</p>
       <div class="form-actions" style="grid-column:1/-1">
         ${rec ? `<button class="btn btn-danger" type="button" data-act="delete-payment" data-id="${esc(rec.id)}">Remover</button>` : ''}
         ${rec?.paidAt ? `<button class="btn btn-ghost" type="button" data-act="view-receipt" data-id="${esc(rec.id)}">🧾 Comprovante</button>` : ''}
@@ -4095,8 +4258,8 @@ function modalCheckin(gameId) {
   if (!g) return;
   const entries = state.dayEntries.filter(d => d.gameId === gameId);
   const presentes = gameCheckinIds(g);
-  const players = activePlayers();
-  openModal('Check-in · ' + fmtDate(g.date), 'Marque quem jogou e o valor recebido de cada um', `
+  const players = eligibleForGame(g);
+  openModal('Check-in · ' + fmtDate(g.date), 'Só elegíveis: mensalista em dia + “Vou jogar”; diarista pago', `
     <form data-form="checkin" data-id="${esc(gameId)}" class="form-grid one">
       <div class="table-wrap" style="max-height:46vh;overflow:auto">
         <table><thead><tr><th>Jogador</th><th>Tipo</th><th class="right">Valor (R$)</th><th class="center">Presente</th></tr></thead><tbody>
@@ -4119,7 +4282,8 @@ function modalGamePresence(gameId) {
   const confirmados = gameConfirmedPlayers(g);
   const presentes = gameCheckinPlayers(g);
   const entradas = state.dayEntries.filter(d => d.gameId === g.id);
-  const faltam = activePlayers().filter(p => !confirmados.some(c => c.id === p.id));
+  const elegiveis = eligibleForGame(g);
+  const faltam = elegiveis.filter(p => !confirmados.some(c => c.id === p.id));
   const listaConfirmados = confirmados.length
     ? `<div class="row" style="flex-wrap:wrap;gap:6px">${confirmados.map((p, i) => `<span class="badge">${i + 1}º · ${esc(p.name)}</span>`).join('')}</div>`
     : '<p class="small muted">Ninguém foi marcado como confirmado neste jogo no Sorteador.</p>';
@@ -4892,7 +5056,7 @@ document.addEventListener('click', (e) => {
       const m = num(ui.payMonth) || currentMonth(), y = year();
       activePlayers().filter(isMonthlyPlayer).forEach(p => {
         if (!state.payments.some(x => x.playerId === p.id && x.month === m && x.year === y)) {
-          state.payments.push({ id: uid(), playerId: p.id, month: m, year: y, amount: playerFee(p), paid: true });
+          state.payments.push({ id: uid(), playerId: p.id, month: m, year: y, amount: playerFee(p), paid: true, paidAt: new Date().toISOString(), dueDate: '' });
         }
       });
       save(); render(); toast(`Mensalidades de ${shortMonth(m)} marcadas.`);
@@ -5030,6 +5194,11 @@ document.addEventListener('click', (e) => {
       const at = list.findIndex(x => x.id === id);
       let msg;
       if (!set.has(id)) {
+        const game = state.games.find(x => x.id === key) || { id: '__manual__', month: currentMonth(), year: year() };
+        if (!eligibleForGame(game).some(p => p.id === id)) {
+          toast('Este jogador não está elegível: mensalista deve estar em dia e ter dito “Vou jogar”; diarista precisa ter pago.', 'err');
+          break;
+        }
         set.add(id);
         if (at < 0) list.push({ id, at: new Date().toISOString() });
         msg = 'confirmou presença';
@@ -5049,10 +5218,11 @@ document.addEventListener('click', (e) => {
     }
     case 'confirm-all': {
       const key = drawGameKey();
-      const all = activePlayers();
+      const game = state.games.find(x => x.id === key) || { id: '__manual__', month: currentMonth(), year: year() };
+      const all = eligibleForGame(game);
       state.confirmations[key] = all.map(p => p.id);
       setArrivalList(key, sortByArrival(all, key).map(p => ({ id: p.id, at: new Date().toISOString() })));
-      save('confirmou todos', key); render(); toast('Todos confirmados, na ordem de chegada atual.');
+      save('confirmou elegíveis', key); render(); toast('Jogadores elegíveis confirmados, na ordem de chegada atual.');
       break;
     }
     case 'confirm-none': {
@@ -5070,8 +5240,10 @@ document.addEventListener('click', (e) => {
       const key = el.dataset.game || drawGameKey();
       const resp = (viewData?.responses || {})[key] || {};
       const wait = (viewData?.waitlist || {})[key] || [];
-      const set = new Set(confirmedIds(key));
-      Object.keys(resp).forEach(id => { if (resp[id] === 'yes') set.add(id); else set.delete(id); });
+      const game = state.games.find(x => x.id === key) || { id: '__manual__', month: currentMonth(), year: year() };
+      const allowed = new Set(eligibleForGame(game).map(p => p.id));
+      const set = new Set(confirmedIds(key).filter(id => allowed.has(id)));
+      Object.keys(resp).forEach(id => { if (allowed.has(id) && resp[id] === 'yes') set.add(id); else set.delete(id); });
       wait.forEach(id => set.delete(id));
       const lista = sortByArrival(activePlayers().filter(p => set.has(p.id)), key)
         .map(p => ({ id: p.id, at: new Date().toISOString() }));
@@ -5188,6 +5360,8 @@ document.addEventListener('click', (e) => {
       const d = defaultSettings();
       state.settings.reminderGroup = d.reminderGroup;
       state.settings.reminderPlayer = d.reminderPlayer;
+      state.settings.reminderDueGroup = d.reminderDueGroup;
+      state.settings.reminderDuePlayer = d.reminderDuePlayer;
       save('restaurou frases dos lembretes'); render(); toast('Frases padrão restauradas e publicadas.', 'ok');
       break;
     }
@@ -5492,8 +5666,16 @@ document.addEventListener('submit', async (e) => {
     const anterior = state.payments.find(x => x.playerId === playerId && x.month === month && x.year === y);
     const esperado = anterior ? num(anterior.amount) : feeForPlayerId(playerId);
     const pago = fd.get('paid') !== null;
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(v('dueDate')) ? v('dueDate') : '';
+    const paidAt = pago ? (fromDateTimeLocal(v('paidAt')) || anterior?.paidAt || new Date().toISOString()) : '';
     state.payments = state.payments.filter(x => !(x.playerId === playerId && x.month === month && x.year === y));
-    state.payments.push({ id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: pago });
+    state.payments.push({
+      id: uid(), playerId, month, year: y, amount: cashNet(v('amount'), esperado), paid: pago,
+      dueDate, paidAt,
+      receiptId: pago ? (anterior?.receiptId || '') : '',
+      txid: anterior?.txid || '',
+      origem: anterior?.origem || 'app'
+    });
     save(pago ? 'recebeu mensalidade' : 'lançou mensalidade em aberto', `${playerName(playerId)} · ${monthName(month)}/${y}`); closeModal(); render(); toast(pago ? 'Pagamento salvo.' : 'Pendência salva.');
   }
   else if (type === 'game') {
@@ -5513,8 +5695,9 @@ document.addEventListener('submit', async (e) => {
     const g = state.games.find(x => x.id === gid);
     state.dayEntries = state.dayEntries.filter(d => d.gameId !== gid);
     const presentes = [];
+    const elegiveis = new Set(eligibleForGame(g).map(p => p.id));
     activePlayers().forEach(p => {
-      if (fd.get('present-' + p.id) === null) return;
+      if (!elegiveis.has(p.id) || fd.get('present-' + p.id) === null) return;
       presentes.push(p.id);
       const amount = num(v('amount-' + p.id));
       if (amount <= 0) return;

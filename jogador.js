@@ -41,7 +41,7 @@
 
   const state = {
     player: { kind: 'monthly', dailyAmount: 0, monthlyFee: 0, credit: 0 },
-    games: [], pastGames: [], dues: [], autoCheckin: false,
+    games: [], pastGames: [], dues: [], paidDues: [], autoCheckin: false,
     paymentMode: 'manual', card: null, auto: null, updatedAt: null
   };
   const saving = new Set();
@@ -359,7 +359,8 @@
 
       return '<div class="list-row"><div class="spread"><div><strong>' +
         esc(String(num(d.month)).padStart(2, '0')) + '/' + esc(d.year) + '</strong>' +
-        '<div class="tiny muted">' + esc(money(d.amount)) + (d.txid ? ' · ' + esc(d.txid) : '') + '</div></div>' +
+        '<div class="tiny muted">' + esc(money(d.amount)) + (d.txid ? ' · ' + esc(d.txid) : '') + '</div>' +
+        '<div class="tiny muted">Vencimento: ' + esc(/^\d{4}-\d{2}-\d{2}$/.test(String(d.dueDate || '')) ? fmtDate(d.dueDate) : 'não informado') + '</div></div>' +
         '<span class="badge amber">Pendente</span></div>' + payBlock +
         '<div class="row games-actions" style="margin-top:8px">' + primary +
         noticeButton('data-month="' + num(d.month) + '" data-year="' + num(d.year) + '"', d.month + ':' + d.year) +
@@ -370,6 +371,20 @@
       ? 'PIX ou cartão no Mercado Pago; o PIX manual continua como alternativa'
       : 'Pague pelo PIX do administrador; o aviso vai para ele dar a baixa';
     return card('Minha mensalidade', subtitle, rows || '<p class="small muted">Tudo em dia por aqui 🎉</p>');
+  }
+
+  function paidDuesHtml() {
+    if (state.player.kind !== 'monthly' || !state.paidDues.length) return '';
+    const rows = state.paidDues.slice().sort((a, b) =>
+      (num(b.year) - num(a.year)) || (num(b.month) - num(a.month))).map((d) => {
+      const venc = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dueDate || '')) ? fmtDate(d.dueDate) : '—';
+      return '<div class="list-row"><div class="spread"><div><strong>' +
+        esc(String(num(d.month)).padStart(2, '0')) + '/' + esc(d.year) + '</strong>' +
+        '<div class="tiny muted">' + esc(money(d.amount)) +
+        ' · vencimento ' + esc(venc) + ' · pago em ' + esc(fmtTime(d.paidAt)) + '</div></div>' +
+        '<span class="badge green">Pago</span></div></div>';
+    }).join('');
+    return card('Histórico da mensalidade', 'Vencimento e data da baixa', rows);
   }
 
   function autoHtml() {
@@ -418,7 +433,7 @@
     const a = document.activeElement;
     if (!forcedFocusKey && a && a.dataset) forcedFocusKey = a.dataset.focusKey || null;
     $('#player-root').innerHTML = identityHtml() + gamesHtml() +
-      '<div id="dues-card">' + duesHtml() + '</div>' + autoHtml();
+      '<div id="dues-card">' + duesHtml() + '</div>' + paidDuesHtml() + autoHtml();
     lastSig = sig;
     restoreFocus();
   }
@@ -660,6 +675,7 @@
       state.games = Array.isArray(data.games) ? data.games : [];
       state.pastGames = Array.isArray(data.pastGames) ? data.pastGames : [];
       state.dues = Array.isArray(data.dues) ? data.dues : [];
+      state.paidDues = Array.isArray(data.paidDues) ? data.paidDues : [];
       state.autoCheckin = data.autoCheckin === true; /* lido só para compatibilidade; não altera pagamentos */
       state.paymentMode = data.paymentMode === 'mp' ? 'mp' : 'manual';
       state.card = data.card || null;
